@@ -1,0 +1,15 @@
+{
+  "query": "FROM sales SHOW orders, total_sales GROUP BY order_referrer_source ORDER BY total_sales DESC LIMIT 25 SINCE -30d UNTIL today WITH TIMEZONE 'Africa/Cairo'",
+  "columns": [
+    {"name": "order_referrer_source", "dataType": "STRING"},
+    {"name": "orders", "dataType": "INTEGER"},
+    {"name": "total_sales", "dataType": "MONEY"}
+  ],
+  "rowCount": 3,
+  "currencyCode": "EGP",
+  "rows": [
+["","2847","5957072"],
+["social","777","1637632"],
+["search","312","771828"]
+  ]
+}

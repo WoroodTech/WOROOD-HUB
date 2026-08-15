@@ -1,0 +1,34 @@
+{
+  "getShopInfo": {
+    "name": "WOROOD",
+    "domain": "worood.co",
+    "email": "worooddesigns@gmail.com",
+    "planName": "Advanced",
+    "currencyCode": "EGP",
+    "timezone": "EEST",
+    "country": "Egypt",
+    "criticalUserMessage": ""
+  },
+  "graphql": {
+    "shop": {
+      "name": "WOROOD",
+      "myshopifyDomain": "worood-designs.myshopify.com",
+      "ianaTimezone": "Africa/Cairo",
+      "timezoneAbbreviation": "EEST",
+      "timezoneOffsetMinutes": 180,
+      "currencyCode": "EGP",
+      "currencyFormats": {
+        "moneyFormat": "EGP {{amount_no_decimals}}"
+      },
+      "plan": {
+        "displayName": "Advanced",
+        "partnerDevelopment": false,
+        "shopifyPlus": false
+      },
+      "billingAddress": {
+        "countryCodeV2": "EG",
+        "city": "Cairo"
+      }
+    }
+  }
+}

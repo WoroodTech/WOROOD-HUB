@@ -1,0 +1,12 @@
+/** Query keys, in one place, so realtime invalidation can match on them. */
+export const qk = {
+  hub: ['hub', 'modules'] as const,
+  portlet: (moduleKey: string, key: string) => ['portlet', moduleKey, key] as const,
+  dashboards: ['sales', 'dashboards'] as const,
+  dashboard: (key: string) => ['sales', 'dashboard', key] as const,
+  dashboardData: (key: string, range: string) => ['sales', 'dashboard-data', key, range] as const,
+  widgets: ['sales', 'widgets'] as const,
+  orders: (page: number, pageSize: number) => ['sales', 'orders', page, pageSize] as const,
+  access: (id: string) => ['sales', 'access', id] as const,
+  sync: ['sales', 'sync'] as const,
+};

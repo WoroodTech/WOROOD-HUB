@@ -1,0 +1,25 @@
+[Unit]
+Description=WOROOD HUB API
+After=network.target postgresql.service redis-server.service
+Wants=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=worood
+WorkingDirectory=/opt/worood-hub/apps/api
+EnvironmentFile=/etc/worood-hub/api.env
+# Migrations run here, so a deploy that cannot migrate never serves traffic.
+ExecStartPre=/usr/bin/node dist/db/migrate.js
+ExecStart=/usr/bin/node dist/main.js
+Restart=always
+RestartSec=5
+# Module 1 sized this at 1.5 GB and it stays there; the worker gets its own.
+MemoryMax=1536M
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/log/worood-hub
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,36 @@
+{
+  "query": "FROM sessions SHOW sessions, conversion_rate GROUP BY session_country ORDER BY sessions DESC LIMIT 25 SINCE -30d UNTIL today WHERE human_or_bot_session = 'human' WITH TIMEZONE 'Africa/Cairo'",
+  "columns": [
+    {"name": "session_country", "dataType": "STRING"},
+    {"name": "sessions", "dataType": "INTEGER"},
+    {"name": "conversion_rate", "dataType": "PERCENT"}
+  ],
+  "rowCount": 25,
+  "rows": [
+["Egypt","229395","0.015750125329671526"],
+["Saudi Arabia","2037","0.015709376534118802"],
+["United States","2004","0.0074850299401197605"],
+["United Arab Emirates","1582","0.01390644753476612"],
+["United Kingdom","892","0.002242152466367713"],
+["Colombia","699","0.0"],
+["Canada","687","0.013100436681222707"],
+["Germany","420","0.007142857142857143"],
+["Kuwait","213","0.014084507042253521"],
+["Italy","208","0.019230769230769232"],
+["Qatar","206","0.019417475728155338"],
+["Australia","199","0.0"],
+["France","199","0.010050251256281407"],
+["Türkiye","196","0.00510204081632653"],
+["Netherlands","134","0.029850746268656716"],
+["Oman","115","0.008695652173913044"],
+["Morocco","78","0.0"],
+["Bahrain","78","0.02564102564102564"],
+["Ireland","71","0.04225352112676056"],
+["India","71","0.0"],
+["Malaysia","69","0.0"],
+["Japan","57","0.0"],
+["Jordan","50","0.0"],
+["Kenya","48","0.0"],
+["Norway","46","0.0"]
+  ]
+}

@@ -1,0 +1,24 @@
+[Unit]
+Description=WOROOD HUB worker (webhook queue, reconciliation, snapshots, watchdog)
+After=network.target postgresql.service redis-server.service
+Wants=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=worood
+WorkingDirectory=/opt/worood-hub/apps/api
+EnvironmentFile=/etc/worood-hub/api.env
+# Deliberately a separate unit, not a thread inside the API: it can be
+# restarted, stopped during an incident, or moved to its own instance without
+# touching the request path. Migrations run in the API unit only, so they run
+# exactly once per deploy.
+ExecStart=/usr/bin/node dist/worker.js
+Restart=always
+RestartSec=5
+MemoryMax=768M
+NoNewPrivileges=true
+ProtectSystem=strict
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
