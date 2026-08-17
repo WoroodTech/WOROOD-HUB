@@ -66,6 +66,13 @@ environment always wins, so systemd, Docker and CI are unaffected. Point it else
 with `ENV_FILE=/path/to/file`. Without a `.env` the process falls back to the defaults
 in `src/common/config.ts`, which will not match your database password.
 
+### Managing people, roles and dashboard access
+
+Dashboard assignment has a screen: **Sales → Manage Dashboards**, then *Access*.
+Adding a person, changing their role, or editing what a role can do is SQL for
+now — [`docs/ADMINISTRATION.md`](docs/ADMINISTRATION.md) has the model and the
+verified statements.
+
 ### Upgrading an install that is already running
 
 `npm run migrate` is enough to get the booking flow working: migration `0004` is
