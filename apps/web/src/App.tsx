@@ -7,6 +7,8 @@ import { Home } from './pages/Home';
 import { BookRoom } from './pages/BookRoom';
 import { MyReservations } from './pages/MyReservations';
 import { ManageRooms } from './pages/ManageRooms';
+import { People } from './pages/People';
+import { Roles } from './pages/Roles';
 import { SalesIndex } from './pages/SalesIndex';
 import { SalesDashboard } from './pages/SalesDashboard';
 import { Orders } from './pages/Orders';
@@ -45,6 +47,12 @@ export function App() {
         <Route path="/meeting-rooms/book" element={<BookRoom />} />
         <Route path="/meeting-rooms/reservations" element={<MyReservations />} />
         <Route path="/meeting-rooms/admin" element={<ManageRooms />} />
+
+        {/* The administration console. The links are permission-gated in the
+            descriptor; the routes are open to anyone who guesses the URL, and
+            the API refuses them -- which is the boundary that matters. */}
+        <Route path="/admin/people" element={<People />} />
+        <Route path="/admin/roles" element={<Roles />} />
 
         <Route path="/sales" element={<SalesIndex />} />
         <Route path="/sales/d/:key" element={<SalesDashboard />} />

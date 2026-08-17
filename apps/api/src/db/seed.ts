@@ -40,7 +40,8 @@ const PERMISSIONS: [string, string, string][] = [
   ['sales.sync.manage',      'sales-dashboard', 'Trigger backfills, inspect sync health, re-register webhooks'],
   ['meeting-rooms.room.manage', 'meeting-rooms', 'Create, edit and retire rooms'],
   ['meeting-rooms.reservation.manage-any', 'meeting-rooms', 'Modify or cancel any reservation'],
-  ['core.user.manage', 'core', 'Create and edit employee accounts'],
+  ['core.user.manage', 'core', 'Create employee accounts, change their details and password, assign roles and dashboards'],
+  ['core.role.manage', 'core', 'Create roles and decide which permissions each one carries'],
   ['core.audit.view',  'core', 'Read the audit trail'],
 ];
 

@@ -1400,3 +1400,150 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .notice--error svg { flex: none; }
 .notice--warn { background: var(--warning-soft); border-color: transparent; color: var(--warning-ink); }
 .notice--warn svg { flex: none; }
+
+/* ==================================================================== *
+   The administration console: people, roles and permissions.
+ * ==================================================================== */
+
+/* A list beside a detail panel. Below 1080px the panel wins the full width and
+   the list becomes a scrollable strip above it, rather than two cramped
+   columns neither of which is usable. */
+.admin {
+  display: grid; gap: var(--gap);
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  align-items: start;
+}
+.admin__list {
+  display: flex; flex-direction: column; gap: 10px;
+  position: sticky; inset-block-start: 74px;
+  max-block-size: calc(100vh - 96px); overflow-y: auto;
+  padding-inline-end: 2px;
+}
+.admin__detail { display: flex; flex-direction: column; gap: var(--gap); min-inline-size: 0; }
+
+@media (max-width: 1080px) {
+  .admin { grid-template-columns: minmax(0, 1fr); }
+  .admin__list { position: static; max-block-size: 380px; }
+}
+
+.admin__search { display: flex; flex-direction: column; gap: 8px; }
+
+/* ------------------------------------------------------------- people -- */
+
+.peoplelist, .rolelist { display: flex; flex-direction: column; gap: 5px; }
+
+.person, .rolerow {
+  inline-size: 100%; display: flex; align-items: center; gap: 10px; text-align: start;
+  padding-block: 9px; padding-inline: 11px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--ink); cursor: pointer;
+  transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
+}
+.person:hover, .rolerow:hover { background: var(--surface-2); }
+.person.is-on, .rolerow.is-on {
+  background: var(--accent-soft); border-color: var(--accent-line);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.person__avatar {
+  display: grid; place-items: center; inline-size: 34px; block-size: 34px; flex: none;
+  border-radius: var(--radius-pill); background: var(--surface-3); color: var(--ink-2);
+  font-size: 12px; font-weight: 700;
+}
+.person.is-on .person__avatar { background: var(--accent); color: #fff; }
+
+.person__body { flex: 1; min-inline-size: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.person__name { font-weight: 600; font-size: 13.5px; display: flex; align-items: center; gap: 6px; }
+.person__you {
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 1px 5px; border-radius: var(--radius-pill);
+  background: var(--surface-3); color: var(--muted);
+}
+.person__meta, .person__roles {
+  font-size: 11.5px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.person__roles { color: var(--ink-2); }
+
+/* -------------------------------------------------------------- roles -- */
+
+.rolerow__body { flex: 1; min-inline-size: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.rolerow__name { font-weight: 600; font-size: 13.5px; display: flex; align-items: center; gap: 5px; }
+.rolerow__name svg { color: var(--accent); }
+.rolerow__key { font-size: 11px; color: var(--muted); }
+.rolerow__counts { display: flex; gap: 10px; font-size: 11.5px; color: var(--muted); }
+.rolerow__counts span { display: inline-flex; align-items: center; gap: 3px; }
+
+.permgroup { margin-block-start: 14px; }
+.permgroup__title {
+  font-size: 11.5px; font-weight: 650; color: var(--accent);
+  text-transform: uppercase; letter-spacing: 0.07em; margin-block-end: 7px;
+}
+.permgroup__list { display: grid; gap: 5px; }
+
+.permcheck {
+  display: flex; align-items: flex-start; gap: 9px;
+  padding-block: 8px; padding-inline: 11px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--surface-2); cursor: pointer;
+  transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
+}
+.permcheck:hover { background: var(--surface-3); }
+.permcheck.is-on { background: var(--accent-soft); border-color: var(--accent-line); }
+.permcheck input { margin-block-start: 2px; accent-color: var(--accent); }
+.permcheck span { display: flex; flex-direction: column; gap: 1px; min-inline-size: 0; }
+.permcheck__desc { font-size: 12.5px; color: var(--ink); }
+.permcheck__key { font-size: 11px; color: var(--muted); }
+
+.holderlist { display: flex; flex-direction: column; }
+.holder {
+  display: flex; align-items: baseline; gap: 10px;
+  padding-block: 8px; border-block-end: 1px solid var(--line);
+}
+.holder:last-child { border-block-end: 0; }
+.holder__name { font-weight: 600; font-size: 13px; }
+.holder__email { font-size: 12px; }
+
+/* --------------------------------------------- dashboards and grants -- */
+
+.grantlist { display: flex; flex-direction: column; }
+.grant {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding-block: 11px; border-block-end: 1px solid var(--line);
+}
+.grant:last-child { border-block-end: 0; }
+.grant__body { display: flex; flex-direction: column; min-inline-size: 0; }
+.grant__name { font-weight: 600; font-size: 13px; }
+.grant__why { font-size: 11.5px; color: var(--muted); }
+/* The one they can actually open reads as live; the rest are quiet. */
+.grant.is-on .grant__name { color: var(--ink); }
+.grant:not(.is-on) .grant__name { color: var(--muted); }
+
+.permlist { display: flex; flex-direction: column; }
+.perm {
+  display: grid; gap: 2px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding-block: 9px; border-block-end: 1px solid var(--line);
+}
+.perm:last-child { border-block-end: 0; }
+.perm__key { font-size: 11.5px; color: var(--accent); grid-column: 1; }
+.perm__desc { font-size: 12.5px; color: var(--ink-2); grid-column: 1; }
+.perm__via { grid-column: 2; grid-row: 1 / 3; align-self: center; font-size: 11.5px; color: var(--muted); }
+
+/* ------------------------------------------------------------- shared -- */
+
+/* Appears only once something has changed, and stays put while you scroll the
+   form -- a save button you have to hunt for is a form people abandon. */
+.savebar {
+  position: sticky; inset-block-end: 0; z-index: 5;
+  display: flex; justify-content: flex-end; gap: 8px;
+  margin-block-start: 14px; padding-block: 11px;
+  border-block-start: 1px solid var(--line);
+  background: linear-gradient(to top, var(--surface) 70%, transparent);
+}
+
+.cardfoot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; inline-size: 100%; }
+.cardfoot__actions { display: flex; gap: 7px; }
+
+.hint { font-size: 12.5px; color: var(--muted); margin-block-end: 10px; }
+.hint strong { color: var(--ink-2); }

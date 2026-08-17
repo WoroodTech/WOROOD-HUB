@@ -15,4 +15,11 @@ export const qk = {
   roomEquipment: ['mr', 'equipment'] as const,
   availability: (filters: string) => ['mr', 'availability', filters] as const,
   reservations: (filters: string) => ['mr', 'reservations', filters] as const,
+
+  adminUsers: (filters: string) => ['admin', 'users', filters] as const,
+  adminUser: (id: string) => ['admin', 'user', id] as const,
+  adminRoles: ['admin', 'roles'] as const,
+  adminPermissions: ['admin', 'permissions'] as const,
+  adminDepartments: ['admin', 'departments'] as const,
+  adminDashboards: ['admin', 'dashboards'] as const,
 };

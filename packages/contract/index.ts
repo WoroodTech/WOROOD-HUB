@@ -73,6 +73,42 @@ export interface UpcomingReservationsPortlet {
                         startsAt: string; endsAt: string }>;
 }
 
+/* ------------------------------------------------------- administration -- */
+
+export interface AdminRoleRef { id: string; key: string; name: string }
+
+export interface AdminUserSummary {
+  id: string; email: string; fullName: string; fullNameAr: string | null;
+  jobTitle: string | null; department: string | null; departmentId: string | null;
+  timezone: string; locale: string; status: 'ACTIVE' | 'SUSPENDED';
+  lastLoginAt: string | null; createdAt: string;
+  roles: AdminRoleRef[];
+  /** Whether this account can reach the administration console. */
+  isAdministrator: boolean;
+}
+
+export interface AdminUserDetail extends AdminUserSummary {
+  /** Computed from their roles, with the role that supplied each one -- the
+   *  answer to "why can they do that?", which a flat key list does not give. */
+  permissions: Array<{ key: string; moduleKey: string; description: string | null; viaRoles: string[] }>;
+  dashboards: Array<{
+    id: string; key: string; name: string;
+    viaRole: boolean; override: 'GRANT' | 'REVOKE' | null; effective: boolean;
+  }>;
+}
+
+export interface AdminPermission { key: string; moduleKey: string; description: string | null }
+
+export interface AdminRole {
+  id: string; key: string; name: string; nameAr: string | null; description: string | null;
+  permissions: AdminPermission[];
+  holders: number;
+  grantsConsole: boolean;
+}
+
+export interface AdminDepartment { id: string; name: string; head_count: number }
+export interface AdminDashboardRef { id: string; key: string; name: string; description: string | null }
+
 /* --------------------------------------------------------- meeting rooms -- */
 
 export interface MeetingRoomEquipment { key: string; name: string; icon: string | null; quantity: number }
@@ -268,4 +304,7 @@ export const PERMISSIONS = {
   SYNC_MANAGE: 'sales.sync.manage',
   ROOM_MANAGE: 'meeting-rooms.room.manage',
   RESERVATION_MANAGE_ANY: 'meeting-rooms.reservation.manage-any',
+  USER_MANAGE: 'core.user.manage',
+  ROLE_MANAGE: 'core.role.manage',
+  AUDIT_VIEW: 'core.audit.view',
 } as const;

@@ -68,10 +68,16 @@ in `src/common/config.ts`, which will not match your database password.
 
 ### Managing people, roles and dashboard access
 
-Dashboard assignment has a screen: **Sales → Manage Dashboards**, then *Access*.
-Adding a person, changing their role, or editing what a role can do is SQL for
-now — [`docs/ADMINISTRATION.md`](docs/ADMINISTRATION.md) has the model and the
-verified statements.
+**Administration → People** and **Administration → Roles**, visible only to
+accounts holding `core.user.manage` / `core.role.manage` — the `admin` role.
+Create accounts, change a name, e-mail address or password, hold and remove
+roles, and assign or block individual dashboards. Role-wide dashboard grants
+stay in **Sales → Manage Dashboards**, since they belong to the dashboard.
+
+The console refuses to let an administrator lock everybody out — including
+themselves — and every refusal says what to do first.
+[`docs/ADMINISTRATION.md`](docs/ADMINISTRATION.md) has the model, the rails and
+the SQL escape hatch for an install with no administrator left.
 
 ### Upgrading an install that is already running
 

@@ -1,8 +1,10 @@
 # Administration: people, roles and dashboard access
 
-August 2026. **Status: half built.** Dashboard assignment has a screen. People
-and roles do not — they are SQL for now. This document says exactly where the
-line falls and gives the SQL, rather than leaving it to be discovered.
+August 2026. **Status: built.** People, roles and dashboard assignment all have
+screens, behind `core.user.manage` / `core.role.manage`, which only the
+`admin` role carries. The SQL below still works and is kept as the escape hatch
+for the one case the console deliberately cannot serve: an install with no
+administrator left.
 
 ## The model, in one paragraph
 
@@ -17,25 +19,61 @@ rather than by a column.
 So there are three independent questions, and they are answered in three
 different places:
 
-| Question | Where it lives | Manageable in the UI? |
+| Question | Where it lives | Screen |
 |---|---|---|
-| Which dashboards does this role/person get? | `sd_role_dashboard_access`, `sd_user_dashboard_access` | **Yes** — the composer |
-| Which permissions does this role carry? | `core_role_permissions` | No — SQL |
-| Which roles does this person hold? | `core_user_roles` | No — SQL |
-| Does this person exist, and are they active? | `core_users` | No — SQL |
+| Does this person exist, and are they active? | `core_users` | **Administration → People** |
+| Which roles does this person hold? | `core_user_roles` | **Administration → People** |
+| Which dashboards does this *person* get? | `sd_user_dashboard_access` | **Administration → People** |
+| Which permissions does this role carry? | `core_role_permissions` | **Administration → Roles** |
+| Which dashboards does a *role* get? | `sd_role_dashboard_access` | **Sales → Manage Dashboards** |
 
-## What you can do in the portal today
+## The console
 
-**Sales → Manage Dashboards** (`/sales/admin`), then the **Access** control on a
-dashboard. Requires `sales.dashboard.assign` or `sales.dashboard.manage` — the
-`sales-admin` and `admin` roles have it.
+**Administration → People.** A directory on the left, one person on the right.
+From here: create an account, change a name, e-mail address, job title,
+department or status, set a password, hold and remove roles, and assign or
+block individual dashboards. It also shows *effective permissions* — everything
+their roles add up to, each one labelled with the role that supplied it,
+because "why can they do that?" is the question the screen exists to answer.
 
-There you set which roles receive the dashboard, and add individual people as an
-explicit GRANT or REVOKE. That is the whole of dashboard assignment, and it is
-audited: every change writes a `sales.dashboard.access_changed` row to
-`core_audit_logs` with who did it and what changed.
+**Administration → Roles.** What each role carries, grouped by the module that
+registered the permission, with the holder count on every row. That count is on
+screen before you touch a checkbox on purpose: one tick here changes what
+everyone holding the role can reach.
 
-Nothing else about a person is editable from the portal.
+Both are gated on `core.user.manage` / `core.role.manage`, which only `admin`
+holds. The navigation is permission-filtered like every other module's, and the
+API refuses the routes independently — hiding a link is a courtesy, the guard
+is the rule.
+
+**Role → dashboard grants still live in the sales composer** (Sales → Manage
+Dashboards → Access), because they belong to the dashboard rather than to a
+person. The People screen edits the individual overrides on top of them.
+
+### What the console refuses to do
+
+All checked on the server, so a direct API call hits the same wall:
+
+- You cannot suspend or delete **your own** account.
+- You cannot remove your own administrator role while you are the only
+  administrator, nor strip `core.user.manage` from the last role that carries
+  it. Both refuse with a message naming what to do first. With a second
+  administrator in place, the same operations are allowed — the rails count,
+  they do not refuse categorically.
+- A role held by somebody is not deleted; the message says how many hold it.
+- Deleting a person is a **soft** delete. The row survives so their bookings and
+  audit history keep resolving to a name.
+
+### Credentials and sessions
+
+Changing an **e-mail address** or a **password** ends that person's other
+sessions by deleting their refresh tokens — otherwise the change would be
+decorative and the old session would keep working. The password dialog lets you
+turn that off for the one case where it is wrong: resetting a forgotten password
+for somebody sitting next to you who is staying signed in.
+
+The audit trail records that a password was set, by whom and when. It never
+records the password or its digest.
 
 ## Changes take effect immediately — with one caveat
 
@@ -51,8 +89,13 @@ them to reload, or have them sign out and in, and the screen catches up.
 
 ## The SQL
 
-Every statement below was run against a real database before being written here.
-Wrap them in `BEGIN; … COMMIT;` and check the `SELECT` first if you are nervous.
+Still valid, and still the only way out if the last administrator account is
+lost — the console cannot let you back in, by design. Every statement below was
+run against a real database before being written here. Wrap them in
+`BEGIN; … COMMIT;` and check the `SELECT` first if you are nervous.
+
+Prefer the console for everyday work: it records `granted_by` and writes an
+audit row, and SQL does neither unless you remember to.
 
 ### Who has what right now
 
@@ -184,24 +227,34 @@ Note that the `granted_by` column is why the UI is better than SQL for this: the
 composer records who made the change and writes an audit row. SQL does neither
 unless you remember to.
 
-## What is missing, and what it would take
+## Tests
 
-There is no admin console: no way to add a person, change a role, or edit a
-role's permissions without a database client. For a portal whose entire premise
-is that the screen is composed from what each person is granted, that is the
-obvious gap.
+```bash
+npm run build && node dist/main.js &
+npx tsx test/administration.test.ts      # 55 assertions
+```
 
-Building it is roughly:
+The ones worth knowing about, because they are the failures nobody wants to find
+in production, and each is proven by *doing* it rather than by inspecting state:
 
-- **API** — a `core-admin` module: users (list, create, update, suspend, reset
-  password), roles (CRUD plus permission assignment), and the user↔role join.
-  Gated behind a new `core.user.manage` / `core.role.manage` permission, audited
-  the way dashboard access already is.
-- **Portal** — a People screen (directory, filters, one person's roles and their
-  effective permissions) and a Roles screen (what the role carries, who holds it,
-  and what it unlocks in plain language).
-- **Care needed in two places.** An admin must not be able to remove their own
-  last administering role — the system would become unadministrable, and the
-  check belongs on the server. And "effective permissions" should be shown as a
-  computed answer, since with roles plus per-user dashboard overrides, nobody
-  can hold the whole picture in their head.
+- A non-administrator is refused every route, read and write.
+- Changing an e-mail: the old address stops signing in, the new one works, and
+  the refresh token issued before the change is rejected.
+- Setting a password: the new one works, the old one does not, and a session
+  open at the time cannot be refreshed. The audit payload is checked for the
+  absence of both the plaintext and a bcrypt digest.
+- An individual REVOKE beats a role grant — and the *sales module* is then asked
+  what that person can see, so the console's arithmetic is checked against the
+  code that actually serves them rather than against itself.
+- Every lockout rail, in both directions: refused while alone, allowed once a
+  second administrator exists.
+
+## Still missing
+
+- **The audit trail has no screen.** `core.audit.view` exists and everything
+  writes to `core_audit_logs`, but reading it is still SQL.
+- **No self-service.** Nobody can change their own password; an administrator
+  sets it and tells them. There is no reset-by-e-mail flow, because there is no
+  mail transport in this build.
+- **Departments** are seeded and selectable but not editable.
+- **Bulk actions.** Roles are assigned one person at a time.
