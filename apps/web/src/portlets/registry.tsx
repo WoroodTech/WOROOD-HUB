@@ -18,6 +18,7 @@ import type {
 } from '../contract';
 import { api } from '../lib/api';
 import { qk } from '../lib/keys';
+import { useHubModules } from '../lib/hub';
 import { Badge, Card, DataAge, ProvisionalTag } from '../components/Card';
 import { EmptyState, ErrorState, LoadingState, PlaceholderState } from '../components/States';
 import { Icon } from '../components/Icon';
@@ -262,6 +263,79 @@ function MyAlerts({ moduleKey, portletKey, title }: PortletProps) {
   );
 }
 
+/* ------------------------------------------------------ the hub's own -- */
+
+/**
+ * Two portlets belong to the portal rather than to any module, so they have no
+ * endpoint: they are read straight off the module descriptors the shell already
+ * fetched. That is deliberate -- registering a new module makes it appear in
+ * both without a line of code here.
+ */
+
+const ACTION_HINTS: Record<string, string> = {
+  '/meeting-rooms/book': 'Find a free room and reserve it',
+  '/meeting-rooms/reservations': 'View, change or cancel your bookings',
+  '/sales': 'Open the dashboards granted to you',
+  '/sales/orders': 'Look up an order by number or customer',
+};
+
+function QuickActions({ title }: PortletProps) {
+  const { data, isPending } = useHubModules();
+
+  /* Every live module's navigation, flattened, capped at six: a quick action
+     the employee has to hunt through is not a quick action. */
+  const actions = (data?.modules ?? [])
+    .filter((m) => m.enabled && !m.comingSoon)
+    .flatMap((m) => m.navigation.map((n) => ({ ...n, module: m.name })))
+    .slice(0, 6);
+
+  return (
+    <Card title={title} subtitle="The things you do most">
+      {isPending ? <LoadingState lines={3} />
+        : !actions.length ? <EmptyState icon="sparkles" title="No actions yet" hint="Modules granted to you add their shortcuts here." />
+          : (
+            <div className="actions">
+              {actions.map((a) => (
+                <Link className="action" to={a.path} key={a.path}>
+                  <span className="action__icon"><Icon name={a.icon} size={17} /></span>
+                  <span className="action__label">{a.label}</span>
+                  <span className="action__hint">{ACTION_HINTS[a.path] ?? a.module}</span>
+                </Link>
+              ))}
+            </div>
+          )}
+    </Card>
+  );
+}
+
+function ComingSoon({ title }: PortletProps) {
+  const { data, isPending } = useHubModules();
+  const upcoming = (data?.modules ?? []).filter((m) => m.comingSoon);
+
+  return (
+    <Card title={title} subtitle="Modules already registered, not yet built" tone="quiet">
+      {isPending ? <LoadingState lines={2} />
+        : !upcoming.length ? <EmptyState icon="check" title="Everything registered is live" />
+          : (
+            <ul className="soonstrip">
+              {upcoming.map((m) => (
+                <li className="soonchip" key={m.key}>
+                  <Icon name={m.navigation[0]?.icon ?? 'sparkles'} size={14} />
+                  {m.name}
+                </li>
+              ))}
+            </ul>
+          )}
+    </Card>
+  );
+}
+
+/** Seeds for the portlets the hub contributes itself, in first-visit order. */
+export const LOCAL_PORTLETS: ReadonlyArray<{ key: string; title: string; width: number }> = [
+  { key: 'quick-actions', title: 'Quick actions', width: 4 },
+  { key: 'coming-soon', title: "What's coming", width: 12 },
+];
+
 /* ---------------------------------------------------------- registry -- */
 
 export const PORTLET_REGISTRY: Record<string, ComponentType<PortletProps>> = {
@@ -271,6 +345,8 @@ export const PORTLET_REGISTRY: Record<string, ComponentType<PortletProps>> = {
   'my-dashboards': MyDashboards,
   'store-pulse': StorePulse,
   'my-alerts': MyAlerts,
+  'quick-actions': QuickActions,
+  'coming-soon': ComingSoon,
 };
 
 export function UnknownPortlet({ title, portletKey }: PortletProps) {

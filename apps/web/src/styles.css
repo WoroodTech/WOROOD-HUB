@@ -17,9 +17,14 @@
   --surface: #fffcf7;
   --surface-2: #faf4ea;
   --surface-3: #f2e9db;
-  --sidebar: #241d17;
-  --sidebar-ink: #f3e9db;
-  --sidebar-muted: #b3a292;
+  /* The sidebar is a *surface*, not a slab: a dark panel this large fights
+     the warm paper the rest of the portal is printed on, and at 248px wide it
+     is the single biggest block of colour on screen. */
+  --sidebar: #f6efe2;
+  --sidebar-ink: #241d17;
+  --sidebar-muted: #857a6c;
+  --sidebar-line: #e3d8c6;
+  --sidebar-hover: #ede3d2;
 
   /* Ink */
   --ink: #1b1613;
@@ -63,8 +68,19 @@
 
   --sidebar-w: 248px;
   --gap: 16px;
+
+  /* Motion. Three durations, one easing. Anything slower than --t-slow on a
+     portal screen reads as lag rather than polish, so nothing here exceeds it. */
+  --t-fast: 0.14s;
+  --t-mid: 0.22s;
+  --t-slow: 0.32s;
+  --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
+/* Dark is one token set, reached two ways: by the machine's setting when the
+   employee has not chosen (the media query), and by their explicit choice
+   (the attribute). The attribute always wins because a choice outranks a
+   default. */
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme='light'])) {
     color-scheme: dark;
@@ -72,9 +88,11 @@
     --surface: #171412;
     --surface-2: #1e1a17;
     --surface-3: #262019;
-    --sidebar: #0e0c0a;
+    --sidebar: #1b1815;
     --sidebar-ink: #efe4d5;
     --sidebar-muted: #8d8073;
+    --sidebar-line: #2e2823;
+    --sidebar-hover: #262019;
     --ink: #f6f0e6;
     --ink-2: #cfc4b5;
     --muted: #a2988c;
@@ -99,6 +117,41 @@
     --ring: 0 0 0 3px rgba(224, 138, 85, 0.34);
   }
 }
+
+:root[data-theme='dark'] {
+    color-scheme: dark;
+    --plane: #100e0c;
+    --surface: #171412;
+    --surface-2: #1e1a17;
+    --surface-3: #262019;
+    --sidebar: #1b1815;
+    --sidebar-ink: #efe4d5;
+    --sidebar-muted: #8d8073;
+    --sidebar-line: #2e2823;
+    --sidebar-hover: #262019;
+    --ink: #f6f0e6;
+    --ink-2: #cfc4b5;
+    --muted: #a2988c;
+    --line: #2e2823;
+    --line-strong: #3d352e;
+    --accent: #e08a55;
+    --accent-hover: #eda169;
+    --accent-soft: #33211a;
+    --accent-line: #4a3226;
+    --good-ink: #6bd06b;
+    --good-soft: #16281a;
+    --warning-ink: #e2ab4a;
+    --warning-soft: #2c2313;
+    --critical-ink: #ef8a80;
+    --critical-soft: #33191a;
+    --info-ink: #86bde8;
+    --info-soft: #16242e;
+    --transit-ink: #d3bf94;
+    --transit-soft: #2a2419;
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-2: 0 8px 28px rgba(0, 0, 0, 0.5);
+    --ring: 0 0 0 3px rgba(224, 138, 85, 0.34);
+  }
 
 /* -------------------------------------------------------------- base -- */
 
@@ -206,7 +259,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
   block-size: 100vh; display: flex; flex-direction: column;
   background: var(--sidebar); color: var(--sidebar-ink);
   padding-block: 18px; padding-inline: 14px;
-  border-inline-end: 1px solid rgba(255, 255, 255, 0.06);
+  border-inline-end: 1px solid var(--sidebar-line);
 }
 
 .sidebar__brand { display: flex; align-items: center; gap: 10px; padding-inline: 8px; padding-block-end: 20px; }
@@ -227,22 +280,31 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .navgroup__soon {
   font-size: 9px; letter-spacing: 0.08em; padding: 1px 5px; border-radius: var(--radius-pill);
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--surface-3); color: var(--muted);
 }
 
 .navitem {
+  position: relative;
   display: flex; align-items: center; gap: 10px;
   padding-block: 8px; padding-inline: 10px;
   border-radius: var(--radius-sm);
   color: var(--sidebar-ink); text-decoration: none; font-weight: 500;
-  opacity: 0.82;
+  opacity: 0.9;
+  transition: background var(--t-fast), color var(--t-fast), opacity var(--t-fast);
 }
-.navitem:hover { background: rgba(255, 255, 255, 0.07); opacity: 1; color: var(--sidebar-ink); }
+.navitem:hover { background: var(--sidebar-hover); opacity: 1; color: var(--sidebar-ink); }
 .navitem--active {
-  background: rgba(255, 255, 255, 0.11); opacity: 1;
-  box-shadow: inset 3px 0 0 var(--accent);
+  background: var(--accent-soft); color: var(--accent); opacity: 1; font-weight: 600;
 }
-.sidebar__foot { padding-inline: 10px; padding-block-start: 12px; border-block-start: 1px solid rgba(255, 255, 255, 0.08); }
+/* The active marker is drawn on the inline-start edge, which is the *leading*
+   edge in both directions -- it moves to the right in Arabic on its own. */
+.navitem--active::before {
+  content: ''; position: absolute; inset-block: 6px; inset-inline-start: 0;
+  inline-size: 3px; border-radius: var(--radius-pill); background: var(--accent);
+}
+.navitem--active svg { color: var(--accent); }
+
+.sidebar__foot { padding-inline: 10px; padding-block-start: 12px; border-block-start: 1px solid var(--sidebar-line); }
 .sidebar__date { font-size: 11.5px; color: var(--sidebar-muted); }
 
 .shell__main { flex: 1; min-inline-size: 0; display: flex; flex-direction: column; }
@@ -895,3 +957,251 @@ button, input, select, textarea { font: inherit; color: inherit; }
   .who__roles { display: none; }
   .btn__label { display: none; }
 }
+
+
+/* ==================================================================== *
+   Appearance, motion, personalisation and the home screen's own parts.
+ * ==================================================================== */
+
+/* -------------------------------------------------- theme switching -- */
+
+/* One frame with transitions off while every token flips at once. Without
+   this, switching to dark animates the entire page and looks like a fault. */
+.is-theming *, .is-theming *::before, .is-theming *::after {
+  transition: none !important;
+  animation-duration: 0.001ms !important;
+}
+
+/* --------------------------------------------------- top-bar prefs -- */
+
+.topbar__prefs { display: inline-flex; align-items: center; gap: 6px; }
+
+.pref {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding-block: 5px; padding-inline: 9px;
+  border: 1px solid var(--line); border-radius: var(--radius-pill);
+  background: var(--surface); color: var(--ink-2);
+  font-size: 12px; font-weight: 550; cursor: pointer;
+  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease),
+              border-color var(--t-fast) var(--ease), transform 0.08s var(--ease);
+}
+.pref:hover { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent); }
+.pref:active { transform: scale(0.96); }
+.pref__label { font-variant-numeric: tabular-nums; }
+
+@media (max-width: 900px) { .pref__label { display: none; } .pref { padding-inline: 7px; } }
+
+/* ------------------------------------------------------- profile -- */
+
+.profile {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding-block: 14px; padding-inline: 16px;
+  background: linear-gradient(120deg, var(--accent-soft), var(--surface) 62%);
+  border: 1px solid var(--accent-line); border-radius: var(--radius);
+}
+.profile__avatar {
+  display: grid; place-items: center; inline-size: 46px; block-size: 46px; flex: none;
+  border-radius: var(--radius-pill);
+  background: var(--accent); color: #fff; font-weight: 700; font-size: 16px;
+  letter-spacing: 0.02em;
+}
+.profile__body { flex: 1; min-inline-size: 180px; }
+.profile__name { font-family: var(--serif); font-size: 18px; font-weight: 600; }
+.profile__alt { color: var(--muted); font-family: var(--sans); font-size: 13px; margin-inline-start: 8px; }
+.profile__meta { color: var(--ink-2); font-size: 13px; }
+.profile__tags { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.idtag {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding-block: 3px; padding-inline: 9px; border-radius: var(--radius-pill);
+  background: var(--surface); border: 1px solid var(--line);
+  font-size: 11.5px; color: var(--ink-2); white-space: nowrap;
+}
+.idtag--role { text-transform: capitalize; }
+
+/* ------------------------------------------------- quick actions -- */
+
+.actions { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 9px; }
+.action {
+  display: grid; gap: 2px;
+  padding-block: 11px; padding-inline: 12px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--surface-2); text-decoration: none; color: var(--ink);
+  transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease),
+              transform var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
+}
+.action:hover {
+  background: var(--surface); border-color: var(--accent-line); color: var(--ink);
+  transform: translateY(-2px); box-shadow: var(--shadow-2);
+}
+.action:active { transform: translateY(0); }
+.action__icon { color: var(--accent); }
+.action__label { font-weight: 600; font-size: 13px; }
+.action__hint { color: var(--muted); font-size: 11.5px; line-height: 1.35; }
+
+/* ----------------------------------------------------- coming soon -- */
+
+.soonstrip { display: flex; gap: 8px; flex-wrap: wrap; }
+.soonchip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding-block: 6px; padding-inline: 11px; border-radius: var(--radius-pill);
+  border: 1px dashed var(--line-strong); color: var(--muted);
+  font-size: 12.5px; background: var(--surface);
+}
+.soonchip svg { color: var(--accent); opacity: 0.7; }
+
+/* -------------------------------------------- home personalisation -- */
+
+.pagehead__tools { display: flex; align-items: center; gap: 8px; }
+
+.grid__cell { transition: opacity var(--t-mid) var(--ease), transform var(--t-mid) var(--ease); }
+
+.grid--customising .grid__cell { cursor: grab; }
+.grid--customising .grid__cell:active { cursor: grabbing; }
+.grid__cell.is-dragging { opacity: 0.45; transform: scale(0.985); }
+.grid__cell.is-over > .card,
+.grid__cell.is-over > .panel { outline: 2px dashed var(--accent); outline-offset: 3px; }
+
+.cellbar {
+  display: flex; align-items: center; gap: 8px;
+  padding-block: 5px; padding-inline: 8px; margin-block-end: 6px;
+  border: 1px solid var(--accent-line); border-radius: var(--radius-sm);
+  background: var(--accent-soft); color: var(--accent);
+  font-size: 11.5px; font-weight: 600;
+}
+.cellbar__grip { display: inline-grid; place-items: center; cursor: grab; opacity: 0.75; }
+.cellbar__name { flex: 1; min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cellbar__group { display: inline-flex; gap: 3px; }
+
+.iconbtn--xs { inline-size: 22px; block-size: 22px; border-radius: 6px; }
+
+.tray {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding-block: 11px; padding-inline: 14px;
+  border: 1px dashed var(--line-strong); border-radius: var(--radius); background: var(--surface-2);
+}
+.tray__title { font-size: 12px; font-weight: 650; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+.tray__list { display: flex; gap: 7px; flex-wrap: wrap; }
+
+.chipbtn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding-block: 5px; padding-inline: 11px; border-radius: var(--radius-pill);
+  border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink-2);
+  font-size: 12.5px; cursor: pointer;
+  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
+}
+.chipbtn:hover { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent); }
+
+.notice--tip { align-items: center; gap: 10px; background: var(--accent-soft); border-color: var(--accent-line); color: var(--ink-2); }
+.notice--tip svg { color: var(--accent); flex: none; }
+
+/* ------------------------------------------------------------ toasts -- */
+
+.toaster {
+  position: fixed; inset-block-end: 20px; inset-inline-end: 20px; z-index: 80;
+  display: flex; flex-direction: column; gap: 8px; align-items: flex-end;
+  pointer-events: none;
+}
+.toast {
+  display: flex; align-items: center; gap: 9px;
+  padding-block: 9px; padding-inline: 14px;
+  border-radius: var(--radius-pill);
+  background: var(--surface); border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-2); font-size: 13px; color: var(--ink);
+  max-inline-size: min(380px, calc(100vw - 40px));
+  animation: toast-in var(--t-slow) var(--ease);
+}
+.toast--good { border-color: color-mix(in srgb, var(--good) 45%, var(--line)); }
+.toast--good svg { color: var(--good-ink); }
+.toast--warning { border-color: color-mix(in srgb, var(--warning) 55%, var(--line)); }
+.toast--warning svg { color: var(--warning-ink); }
+.toast svg { flex: none; color: var(--muted); }
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+
+/* --------------------------------------------- motion, everywhere -- */
+
+/* Cards arriving after a fetch fade up rather than snapping in. The delay is
+   capped so a twelve-portlet home screen does not stagger for a full second. */
+.grid__cell { animation: cell-in var(--t-slow) var(--ease) both; }
+@keyframes cell-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+.card, .panel { transition: box-shadow var(--t-mid) var(--ease), border-color var(--t-mid) var(--ease); }
+.card:hover, .panel:hover { box-shadow: var(--shadow-2); }
+
+.btn, .iconbtn, .chipbtn, .action, .navitem, .pref { -webkit-tap-highlight-color: transparent; }
+.iconbtn { transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), transform 0.08s var(--ease); }
+.iconbtn:active:not(:disabled) { transform: scale(0.92); }
+
+/* One honest opt-out: if the machine says reduce motion, nothing moves. It is
+   not a lesser experience -- the same states, without the travel. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .action:hover, .grid__cell.is-dragging { transform: none; }
+}
+
+/* ---------------------------------------------------------- RTL -- */
+
+/* The stylesheet is written in logical properties, so direction mostly takes
+   care of itself. What does not flip on its own is anything drawn with a
+   physical transform or a directional glyph. */
+
+[dir='rtl'] .profile { background: linear-gradient(240deg, var(--accent-soft), var(--surface) 62%); }
+
+/* Chevrons point *forward*, and forward is leftwards in Arabic. */
+[dir='rtl'] .link svg,
+[dir='rtl'] .crumb svg,
+[dir='rtl'] .dashlist__row > svg,
+[dir='rtl'] .action__icon svg { transform: scaleX(-1); }
+
+/* The portal flips to RTL before its Arabic copy lands, so every screen is
+   momentarily English text inside a right-to-left frame. `plaintext` is exactly
+   the tool for that: each run is laid out in the direction of its own first
+   strong character, so English reads left-to-right and Arabic right-to-left,
+   with no per-string decision anywhere in the components. When the Arabic copy
+   arrives, this rule keeps working and can simply stay. */
+[dir='rtl'] h1, [dir='rtl'] h2, [dir='rtl'] h3,
+[dir='rtl'] p, [dir='rtl'] li, [dir='rtl'] dt, [dir='rtl'] dd,
+[dir='rtl'] th, [dir='rtl'] td,
+[dir='rtl'] .btn, [dir='rtl'] .navitem, [dir='rtl'] .action,
+[dir='rtl'] .badge, [dir='rtl'] .idtag, [dir='rtl'] .soonchip,
+[dir='rtl'] .pref, [dir='rtl'] .chipbtn, [dir='rtl'] .rt,
+[dir='rtl'] .alertlist__body span, [dir='rtl'] .state__hint,
+[dir='rtl'] .dashlist__desc, [dir='rtl'] .roomlist__meta {
+  unicode-bidi: plaintext;
+}
+
+/* `plaintext` decides *alignment* from the run's own direction, which would
+   leave an English job title flush left under a right-aligned name. The blocks
+   where that reads as a broken card get their edge pinned back. */
+[dir='rtl'] .profile__body, [dir='rtl'] .pagehead > div { text-align: right; }
+
+/* Numbers, references, money and clock times have no strong character at all,
+   so `plaintext` would hand them to the paragraph -- and a time range read
+   right-to-left is a different range. These are pinned outright. */
+[dir='rtl'] .mono,
+[dir='rtl'] .pulse__value,
+[dir='rtl'] .kpi__value,
+[dir='rtl'] .age,
+[dir='rtl'] .meeting__time,
+[dir='rtl'] .meeting__when,
+[dir='rtl'] .reslist__date,
+[dir='rtl'] .sidebar__date,
+[dir='rtl'] .alertlist__when { direction: ltr; unicode-bidi: isolate; }
+
+/* ...and where that atom sits in a row that is otherwise right-aligned, the
+   isolation must not drag it back to the wrong edge. */
+[dir='rtl'] .reslist__date, [dir='rtl'] .sidebar__date { text-align: right; }
+
+[dir='rtl'] .toaster { align-items: flex-end; }

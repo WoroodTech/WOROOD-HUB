@@ -13,6 +13,15 @@ captured read-only from `worood-designs.myshopify.com`: 396 days of ShopifyQL sa
 sessions series, product, traffic, device and country breakdowns, and 150 recent orders
 with their line items, refunds and customers.
 
+The portal ships **light, dark and system** colour schemes, a **right-to-left** layout for
+Arabic, and a home screen each employee can rearrange for themselves. What was merged into
+this repository and why the UI looks the way it does is recorded in
+[`docs/UI-CONSOLIDATION-AND-ENHANCEMENTS.md`](docs/UI-CONSOLIDATION-AND-ENHANCEMENTS.md).
+
+`prototypes/` holds the two earlier explorations — the meeting-rooms prototype and the
+standalone employee dashboard — kept as a record of how the design arrived here. Nothing
+in `apps/` imports from them.
+
 ---
 
 ## Running it

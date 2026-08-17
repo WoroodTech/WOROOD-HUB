@@ -6,6 +6,8 @@ import { useHubModules } from '../lib/hub';
 import { useRealtime } from '../lib/realtime';
 import { Skeleton } from './States';
 import { formatDate } from '../lib/format';
+import { LocaleToggle, ThemeToggle } from './Preferences';
+import { useAppearanceVersion } from '../lib/theme';
 
 function initials(name: string): string {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? '').join('');
@@ -36,6 +38,7 @@ export function Shell() {
   const { data, isLoading, isError } = useHubModules();
   const location = useLocation();
   const [navOpen, setNavOpen] = useState(false);
+  const appearanceVersion = useAppearanceVersion();
 
   useEffect(() => { setNavOpen(false); }, [location.pathname]);
 
@@ -103,6 +106,11 @@ export function Shell() {
           <div className="topbar__spacer" />
           <RealtimeChip />
 
+          <span className="topbar__prefs">
+            <ThemeToggle />
+            <LocaleToggle />
+          </span>
+
           <div className="who">
             <span className="who__avatar" aria-hidden="true">{initials(principal?.fullName ?? '?')}</span>
             <span className="who__text">
@@ -120,7 +128,10 @@ export function Shell() {
           </button>
         </header>
 
-        <main className="content" id="main">
+        {/* Charts paint literal hex values into SVG, so a theme switch has to
+            remount them. Everything they show is in the query cache, so this
+            costs a repaint, not a round trip. */}
+        <main className="content" id="main" key={appearanceVersion}>
           <Outlet />
         </main>
       </div>
