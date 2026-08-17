@@ -49,6 +49,13 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
   const [revoked, setRevoked] = useState<string | null>(null);
 
   const hasSales = !!principal?.permissions?.some((p) => SALES_PERMS.includes(p));
+  /* The socket authenticates as one person. Keying the connection effect on the
+     principal's id -- not merely on whether they hold sales permissions -- means
+     signing out and back in as a different employee tears the old socket down.
+     Without it, two accounts that both have sales access share one connection
+     opened with the first one's token, and the first one's events invalidate the
+     second one's cache. */
+  const identity = principal?.id ?? null;
 
   /** '*' means invalidate-all; otherwise only the dashboards that hold one of
    *  the named widgets, plus the always-cheap portlet and order lists. */
@@ -87,6 +94,9 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
       reconnectionDelayMax: 8000,
     });
     socketRef.current = socket;
+    // A new identity is a new session: nothing the previous one had open should
+    // be re-joined on its behalf.
+    roomsRef.current.clear();
 
     socket.on('ready', () => {
       setStatus('live');
@@ -111,7 +121,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [hasSales, invalidate, queryClient]);
+  }, [hasSales, identity, invalidate, queryClient]);
 
   const subscribe = useCallback((dashboardId: string) => {
     roomsRef.current.add(dashboardId);

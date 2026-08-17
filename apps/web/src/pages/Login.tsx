@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Navigate, useLocation } from 'react-router-dom';
+import { Navigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { Icon, WoroodMark } from '../components/Icon';
 
@@ -18,14 +18,23 @@ const ACCOUNTS = [
 
 export function Login() {
   const { signIn, status } = useAuth();
-  const location = useLocation() as { state?: { from?: string } };
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState(DEMO_PASSWORD);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * Always home, never back to where the last session was interrupted.
+   *
+   * `RequireAuth` records the path it bounced you from, which is right for an
+   * expired session resumed by the same person. It is wrong here: the person
+   * signing in is often not the person who was signed in, and returning them to
+   * a sales dashboard the previous employee had open is at best confusing and at
+   * worst a screen they hold no permission for. Home is the one route every
+   * account has, and it is composed from what *they* are granted.
+   */
   if (status === 'authenticated') {
-    return <Navigate to={location.state?.from ?? '/'} replace />;
+    return <Navigate to="/" replace />;
   }
 
   const submit = async (event: React.FormEvent) => {
