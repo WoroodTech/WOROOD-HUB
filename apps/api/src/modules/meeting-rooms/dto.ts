@@ -62,12 +62,19 @@ export class UpdateReservation {
   @IsOptional() @IsArray() @ArrayMaxSize(200) @IsUUID(undefined, { each: true }) attendeeUserIds?: string[];
 }
 
+export class RespondToInvitation {
+  @IsIn(['ACCEPTED', 'DECLINED']) response!: 'ACCEPTED' | 'DECLINED';
+}
+
 export class CancelReservation {
   @IsOptional() @IsString() @MaxLength(500) reason?: string;
 }
 
 export class ListReservationsQuery {
-  @IsOptional() @IsIn(['mine', 'all']) scope?: 'mine' | 'all';
+  /** `mine` is anything you organise *or* were invited to -- a meeting someone
+   *  booked for you is one of yours. `invited` narrows to the ones where you
+   *  are a guest; `all` needs the manage-any permission. */
+  @IsOptional() @IsIn(['mine', 'invited', 'organised', 'all']) scope?: 'mine' | 'invited' | 'organised' | 'all';
   @IsOptional() @IsIn(['upcoming', 'past', 'all']) period?: 'upcoming' | 'past' | 'all';
   @IsOptional() @IsIn(['PENDING', 'CONFIRMED', 'CANCELLED', 'COMPLETED']) status?: string;
   @IsOptional() @IsUUID() roomId?: string;

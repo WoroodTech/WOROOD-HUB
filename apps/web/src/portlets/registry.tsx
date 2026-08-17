@@ -11,10 +11,10 @@
 
 import type { ComponentType } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
-  FreeNowPortlet, MyAlertsPortlet, MyDashboardsPortlet, NextMeetingPortlet,
-  StorePulsePortlet, UpcomingReservationsPortlet,
+  FreeNowPortlet, MyAlertsPortlet, MyDashboardsPortlet, MyInvitationsPortlet,
+  NextMeetingPortlet, StorePulsePortlet, UpcomingReservationsPortlet,
 } from '../contract';
 import { api } from '../lib/api';
 import { qk } from '../lib/keys';
@@ -56,7 +56,12 @@ function NextMeeting({ moduleKey, portletKey, title }: PortletProps) {
   const { data, isPending, error, refetch } = usePortlet<NextMeetingPortlet>(moduleKey, portletKey);
   const meeting = data?.meeting;
   return (
-    <Card title={title} subtitle="Your next booking">
+    <Card
+      title={title}
+      subtitle={meeting && !meeting.isOrganiser
+        ? `Booked by ${meeting.organiserName}`
+        : 'Your next booking'}
+    >
       {isPending ? <LoadingState lines={3} />
         : error ? <ErrorState error={error} onRetry={() => void refetch()} compact />
           : !meeting ? (
@@ -71,6 +76,11 @@ function NextMeeting({ moduleKey, portletKey, title }: PortletProps) {
                 <span className="meeting__time">{formatTime(meeting.startsAt)} – {formatTime(meeting.endsAt)}</span>
               </p>
               <p className="meeting__title">{meeting.title}</p>
+              {!meeting.isOrganiser && meeting.myResponse === 'INVITED' ? (
+                <p className="meeting__pending">
+                  <Icon name="clock" size={13} /> You have not replied yet
+                </p>
+              ) : null}
               <dl className="factlist">
                 <div><dt>Room</dt><dd>{meeting.room}{meeting.floor ? `, floor ${meeting.floor}` : ''}</dd></div>
                 <div><dt>Attendees</dt><dd>{formatInteger(meeting.attendees)}</dd></div>
@@ -117,7 +127,7 @@ function UpcomingReservations({ moduleKey, portletKey, title }: PortletProps) {
   const { data, isPending, error, refetch } = usePortlet<UpcomingReservationsPortlet>(moduleKey, portletKey);
   const items = data?.reservations ?? [];
   return (
-    <Card title={title} subtitle="The rest of your week">
+    <Card title={title} subtitle="Yours and the ones you were invited to">
       {isPending ? <LoadingState lines={3} />
         : error ? <ErrorState error={error} onRetry={() => void refetch()} compact />
           : !items.length ? <EmptyState icon="calendar" title="No upcoming reservations" hint="Anything you book will show up here." />
@@ -131,12 +141,88 @@ function UpcomingReservations({ moduleKey, portletKey, title }: PortletProps) {
                     </span>
                     <span className="reslist__body">
                       <strong>{r.title}</strong>
-                      <span>{r.room} · <span className="mono">{r.reference}</span></span>
+                      <span>
+                        {r.room} · <span className="mono">{r.reference}</span>
+                        {!r.isOrganiser ? <> · <em>by {r.organiserName}</em></> : null}
+                      </span>
                     </span>
                   </li>
                 ))}
               </ul>
             )}
+    </Card>
+  );
+}
+
+/**
+ * Invitations waiting on the person looking at the screen.
+ *
+ * This is the only portlet that asks something of the viewer, so it is the only
+ * one with buttons that change state, and it disappears once they have answered
+ * everything -- a card that says "nothing to do" every morning trains people to
+ * stop reading it.
+ *
+ * Declining does not remove them from the meeting. The organiser needs to see
+ * that they were asked and said no, which is not the same as never being asked.
+ */
+function MyInvitations({ moduleKey, portletKey, title }: PortletProps) {
+  const { data, isPending, error, refetch } = usePortlet<MyInvitationsPortlet>(moduleKey, portletKey);
+  const queryClient = useQueryClient();
+  const invitations = data?.invitations ?? [];
+
+  const respond = useMutation({
+    mutationFn: ({ id, response }: { id: string; response: 'ACCEPTED' | 'DECLINED' }) =>
+      api(`/meeting-rooms/reservations/${id}/response`, { method: 'POST', body: { response } }),
+    onSuccess: () => {
+      // Answering changes what the other meeting-room portlets should show too.
+      void queryClient.invalidateQueries({ queryKey: ['portlet'] });
+      void queryClient.invalidateQueries({ queryKey: ['mr'] });
+    },
+  });
+
+  return (
+    <Card
+      title={title}
+      subtitle="Meetings someone has asked you to"
+      actions={invitations.length ? <Badge tone="warning" icon="bell">{invitations.length}</Badge> : undefined}
+    >
+      {isPending ? <LoadingState lines={3} />
+        : error ? <ErrorState error={error} onRetry={() => void refetch()} compact />
+          : !invitations.length ? (
+            <EmptyState icon="check" title="Nothing waiting on you"
+                        hint="Invitations appear here until you accept or decline." />
+          ) : (
+            <ul className="invitelist">
+              {invitations.map((i) => (
+                <li key={i.id} className="invite">
+                  <span className="invite__when">
+                    <strong>{formatWeekday(i.startsAt)}</strong>
+                    <span>{formatTime(i.startsAt)} – {formatTime(i.endsAt)}</span>
+                  </span>
+                  <span className="invite__body">
+                    <strong>{i.title}</strong>
+                    <span>{i.room}{i.floor ? `, floor ${i.floor}` : ''} · {i.organiserName}</span>
+                  </span>
+                  <span className="invite__actions">
+                    <button
+                      type="button" className="btn btn--primary btn--sm"
+                      disabled={respond.isPending}
+                      onClick={() => respond.mutate({ id: i.id, response: 'ACCEPTED' })}
+                    >
+                      <Icon name="check" size={14} /> <span className="btn__label">Accept</span>
+                    </button>
+                    <button
+                      type="button" className="btn btn--ghost btn--sm"
+                      disabled={respond.isPending}
+                      onClick={() => respond.mutate({ id: i.id, response: 'DECLINED' })}
+                    >
+                      <span className="btn__label">Decline</span>
+                    </button>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
     </Card>
   );
 }
@@ -340,6 +426,7 @@ export const LOCAL_PORTLETS: ReadonlyArray<{ key: string; title: string; width: 
 
 export const PORTLET_REGISTRY: Record<string, ComponentType<PortletProps>> = {
   'next-meeting': NextMeeting,
+  'my-invitations': MyInvitations,
   'free-now': FreeNow,
   'upcoming-reservations': UpcomingReservations,
   'my-dashboards': MyDashboards,

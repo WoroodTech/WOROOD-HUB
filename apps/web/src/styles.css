@@ -1547,3 +1547,99 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 .hint { font-size: 12.5px; color: var(--muted); margin-block-end: 10px; }
 .hint strong { color: var(--ink-2); }
+
+/* ==================================================================== *
+   Inviting colleagues: the picker, invitations, and guest responses.
+ * ==================================================================== */
+
+.attendees { display: flex; flex-direction: column; gap: 7px; }
+.attendees__head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+
+.attendees__chosen { display: flex; flex-wrap: wrap; gap: 6px; }
+.attendee {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding-block: 4px; padding-inline: 6px 4px; border-radius: var(--radius-pill);
+  background: var(--accent-soft); border: 1px solid var(--accent-line);
+  font-size: 12.5px; color: var(--accent);
+}
+.attendee__name { padding-inline-start: 4px; }
+.attendee__remove {
+  display: inline-grid; place-items: center; inline-size: 18px; block-size: 18px;
+  border: 0; border-radius: 50%; cursor: pointer;
+  background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent);
+  transition: background var(--t-fast) var(--ease);
+}
+.attendee__remove:hover { background: var(--accent); color: #fff; }
+
+.attendees__results {
+  display: flex; flex-direction: column;
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--surface); overflow: hidden;
+}
+.attendees__result {
+  inline-size: 100%; display: grid; align-items: center; gap: 0 10px; text-align: start;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding-block: 8px; padding-inline: 11px;
+  border: 0; border-block-end: 1px solid var(--line);
+  background: transparent; color: var(--ink); cursor: pointer;
+  transition: background var(--t-fast) var(--ease);
+}
+.attendees__results li:last-child .attendees__result { border-block-end: 0; }
+.attendees__result:hover { background: var(--accent-soft); }
+.attendees__result svg { grid-column: 2; grid-row: 1 / 3; color: var(--accent); }
+.attendees__resultName { font-weight: 600; font-size: 13px; grid-column: 1; }
+.attendees__resultMeta { font-size: 11.5px; color: var(--muted); grid-column: 1; }
+
+.attendees__note { font-size: 11.5px; color: var(--muted); }
+
+/* --------------------------------------------------------- invitations -- */
+
+/* The one block on the page that is waiting on the reader, so it is the one
+   block that gets the accent edge. */
+.awaiting { display: flex; flex-direction: column; gap: 9px; }
+.awaiting__title {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 13px; font-weight: 650; color: var(--accent);
+}
+
+.booking--invite { border-color: var(--accent-line); background: var(--accent-soft); }
+.booking--invite .booking__when { border-inline-end-color: var(--accent-line); }
+.booking--invite .booking__side { align-items: stretch; }
+
+.invitelist { display: flex; flex-direction: column; }
+.invite {
+  display: grid; gap: 3px 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding-block: 11px; border-block-end: 1px solid var(--line);
+}
+.invite:last-child { border-block-end: 0; }
+.invite__when {
+  grid-column: 1; display: flex; gap: 7px; align-items: baseline;
+  font-size: 12px; color: var(--muted);
+}
+.invite__when strong { color: var(--ink-2); }
+.invite__body { grid-column: 1; display: flex; flex-direction: column; min-inline-size: 0; }
+.invite__body strong { font-size: 13.5px; }
+.invite__body span { font-size: 11.5px; color: var(--muted); }
+.invite__actions { grid-column: 2; grid-row: 1 / 3; display: flex; flex-direction: column; gap: 5px; align-self: center; }
+
+@media (max-width: 520px) {
+  .invite { grid-template-columns: minmax(0, 1fr); }
+  .invite__actions { grid-column: 1; grid-row: auto; flex-direction: row; margin-block-start: 7px; }
+}
+
+.meeting__pending {
+  display: inline-flex; align-items: center; gap: 5px;
+  margin-block-start: 5px; font-size: 12px; color: var(--warning-ink);
+}
+
+/* ------------------------------------------------------- guest replies -- */
+
+.guestlist { display: flex; flex-wrap: wrap; gap: 6px; margin-block-start: 8px; }
+.guest {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding-block: 3px; padding-inline: 4px 9px; border-radius: var(--radius-pill);
+  border: 1px solid var(--line); background: var(--surface-2);
+  font-size: 11.5px;
+}
+.guest__name { color: var(--ink-2); }

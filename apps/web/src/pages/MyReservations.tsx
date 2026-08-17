@@ -26,6 +26,11 @@ import { Icon } from '../components/Icon';
 import { formatDate, formatTime, formatWeekday } from '../lib/format';
 
 type Period = 'upcoming' | 'past';
+type Scope = 'mine' | 'invited' | 'organised' | 'all';
+
+const RESPONSE_TONE: Record<string, 'good' | 'critical' | 'neutral'> = {
+  ACCEPTED: 'good', DECLINED: 'critical', INVITED: 'neutral',
+};
 
 const STATUS_TONE: Record<string, 'good' | 'warning' | 'critical' | 'neutral'> = {
   CONFIRMED: 'good', PENDING: 'warning', CANCELLED: 'critical', COMPLETED: 'neutral',
@@ -37,15 +42,31 @@ export function MyReservations() {
   const queryClient = useQueryClient();
 
   const [period, setPeriod] = useState<Period>('upcoming');
-  const [scope, setScope] = useState<'mine' | 'all'>('mine');
+  const [scope, setScope] = useState<Scope>('mine');
   const [cancelling, setCancelling] = useState<Reservation | null>(null);
 
   const canSeeAll = can(PERMISSIONS.RESERVATION_MANAGE_ANY);
-  const params = new URLSearchParams({ period, scope: canSeeAll ? scope : 'mine' }).toString();
+  const effectiveScope: Scope = scope === 'all' && !canSeeAll ? 'mine' : scope;
+  const params = new URLSearchParams({ period, scope: effectiveScope }).toString();
 
   const list = useQuery({
     queryKey: qk.reservations(params),
     queryFn: () => api<ReservationsResponse>(`/meeting-rooms/reservations?${params}`),
+  });
+
+  const respond = useMutation({
+    mutationFn: ({ id, response }: { id: string; response: 'ACCEPTED' | 'DECLINED' }) =>
+      api<Reservation>(`/meeting-rooms/reservations/${id}/response`, {
+        method: 'POST', body: { response },
+      }),
+    onSuccess: (r) => {
+      toast.push(r.myResponse === 'ACCEPTED'
+        ? `You are going to "${r.title}". The organiser has been told.`
+        : `You declined "${r.title}". The organiser has been told.`, 'good');
+      void queryClient.invalidateQueries({ queryKey: ['mr'] });
+      void queryClient.invalidateQueries({ queryKey: ['portlet'] });
+    },
+    onError: (e) => toast.push(e instanceof Error ? e.message : 'Could not reply.', 'warning'),
   });
 
   const cancel = useMutation({
@@ -63,14 +84,23 @@ export function MyReservations() {
 
   const reservations = list.data?.reservations ?? [];
 
+  /* Unanswered invitations come out of the main list and go to the top. They
+     are the only thing on this screen that is waiting on the person reading
+     it, and mixed in among twenty confirmed meetings they get missed. */
+  const awaiting = period === 'upcoming'
+    ? reservations.filter((r) => r.myRole === 'attendee' && r.myResponse === 'INVITED' && r.status !== 'CANCELLED')
+    : [];
+  const awaitingIds = new Set(awaiting.map((r) => r.id));
+  const rest = reservations.filter((r) => !awaitingIds.has(r.id));
+
   return (
     <div className="page">
       <header className="pagehead">
         <div>
-          <h1 className="pagehead__title">My reservations</h1>
+          <h1 className="pagehead__title">My meetings</h1>
           <p className="pagehead__sub">
-            Cancelling frees the room immediately — the booking stays on the record
-            with who cancelled it and why.
+            Meetings you booked and meetings you were invited to. Cancelling frees the
+            room immediately — the booking stays on the record with who cancelled it and why.
           </p>
         </div>
         <div className="pagehead__tools">
@@ -93,39 +123,85 @@ export function MyReservations() {
           ))}
         </div>
 
-        {canSeeAll ? (
-          <div className="switch" role="group" aria-label="Whose">
-            {(['mine', 'all'] as const).map((s) => (
-              <button
-                key={s} type="button" aria-pressed={scope === s}
-                className={`switch__btn${scope === s ? ' is-on' : ''}`}
-                onClick={() => setScope(s)}
-              >
-                {s === 'mine' ? 'Mine' : 'Everyone’s'}
-              </button>
-            ))}
-          </div>
-        ) : null}
+        <div className="switch" role="group" aria-label="Whose">
+          {([
+            ['mine', 'All mine'],
+            ['organised', 'I booked'],
+            ['invited', 'I was invited'],
+            ...(canSeeAll ? [['all', 'Everyone’s'] as const] : []),
+          ] as Array<[Scope, string]>).map(([s, label]) => (
+            <button
+              key={s} type="button" aria-pressed={scope === s}
+              className={`switch__btn${scope === s ? ' is-on' : ''}`}
+              onClick={() => setScope(s)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {list.isPending ? <LoadingState label="Loading your reservations" lines={4} /> : null}
       {list.error ? <ErrorState error={list.error} onRetry={() => void list.refetch()} /> : null}
 
+      {awaiting.length ? (
+        <section className="awaiting">
+          <h2 className="awaiting__title">
+            <Icon name="bell" size={15} />
+            {awaiting.length === 1 ? 'One invitation is waiting for you' : `${awaiting.length} invitations are waiting for you`}
+          </h2>
+          <ul className="bookings">
+            {awaiting.map((r) => (
+              <li key={r.id}>
+                <article className="booking booking--invite">
+                  <div className="booking__when">
+                    <strong>{formatWeekday(r.startsAt)}</strong>
+                    <span>{formatDate(r.startsAt)}</span>
+                    <span className="booking__hours">{formatTime(r.startsAt)} – {formatTime(r.endsAt)}</span>
+                  </div>
+                  <div className="booking__body">
+                    <h3 className="booking__title">{r.title}</h3>
+                    <p className="booking__meta">
+                      {r.room.name}{r.room.floor ? `, floor ${r.room.floor}` : ''} · invited by {r.organiser.fullName}
+                    </p>
+                    {r.description ? <p className="booking__note">{r.description}</p> : null}
+                  </div>
+                  <div className="booking__side">
+                    <button
+                      type="button" className="btn btn--primary btn--sm" disabled={respond.isPending}
+                      onClick={() => respond.mutate({ id: r.id, response: 'ACCEPTED' })}
+                    >
+                      <Icon name="check" size={14} /> <span className="btn__label">Accept</span>
+                    </button>
+                    <button
+                      type="button" className="btn btn--ghost btn--sm" disabled={respond.isPending}
+                      onClick={() => respond.mutate({ id: r.id, response: 'DECLINED' })}
+                    >
+                      <span className="btn__label">Decline</span>
+                    </button>
+                  </div>
+                </article>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       {list.data && !reservations.length ? (
         <Card title={period === 'upcoming' ? 'Nothing booked' : 'Nothing in the past'} tone="quiet">
           <EmptyState
             icon="calendar"
-            title={period === 'upcoming' ? 'Your calendar is clear' : 'No past bookings'}
+            title={period === 'upcoming' ? 'Your calendar is clear' : 'No past meetings'}
             hint={period === 'upcoming'
               ? <>When you need a room, <Link to="/meeting-rooms/book">book one</Link>.</>
-              : 'Bookings move here once they have finished.'}
+              : 'Meetings move here once they have finished.'}
           />
         </Card>
       ) : null}
 
-      {reservations.length ? (
+      {rest.length ? (
         <ul className="bookings">
-          {reservations.map((r) => (
+          {rest.map((r) => (
             <li key={r.id}>
               <article className={`booking${r.status === 'CANCELLED' ? ' booking--void' : ''}`}>
                 <div className="booking__when">
@@ -141,8 +217,24 @@ export function MyReservations() {
                     {' · '}{r.attendeeCount} attending
                   </p>
                   {r.description ? <p className="booking__note">{r.description}</p> : null}
-                  {r.organiser && scope === 'all' ? (
+                  {r.myRole !== 'organiser' ? (
                     <p className="booking__meta">Booked by {r.organiser.fullName}</p>
+                  ) : null}
+
+                  {/* Who else is coming, and what they said. The organiser needs
+                      this to know whether the meeting is worth having; an
+                      attendee needs it to know who else will be in the room. */}
+                  {r.attendees.length ? (
+                    <ul className="guestlist">
+                      {r.attendees.map((a) => (
+                        <li key={a.userId ?? a.email} className="guest">
+                          <Badge tone={RESPONSE_TONE[a.response] ?? 'neutral'}>
+                            {a.response === 'INVITED' ? 'no reply' : a.response.toLowerCase()}
+                          </Badge>
+                          <span className="guest__name">{a.name}</span>
+                        </li>
+                      ))}
+                    </ul>
                   ) : null}
                   {r.status === 'CANCELLED' && r.cancellationReason ? (
                     <p className="booking__note">Cancelled: {r.cancellationReason}</p>
@@ -151,6 +243,11 @@ export function MyReservations() {
 
                 <div className="booking__side">
                   <Badge tone={STATUS_TONE[r.status] ?? 'neutral'}>{r.status.toLowerCase()}</Badge>
+                  {r.myRole === 'attendee' && r.myResponse && r.myResponse !== 'INVITED' ? (
+                    <Badge tone={RESPONSE_TONE[r.myResponse]}>
+                      you {r.myResponse.toLowerCase()}
+                    </Badge>
+                  ) : null}
                   <span className="mono booking__ref">{r.reference}</span>
                   {r.canManage && r.status !== 'CANCELLED' && period === 'upcoming' ? (
                     <button
@@ -158,6 +255,20 @@ export function MyReservations() {
                       onClick={() => setCancelling(r)}
                     >
                       <Icon name="minus" size={14} /> <span className="btn__label">Cancel</span>
+                    </button>
+                  ) : null}
+                  {/* An attendee cannot cancel somebody else's meeting -- they
+                      change their own answer instead. */}
+                  {r.myRole === 'attendee' && !r.canManage && r.status !== 'CANCELLED' && period === 'upcoming' ? (
+                    <button
+                      type="button" className="btn btn--ghost btn--sm" disabled={respond.isPending}
+                      onClick={() => respond.mutate({
+                        id: r.id, response: r.myResponse === 'DECLINED' ? 'ACCEPTED' : 'DECLINED',
+                      })}
+                    >
+                      <span className="btn__label">
+                        {r.myResponse === 'DECLINED' ? 'Actually, I’ll come' : 'Can’t make it'}
+                      </span>
                     </button>
                   ) : null}
                 </div>

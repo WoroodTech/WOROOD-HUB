@@ -135,11 +135,53 @@ code:
 4. The seeded blackout was anchored with `date_trunc('day', now())`, which on a
    UTC server landed four hours off the intended Cairo maintenance window.
 
+## Inviting colleagues
+
+Added after the first pass, and it fixed a real hole rather than adding a
+feature. The attendees table and `attendeeUserIds` already existed — but nothing
+invited anyone, and the three home portlets asked `organizer_id = me`. **You
+could be invited to a meeting and never find out**, because the only screen that
+would have told you filtered you out of it.
+
+- **Booking** has an attendee picker over the employee directory: search by two
+  letters, chosen people stay visible as chips. The organiser is never offered —
+  they are attending by definition.
+- **The headcount is derived.** Name five colleagues and six people are coming,
+  them and you. Capacity is checked against that rather than against a number
+  somebody forgot to update after adding a name. A separate field covers heads
+  who are not on the system.
+- **The three portlets now ask "am I *in* this meeting"**, not "did I book it".
+  A meeting you declined is excluded — you said you were not coming. A new
+  portlet, *Awaiting Your Reply*, carries Accept and Decline inline and is
+  ordered above *Free Right Now*, because an unanswered invitation is the one
+  thing on that part of the home screen that somebody is waiting on you for.
+- **Declining does not remove you.** The organiser needs to see that you were
+  asked and said no, which is not the same as never being asked.
+- **Editing the guest list preserves the replies already given.** The attendee
+  rows are diffed rather than rebuilt: a delete-and-reinsert would silently reset
+  everyone to `INVITED` every time the organiser fixed a typo, and the accepts
+  already collected would vanish. This is asserted directly.
+- **Four notifications, four different sentences**: invited, the meeting moved,
+  it was cancelled and why, and — back to the organiser — who accepted or
+  declined. Telling the already-invited they have been "invited" when a meeting
+  merely moved would be wrong, so it does not.
+- **A notification failure never fails the booking.** The invitation is the
+  attendee row; the notification is the announcement. Losing a meeting because a
+  notification insert failed would be far worse than someone finding it on their
+  home screen unprompted.
+
+`test/invitations.test.ts` — 41 assertions. The central one is proven by calling
+the *invitee's own portlet endpoints*, the same requests their browser makes on
+sign-in, rather than by checking that a row landed in a join table.
+
 ## Still open
 
-- **Attendees** are stored, validated and returned, but no screen invites you to
-  add them yet. The booking form collects a headcount, not a guest list.
 - **Approval** puts a booking in `PENDING` and holds the slot, but there is no
   queue for Facilities to approve from — `PATCH` the status or use SQL for now.
 - **Blackouts** are enforced everywhere and seeded, but only creatable in SQL.
+- **External guests.** The schema holds an e-mail and a name for someone outside
+  the company; only internal colleagues can be picked so far.
+- **No calendar invitation.** Nothing lands in Outlook or Google — there is no
+  mail transport in this build, so the portal is the only place a meeting
+  appears.
 - **Arabic copy.** The layout mirrors; the strings are still English.

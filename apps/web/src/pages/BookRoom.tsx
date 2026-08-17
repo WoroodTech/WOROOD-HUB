@@ -17,7 +17,8 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
-  AvailabilityResponse, MeetingLocation, MeetingRoomEquipment, Reservation, RoomAvailability,
+  AvailabilityResponse, DirectoryPerson, MeetingLocation, MeetingRoomEquipment,
+  Reservation, RoomAvailability,
 } from '../contract';
 import { api, ApiError } from '../lib/api';
 import { qk } from '../lib/keys';
@@ -25,6 +26,7 @@ import { useToast } from '../lib/toast';
 import { Badge, Card } from '../components/Card';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import { Icon } from '../components/Icon';
+import { AttendeePicker } from '../components/AttendeePicker';
 import { CAIRO, formatTime, formatWeekday } from '../lib/format';
 
 /** Durations people actually book, rather than a free-text minutes box. */
@@ -88,10 +90,14 @@ export function BookRoom() {
       api<Reservation>('/meeting-rooms/reservations', { method: 'POST', body }),
     onSuccess: (reservation) => {
       setChosen(null);
+      const invited = reservation.attendees.length;
+      const told = invited
+        ? ` ${invited} ${invited === 1 ? 'colleague was' : 'colleagues were'} invited.`
+        : '';
       toast.push(
         reservation.status === 'PENDING'
-          ? `Requested — ${reservation.reference} is waiting for approval.`
-          : `Booked — ${reservation.reference}.`,
+          ? `Requested — ${reservation.reference} is waiting for approval.${told}`
+          : `Booked — ${reservation.reference}.${told}`,
         'good',
       );
       void queryClient.invalidateQueries({ queryKey: ['mr'] });
@@ -303,12 +309,19 @@ function ConfirmBooking({ room, startsAt, endsAt, busy, error, onCancel, onConfi
   startsAt: string; endsAt: string;
   busy: boolean; error: unknown;
   onCancel: () => void;
-  onConfirm: (body: { title: string; description?: string; attendeeCount: number }) => void;
+  onConfirm: (body: {
+    title: string; description?: string; attendeeCount: number; attendeeUserIds: string[];
+  }) => void;
 }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [attendeeCount, setAttendeeCount] = useState(2);
+  const [guests, setGuests] = useState<DirectoryPerson[]>([]);
+  /** Extra heads beyond the named guests -- people from outside the system, or
+   *  colleagues joining without needing the invitation. */
+  const [extra, setExtra] = useState(0);
 
+  // The organiser, everyone named, and anyone counted but not named.
+  const attendeeCount = 1 + guests.length + extra;
   const tooMany = attendeeCount > room.capacity;
   const conflict = error instanceof ApiError && error.status === 409;
 
@@ -339,15 +352,22 @@ function ConfirmBooking({ room, startsAt, endsAt, busy, error, onCancel, onConfi
             />
           </label>
 
+          <AttendeePicker value={guests} onChange={setGuests} capacity={room.capacity} />
+
           <label className="field">
-            <span className="field__label">How many attending</span>
+            <span className="field__label">
+              Anyone else <span className="field__opt">not on the system, or joining without an invitation</span>
+            </span>
             <input
-              className="input" type="number" min={1} max={room.capacity} value={attendeeCount}
-              onChange={(e) => setAttendeeCount(Number(e.target.value) || 1)}
+              className="input" type="number" min={0} max={Math.max(0, room.capacity - 1 - guests.length)}
+              value={extra}
+              onChange={(e) => setExtra(Math.max(0, Number(e.target.value) || 0))}
             />
-            {tooMany ? (
-              <span className="field__error">{room.name} seats {room.capacity}.</span>
-            ) : null}
+            <span className={tooMany ? 'field__error' : 'field__opt'}>
+              {tooMany
+                ? `${attendeeCount} attending but ${room.name} seats ${room.capacity}.`
+                : `${attendeeCount} attending in total.`}
+            </span>
           </label>
 
           <label className="field">
@@ -382,6 +402,7 @@ function ConfirmBooking({ room, startsAt, endsAt, busy, error, onCancel, onConfi
               title: title.trim(),
               description: description.trim() || undefined,
               attendeeCount,
+              attendeeUserIds: guests.map((g) => g.id),
             })}
           >
             {busy ? 'Booking…' : room.requiresApproval ? 'Request room' : 'Book room'}

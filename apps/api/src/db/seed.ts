@@ -358,6 +358,40 @@ async function main() {
     }
   }
 
+  /* Guests on the seeded meetings, so the invitations portlet and the reply
+     buttons have something real to show on a fresh install -- and so at least
+     one person logs in to find a meeting they did not book. */
+  await query(`DELETE FROM mr_reservation_attendees`);
+  const GUESTS: Array<[string, string[], string]> = [
+    // organiser email, guest emails, their response
+    ['yara.saleh@worood.co',   ['omar.khaled@worood.co', 'hala.mansour@worood.co'], 'INVITED'],
+    ['karim.fouad@worood.co',  ['yara.saleh@worood.co', 'nour.hassan@worood.co'],   'ACCEPTED'],
+    ['facilities@worood.co',   ['omar.khaled@worood.co'],                            'DECLINED'],
+    ['omar.khaled@worood.co',  ['facilities@worood.co'],                             'INVITED'],
+  ];
+  let invitations = 0;
+  for (const [organiser, guests, response] of GUESTS) {
+    const meeting = await one(
+      `SELECT id FROM mr_reservations
+        WHERE organizer_id = $1 AND status = 'CONFIRMED' AND starts_at > now()
+        ORDER BY starts_at ASC LIMIT 1`, [userIds[organiser]]);
+    if (!meeting) continue;
+    for (const guest of guests) {
+      if (!userIds[guest]) continue;
+      await query(
+        `INSERT INTO mr_reservation_attendees (reservation_id, user_id, response, responded_at)
+         VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`,
+        [meeting.id, userIds[guest], response,
+         response === 'INVITED' ? null : new Date()]);
+      invitations++;
+    }
+    // The headcount should agree with the guest list plus the organiser.
+    await query(
+      `UPDATE mr_reservations SET attendees = GREATEST(attendees, $2) WHERE id = $1`,
+      [meeting.id, guests.length + 1]);
+  }
+  console.log(`    invitations   ${invitations}`);
+
   /* shop */
   const shopFix = readFix('shop.json') ?? {};
   const shop = await one(

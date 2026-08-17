@@ -15,9 +15,10 @@ import { CurrentUser, Permissions, Principal } from '../../common/auth';
 import { query } from '../../common/db';
 import { registerHubModule } from '../../core/hub-registry';
 import { MR_PERMISSIONS } from './permissions';
+import { CoreModule } from '../../core/core.module';
 import {
   AvailabilityQuery, CancelReservation, CreateReservation, ListReservationsQuery,
-  ListRoomsQuery, UpdateReservation, UpsertRoom,
+  ListRoomsQuery, RespondToInvitation, UpdateReservation, UpsertRoom,
 } from './dto';
 import { RoomsService } from './rooms.service';
 import { AvailabilityService } from './availability.service';
@@ -40,8 +41,12 @@ export const MEETING_ROOMS_MODULE = registerHubModule({
   // No permission gate: every employee may see their own next meeting.
   portlets: [
     { key: 'next-meeting', title: 'My Next Meeting', titleAr: 'اجتماعي القادم', width: 4, order: 10 },
+    /* Ordered above "free now" deliberately: an unanswered invitation is
+       something somebody is waiting on you for, and it should be the first
+       meeting-rooms thing you see rather than the last. */
+    { key: 'my-invitations', title: 'Awaiting Your Reply', titleAr: 'بانتظار ردك', width: 4, order: 20 },
     { key: 'free-now', title: 'Free Right Now', titleAr: 'متاحة الآن', width: 4, order: 30 },
-    { key: 'upcoming-reservations', title: 'My Upcoming Reservations', titleAr: 'حجوزاتي القادمة', width: 4, order: 40 },
+    { key: 'upcoming-reservations', title: 'My Meetings', titleAr: 'اجتماعاتي', width: 4, order: 40 },
   ],
   permissions: [
     { key: MR_PERMISSIONS.ROOM_MANAGE, description: 'Create, edit and retire rooms' },
@@ -53,20 +58,61 @@ export const MEETING_ROOMS_MODULE = registerHubModule({
 
 @Controller('meeting-rooms/portlets')
 export class MeetingRoomsPortletsController {
+  /* "My next meeting" means the next one I am *in*, not the next one I booked.
+     Before invitations existed these three queries asked only for
+     `organizer_id = me`, which is why a meeting a colleague booked for you was
+     invisible on your own home screen. A meeting you declined is excluded --
+     you said you were not coming. */
   @Get('next-meeting')
   async nextMeeting(@CurrentUser() p: Principal) {
     const rows = await query(
       `SELECT r.reference, r.title, r.starts_at, r.ends_at, r.attendees,
-              rm.name AS room, rm.floor
-         FROM mr_reservations r JOIN mr_rooms rm ON rm.id = r.room_id
-        WHERE r.organizer_id = $1 AND r.status IN ('PENDING','CONFIRMED') AND r.ends_at > now()
+              rm.name AS room, rm.floor,
+              r.organizer_id = $1 AS is_organiser,
+              u.full_name AS organiser_name,
+              (SELECT a.response FROM mr_reservation_attendees a
+                WHERE a.reservation_id = r.id AND a.user_id = $1) AS my_response
+         FROM mr_reservations r
+         JOIN mr_rooms rm    ON rm.id = r.room_id
+         JOIN core_users u   ON u.id = r.organizer_id
+        WHERE r.status IN ('PENDING','CONFIRMED') AND r.ends_at > now()
+          AND (r.organizer_id = $1 OR EXISTS (
+                SELECT 1 FROM mr_reservation_attendees a
+                 WHERE a.reservation_id = r.id AND a.user_id = $1
+                   AND a.response <> 'DECLINED'))
         ORDER BY r.starts_at ASC LIMIT 1`, [p.id],
     );
     const m = rows[0];
     return { meeting: m ? {
       reference: m.reference, title: m.title, room: m.room, floor: m.floor,
       startsAt: m.starts_at, endsAt: m.ends_at, attendees: m.attendees,
+      isOrganiser: m.is_organiser,
+      organiserName: m.is_organiser ? null : m.organiser_name,
+      myResponse: m.my_response ?? null,
     } : null };
+  }
+
+  /** Invitations nobody has answered yet -- the one thing on this module's part
+   *  of the home screen that is waiting on the person looking at it. */
+  @Get('my-invitations')
+  async myInvitations(@CurrentUser() p: Principal) {
+    const rows = await query(
+      `SELECT r.id, r.reference, r.title, r.starts_at, r.ends_at,
+              rm.name AS room, rm.floor, u.full_name AS organiser_name
+         FROM mr_reservation_attendees a
+         JOIN mr_reservations r ON r.id = a.reservation_id
+         JOIN mr_rooms rm      ON rm.id = r.room_id
+         JOIN core_users u     ON u.id = r.organizer_id
+        WHERE a.user_id = $1 AND a.response = 'INVITED'
+          AND r.status IN ('PENDING','CONFIRMED') AND r.ends_at > now()
+          AND r.organizer_id <> $1
+        ORDER BY r.starts_at ASC LIMIT 5`, [p.id]);
+    return { invitations: rows.map((r) => ({
+      id: r.id, reference: r.reference, title: r.title,
+      room: r.room, floor: r.floor,
+      startsAt: r.starts_at, endsAt: r.ends_at,
+      organiserName: r.organiser_name,
+    })) };
   }
 
   @Get('free-now')
@@ -101,14 +147,23 @@ export class MeetingRoomsPortletsController {
   @Get('upcoming-reservations')
   async upcoming(@CurrentUser() p: Principal) {
     const rows = await query(
-      `SELECT r.reference, r.title, r.starts_at, r.ends_at, rm.name AS room
-         FROM mr_reservations r JOIN mr_rooms rm ON rm.id = r.room_id
-        WHERE r.organizer_id = $1 AND r.status IN ('PENDING','CONFIRMED') AND r.starts_at > now()
+      `SELECT r.reference, r.title, r.starts_at, r.ends_at, rm.name AS room,
+              r.organizer_id = $1 AS is_organiser, u.full_name AS organiser_name
+         FROM mr_reservations r
+         JOIN mr_rooms rm  ON rm.id = r.room_id
+         JOIN core_users u ON u.id = r.organizer_id
+        WHERE r.status IN ('PENDING','CONFIRMED') AND r.starts_at > now()
+          AND (r.organizer_id = $1 OR EXISTS (
+                SELECT 1 FROM mr_reservation_attendees a
+                 WHERE a.reservation_id = r.id AND a.user_id = $1
+                   AND a.response <> 'DECLINED'))
         ORDER BY r.starts_at ASC LIMIT 5`, [p.id],
     );
     return { reservations: rows.map((r) => ({
       reference: r.reference, title: r.title, room: r.room,
       startsAt: r.starts_at, endsAt: r.ends_at,
+      isOrganiser: r.is_organiser,
+      organiserName: r.is_organiser ? null : r.organiser_name,
     })) };
   }
 }
@@ -163,6 +218,12 @@ export class MeetingRoomsController {
   /* Cancelling is a state change, not a deletion: the row stays, so the room's
      history survives, and the exclusion constraint releases the slot on its
      own because it only applies to live bookings. */
+  /** Only the invited person may answer, and only for themselves. */
+  @Post('reservations/:id/response')
+  respond(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: RespondToInvitation) {
+    return this.reservations.respond(p, id, dto);
+  }
+
   @Delete('reservations/:id')
   cancel(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: CancelReservation) {
     return this.reservations.cancel(p, id, dto ?? {});
@@ -186,6 +247,8 @@ export class MeetingRoomsController {
 }
 
 @Module({
+  // For NotificationsService: an invitation has to reach the person invited.
+  imports: [CoreModule],
   controllers: [MeetingRoomsPortletsController, MeetingRoomsController],
   providers: [RoomsService, AvailabilityService, ReservationsService],
 })

@@ -61,16 +61,29 @@ export interface MyAlertsPortlet {
   unread: number;
 }
 
+export interface MyInvitationsPortlet {
+  invitations: Array<{
+    id: string; reference: string; title: string;
+    room: string; floor: string | null;
+    startsAt: string; endsAt: string;
+    organiserName: string;
+  }>;
+}
+
 export interface NextMeetingPortlet {
+  /** The next meeting you are *in* -- not merely the next one you booked. */
   meeting: { reference: string; title: string; room: string; floor: string | null;
-             startsAt: string; endsAt: string; attendees: number } | null;
+             startsAt: string; endsAt: string; attendees: number;
+             isOrganiser: boolean; organiserName: string | null;
+             myResponse: 'INVITED' | 'ACCEPTED' | 'DECLINED' | null } | null;
 }
 export interface FreeNowPortlet {
   rooms: Array<{ name: string; floor: string | null; capacity: number; freeForMinutes: number | null }>;
 }
 export interface UpcomingReservationsPortlet {
   reservations: Array<{ reference: string; title: string; room: string;
-                        startsAt: string; endsAt: string }>;
+                        startsAt: string; endsAt: string;
+                        isOrganiser: boolean; organiserName: string | null }>;
 }
 
 /* ------------------------------------------------------- administration -- */
@@ -152,14 +165,29 @@ export interface Reservation {
   attendeeCount: number;
   room: { id: string; name: string; nameAr: string | null; floor: string | null; capacity: number; location: string };
   organiser: { id: string; fullName: string; email: string };
-  attendees: Array<{ userId: string | null; name: string; email: string; response: string }>;
+  attendees: Array<{
+    userId: string | null; name: string; email: string;
+    response: 'INVITED' | 'ACCEPTED' | 'DECLINED';
+    respondedAt: string | null;
+  }>;
   cancelledAt: string | null; cancellationReason: string | null;
   /** Decided by the API, never re-derived here. */
   canManage: boolean;
+  /** What the caller is to this meeting, and their own answer if invited. */
+  myRole: 'organiser' | 'attendee' | 'none';
+  myResponse: 'INVITED' | 'ACCEPTED' | 'DECLINED' | null;
 }
 
 export interface ReservationsResponse {
-  reservations: Reservation[]; scope: 'mine' | 'all'; period: string;
+  reservations: Reservation[];
+  scope: 'mine' | 'invited' | 'organised' | 'all';
+  period: string;
+}
+
+/** The employee directory, for picking attendees. */
+export interface DirectoryPerson {
+  id: string; fullName: string; fullNameAr: string | null;
+  email: string; jobTitle: string | null;
 }
 
 /* ------------------------------------------------------ sales dashboards -- */
