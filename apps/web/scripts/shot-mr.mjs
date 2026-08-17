@@ -1,3 +1,7 @@
+/* Playwright is intentionally NOT a dependency of this app: it downloads a
+   browser on install, and nobody who only wants to run the portal should pay
+   that. Install it when you want screenshots:
+       npm i -D playwright && npx playwright install chromium          */
 import { chromium } from 'playwright';
 const BASE = 'http://127.0.0.1:4173';
 const OUT = '/root/worood-hub/screenshots/ui';

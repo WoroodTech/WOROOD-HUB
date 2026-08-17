@@ -9,6 +9,10 @@
  *   node scripts/ui-screenshots.mjs            # writes ../../screenshots/ui/
  */
 
+/* Playwright is intentionally NOT a dependency of this app: it downloads a
+   browser on install, and nobody who only wants to run the portal should pay
+   that. Install it when you want screenshots:
+       npm i -D playwright && npx playwright install chromium          */
 import { chromium } from 'playwright';
 import { mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';

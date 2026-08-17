@@ -48,6 +48,8 @@ npm install
 npm run migrate          # checksum-verified, idempotent
 npm run seed -- --reset  # people, rooms, widgets, dashboards, Shopify fixtures
 npm run build && npm start          # http://localhost:3000
+
+# 5. tests
 npx tsx test/slots.test.ts          # booking arithmetic, no database needed
 npx tsx test/booking.test.ts        # end-to-end, needs the API above running
 
@@ -63,6 +65,23 @@ repo-root `.env` and fills only variables that are not already set — the real
 environment always wins, so systemd, Docker and CI are unaffected. Point it elsewhere
 with `ENV_FILE=/path/to/file`. Without a `.env` the process falls back to the defaults
 in `src/common/config.ts`, which will not match your database password.
+
+### Upgrading an install that is already running
+
+`npm run migrate` is enough to get the booking flow working: migration `0004` is
+additive, gives every existing room a code and the default booking policy, and
+moves its fittings into the new catalogue. Nothing is lost and no data is
+rewritten.
+
+Re-seeding is optional and **destructive** — `npm run seed -- --reset` truncates
+the demo tables. Do it if you want the demonstration data the screenshots show,
+where each room has a deliberately different policy: the Training Hall takes
+hour-long blocks with a 30-minute changeover, Jasmine is a 15-minute huddle
+grid, and the Studio holds its bookings for approval.
+
+Redis is only used by the sales dashboard's live channel. Without it the API
+logs a connection warning on a loop and everything else, booking included, works
+normally.
 
 Then sign in with any of the accounts below. **Password for every account: `Worood@2026`.**
 
