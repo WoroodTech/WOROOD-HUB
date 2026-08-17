@@ -9,4 +9,10 @@ export const qk = {
   orders: (page: number, pageSize: number) => ['sales', 'orders', page, pageSize] as const,
   access: (id: string) => ['sales', 'access', id] as const,
   sync: ['sales', 'sync'] as const,
+
+  rooms: (filters: string) => ['mr', 'rooms', filters] as const,
+  roomLocations: ['mr', 'locations'] as const,
+  roomEquipment: ['mr', 'equipment'] as const,
+  availability: (filters: string) => ['mr', 'availability', filters] as const,
+  reservations: (filters: string) => ['mr', 'reservations', filters] as const,
 };

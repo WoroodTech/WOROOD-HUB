@@ -73,6 +73,59 @@ export interface UpcomingReservationsPortlet {
                         startsAt: string; endsAt: string }>;
 }
 
+/* --------------------------------------------------------- meeting rooms -- */
+
+export interface MeetingRoomEquipment { key: string; name: string; icon: string | null; quantity: number }
+
+export interface MeetingRoom {
+  id: string; code: string; name: string; nameAr: string | null;
+  capacity: number; floor: string | null;
+  description: string | null; photoUrl: string | null;
+  status: 'ACTIVE' | 'MAINTENANCE' | 'INACTIVE';
+  opensAt: string; closesAt: string;
+  slotMinutes: number; minDurationMinutes: number; maxDurationMinutes: number;
+  maxAdvanceDays: number; bufferMinutes: number; requiresApproval: boolean;
+  location: { id: string; code: string; name: string; building: string | null; timezone: string };
+  equipment: MeetingRoomEquipment[];
+}
+
+export interface MeetingLocation {
+  id: string; code: string; name: string; name_ar: string | null;
+  building: string | null; timezone: string; room_count: number;
+}
+
+export interface AvailabilitySlot { startsAt: string; endsAt: string }
+
+export interface RoomAvailability {
+  room: MeetingRoom;
+  slots: AvailabilitySlot[];
+  requestedWindow?: { startsAt: string; endsAt: string; free: boolean };
+  /** Why a room offered nothing. An empty list with no note is "fully booked";
+   *  a note is the room telling you it could never have taken this booking. */
+  note?: string;
+}
+
+export interface AvailabilityResponse {
+  date: string; durationMinutes: number; rooms: RoomAvailability[];
+}
+
+export interface Reservation {
+  id: string; reference: string; title: string; description: string | null;
+  startsAt: string; endsAt: string;
+  status: 'PENDING' | 'CONFIRMED' | 'CANCELLED' | 'COMPLETED';
+  attendeeCount: number;
+  room: { id: string; name: string; nameAr: string | null; floor: string | null; capacity: number; location: string };
+  organiser: { id: string; fullName: string; email: string };
+  attendees: Array<{ userId: string | null; name: string; email: string; response: string }>;
+  cancelledAt: string | null; cancellationReason: string | null;
+  /** Decided by the API, never re-derived here. */
+  canManage: boolean;
+}
+
+export interface ReservationsResponse {
+  reservations: Reservation[]; scope: 'mine' | 'all'; period: string;
+}
+
 /* ------------------------------------------------------ sales dashboards -- */
 
 export type WidgetKind = 'kpi' | 'line' | 'bar' | 'donut' | 'table' | 'funnel';
@@ -214,4 +267,5 @@ export const PERMISSIONS = {
   CUSTOMER_VIEW: 'sales.customer.view',
   SYNC_MANAGE: 'sales.sync.manage',
   ROOM_MANAGE: 'meeting-rooms.room.manage',
+  RESERVATION_MANAGE_ANY: 'meeting-rooms.reservation.manage-any',
 } as const;

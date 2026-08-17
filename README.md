@@ -2,9 +2,11 @@
 
 An enterprise intranet portal built as a small platform with modules installed into it.
 
-- **Module 1 — Meeting Rooms** (`mr_*`): present here at portlet depth, so the home
-  dashboard is a genuinely multi-module grid. The full booking flow is the subject of
-  `WOROOD-HUB-Technical-Design.md`.
+- **Module 1 — Meeting Rooms** (`mr_*`): the full flow — availability search, booking,
+  amendment and cancellation, and room administration with per-room booking policy.
+  Double-booking is prevented by a GiST exclusion constraint in the database rather
+  than by application code. See
+  [`docs/MODULE-1-BOOKING.md`](docs/MODULE-1-BOOKING.md).
 - **Module 2 — Sales Dashboard** (`sd_*`): the Shopify sales dashboard, built to
   `WOROOD-HUB-Module-2-Sales-Dashboard.md`.
 
@@ -46,6 +48,8 @@ npm install
 npm run migrate          # checksum-verified, idempotent
 npm run seed -- --reset  # people, rooms, widgets, dashboards, Shopify fixtures
 npm run build && npm start          # http://localhost:3000
+npx tsx test/slots.test.ts          # booking arithmetic, no database needed
+npx tsx test/booking.test.ts        # end-to-end, needs the API above running
 
 # 4. portal
 cd ../web

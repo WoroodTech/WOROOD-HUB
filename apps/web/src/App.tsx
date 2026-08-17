@@ -4,6 +4,9 @@ import { useAuth } from './lib/auth';
 import { Shell } from './components/Shell';
 import { Login } from './pages/Login';
 import { Home } from './pages/Home';
+import { BookRoom } from './pages/BookRoom';
+import { MyReservations } from './pages/MyReservations';
+import { ManageRooms } from './pages/ManageRooms';
 import { SalesIndex } from './pages/SalesIndex';
 import { SalesDashboard } from './pages/SalesDashboard';
 import { Orders } from './pages/Orders';
@@ -35,6 +38,14 @@ export function App() {
       <Route path="/login" element={<Login />} />
       <Route element={<RequireAuth><Shell /></RequireAuth>}>
         <Route path="/" element={<Home />} />
+
+        {/* Module 1. Every path the meeting-rooms descriptor advertises has a
+            screen here -- a navigation entry with no route is a link to a dead
+            end, which is what these three were before. */}
+        <Route path="/meeting-rooms/book" element={<BookRoom />} />
+        <Route path="/meeting-rooms/reservations" element={<MyReservations />} />
+        <Route path="/meeting-rooms/admin" element={<ManageRooms />} />
+
         <Route path="/sales" element={<SalesIndex />} />
         <Route path="/sales/d/:key" element={<SalesDashboard />} />
         <Route path="/sales/orders" element={<Orders />} />

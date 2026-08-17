@@ -159,7 +159,9 @@ async function main() {
                           sd_order_line_items, sd_refunds, sd_orders, sd_customers,
                           sd_metric_snapshots, sd_sync_state, sd_webhook_events,
                           sd_products, sd_shops,
-                          mr_reservations, mr_rooms, mr_locations,
+                          mr_reservation_attendees, mr_reservations,
+                          mr_room_blackouts, mr_room_equipment, mr_rooms,
+                          mr_equipment, mr_locations,
                           core_notifications, core_audit_logs, core_refresh_tokens,
                           core_user_roles, core_role_permissions, core_users,
                           core_roles, core_permissions, core_departments CASCADE`);
@@ -222,27 +224,103 @@ async function main() {
 
   /* meeting rooms */
   const loc = await one(
-    `INSERT INTO mr_locations (name, name_ar, iana_timezone, address)
-     VALUES ('Worood HQ','مقر ورود',$1,'Sheikh Zayed, Giza')
-     ON CONFLICT DO NOTHING RETURNING id`, [TZ])
+    `INSERT INTO mr_locations (code, name, name_ar, building, iana_timezone, address)
+     VALUES ('HQ','Worood HQ','مقر ورود','Tower A',$1,'Sheikh Zayed, Giza')
+     ON CONFLICT (code) DO UPDATE SET building = EXCLUDED.building RETURNING id`, [TZ])
     ?? await one(`SELECT id FROM mr_locations LIMIT 1`);
 
-  const ROOMS: [string, string, number, string, string[]][] = [
-    ['Nile Boardroom', 'قاعة النيل', 14, '3', ['projector', 'video-conference', 'whiteboard']],
-    ['Papyrus', 'بردي', 8, '3', ['screen', 'whiteboard']],
-    ['Lotus', 'لوتس', 6, '2', ['screen']],
-    ['Jasmine', 'ياسمين', 4, '2', ['whiteboard']],
-    ['Training Hall', 'قاعة التدريب', 30, '1', ['projector', 'sound-system', 'microphones']],
-    ['Studio', 'الاستوديو', 5, '1', ['lighting', 'backdrop']],
+  /* Rooms carry their own booking policy, so the seed exercises the range
+     rather than accepting the defaults everywhere: the Training Hall takes
+     hour-long bookings with a changeover buffer, the Studio needs approval,
+     and Jasmine is a quick huddle room on a fifteen-minute grid. A demo where
+     every room behaves identically hides the whole point of the policy. */
+  interface SeedRoom {
+    code: string; name: string; nameAr: string; capacity: number; floor: string;
+    equipment: string[]; opensAt?: string; closesAt?: string; slot?: number;
+    min?: number; max?: number; buffer?: number; approval?: boolean; status?: string;
+    description?: string;
+  }
+  /* `--reset` truncates mr_equipment, which migration 0004 populated. The
+     catalogue is reference data, not demo data, so the seed restores it rather
+     than leaving the fittings filter with nothing to offer. */
+  const EQUIPMENT: [string, string, string, string][] = [
+    ['projector', 'Projector', 'جهاز عرض', 'video'],
+    ['video-conference', 'Video conference', 'اجتماع مرئي', 'users'],
+    ['whiteboard', 'Whiteboard', 'سبورة', 'edit'],
+    ['display', 'Wall display', 'شاشة', 'monitor'],
+    ['speakerphone', 'Speakerphone', 'هاتف مؤتمرات', 'phone'],
+    ['accessible', 'Step-free access', 'وصول ميسر', 'accessible'],
   ];
+  for (const [key, name, nameAr, icon] of EQUIPMENT) {
+    await query(
+      `INSERT INTO mr_equipment (key, name, name_ar, icon) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name, name_ar = EXCLUDED.name_ar,
+                                       icon = EXCLUDED.icon`, [key, name, nameAr, icon]);
+  }
+
+  const ROOMS: SeedRoom[] = [
+    { code: 'NILE', name: 'Nile Boardroom', nameAr: 'قاعة النيل', capacity: 14, floor: '3',
+      equipment: ['projector', 'video-conference', 'whiteboard'], buffer: 10,
+      description: 'The board table. Video conference unit is fixed, not portable.' },
+    { code: 'PAPYRUS', name: 'Papyrus', nameAr: 'بردي', capacity: 8, floor: '3',
+      equipment: ['display', 'whiteboard'] },
+    { code: 'LOTUS', name: 'Lotus', nameAr: 'لوتس', capacity: 6, floor: '2',
+      equipment: ['display'] },
+    { code: 'JASMINE', name: 'Jasmine', nameAr: 'ياسمين', capacity: 4, floor: '2',
+      equipment: ['whiteboard'], slot: 15, min: 15, max: 120,
+      description: 'Huddle room. Fifteen-minute bookings, two hours maximum.' },
+    { code: 'TRAINING', name: 'Training Hall', nameAr: 'قاعة التدريب', capacity: 30, floor: '1',
+      equipment: ['projector', 'speakerphone', 'accessible'], slot: 60, min: 60, max: 480, buffer: 30,
+      opensAt: '08:00', closesAt: '17:00',
+      description: 'Hour-long blocks only. Half an hour of changeover is reserved either side.' },
+    { code: 'STUDIO', name: 'Studio', nameAr: 'الاستوديو', capacity: 5, floor: '1',
+      equipment: ['display', 'speakerphone'], approval: true,
+      description: 'Photography studio. Bookings are held until Facilities approve them.' },
+  ];
+
   const roomIds: string[] = [];
-  for (const [name, nameAr, capacity, floor, equipment] of ROOMS) {
-    const r = await one(
-      `INSERT INTO mr_rooms (location_id, name, name_ar, capacity, floor, equipment)
-       VALUES ($1,$2,$3,$4,$5,$6)
-       ON CONFLICT DO NOTHING RETURNING id`, [loc.id, name, nameAr, capacity, floor, equipment])
-      ?? await one(`SELECT id FROM mr_rooms WHERE name = $1`, [name]);
-    roomIds.push(r.id);
+  for (const r of ROOMS) {
+    const row = await one(
+      `INSERT INTO mr_rooms (code, location_id, name, name_ar, capacity, floor, description,
+         status, opens_at, closes_at, slot_minutes, min_duration_minutes,
+         max_duration_minutes, buffer_minutes, requires_approval)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8,'ACTIVE'),COALESCE($9::time,'08:00'),
+               COALESCE($10::time,'18:00'),COALESCE($11,30),COALESCE($12,30),
+               COALESCE($13,480),COALESCE($14,0),COALESCE($15,false))
+       ON CONFLICT (code) DO UPDATE SET
+         name = EXCLUDED.name, name_ar = EXCLUDED.name_ar, capacity = EXCLUDED.capacity,
+         floor = EXCLUDED.floor, description = EXCLUDED.description,
+         opens_at = EXCLUDED.opens_at, closes_at = EXCLUDED.closes_at,
+         slot_minutes = EXCLUDED.slot_minutes, min_duration_minutes = EXCLUDED.min_duration_minutes,
+         max_duration_minutes = EXCLUDED.max_duration_minutes,
+         buffer_minutes = EXCLUDED.buffer_minutes, requires_approval = EXCLUDED.requires_approval
+       RETURNING id`,
+      [r.code, loc.id, r.name, r.nameAr, r.capacity, r.floor, r.description ?? null,
+       r.status ?? null, r.opensAt ?? null, r.closesAt ?? null, r.slot ?? null,
+       r.min ?? null, r.max ?? null, r.buffer ?? null, r.approval ?? null]);
+    roomIds.push(row.id);
+
+    // Equipment is a join now, not an array on the row: replace the set rather
+    // than accumulating duplicates across re-runs.
+    await query(`DELETE FROM mr_room_equipment WHERE room_id = $1`, [row.id]);
+    await query(
+      `INSERT INTO mr_room_equipment (room_id, equipment_id)
+       SELECT $1, id FROM mr_equipment WHERE key = ANY($2)
+       ON CONFLICT DO NOTHING`, [row.id, r.equipment]);
+  }
+
+  // One blackout, so availability has something to refuse that is not a
+  // booking -- the two are different states and the UI says so differently.
+  await query(`DELETE FROM mr_room_blackouts`);
+  {
+    // 09:00-13:00 Cairo, two days out. Computed here rather than with
+    // date_trunc(now()) because the server's clock may be UTC, and a blackout
+    // that lands four hours off the maintenance window is worse than none.
+    const day = DateTime.now().setZone(TZ).plus({ days: 2 }).startOf('day');
+    await query(
+      `INSERT INTO mr_room_blackouts (room_id, starts_at, ends_at, reason)
+       VALUES ($1,$2,$3,'Projector replacement')`,
+      [roomIds[4], day.set({ hour: 9 }).toJSDate(), day.set({ hour: 13 }).toJSDate()]);
   }
 
   // Reservations relative to now, so the home dashboard always has a "next
