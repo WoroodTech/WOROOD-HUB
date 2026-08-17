@@ -1,0 +1,31 @@
+# ---------------------------------------------------------------------------
+# Local development dependencies only. The EC2 deployment runs Node and
+# PostgreSQL directly on the instance (see deploy/ec2-bootstrap.sh); this file
+# exists so a developer needs nothing more than Docker to get a database.
+#
+#   docker compose up -d
+#   cd apps/api && npm run db:reset && npm run dev
+#   cd apps/web && npm run dev
+# ---------------------------------------------------------------------------
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: worood-hub-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: worood
+      POSTGRES_PASSWORD: worood_dev
+      POSTGRES_DB: worood_hub
+      TZ: UTC
+    ports:
+      - '5432:5432'
+    volumes:
+      - worood-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U worood -d worood_hub']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  worood-pgdata:

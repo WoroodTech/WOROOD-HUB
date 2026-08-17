@@ -1,0 +1,764 @@
+/* ==========================================================================
+   WOROOD HUB — design tokens & component styles
+   Single stylesheet, no UI framework (see Technical Design §7).
+   Uses CSS logical properties throughout so the whole shell flips cleanly
+   when `dir="rtl"` is set for the Arabic locale — no separate RTL sheet.
+   ========================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Arabic:wght@400;500;600;700&display=swap');
+
+:root {
+  /* ---- color ---- */
+  --wh-bg: #f4f6f5;
+  --wh-surface: #ffffff;
+  --wh-surface-raised: #ffffff;
+  --wh-border: #e2e6e4;
+  --wh-border-strong: #cdd4d1;
+
+  --wh-text: #16201c;
+  --wh-text-muted: #5b6b64;
+  --wh-text-faint: #8b968f;
+
+  --wh-brand: #1f6f5c;
+  --wh-brand-strong: #17594a;
+  --wh-brand-soft: #e4f1ec;
+  --wh-accent: #c98a3c;
+  --wh-accent-soft: #fbeedd;
+
+  --wh-success: #2f8f5b;
+  --wh-success-soft: #e5f6ec;
+  --wh-warning: #b8862c;
+  --wh-warning-soft: #fbf1de;
+  --wh-danger: #c1473f;
+  --wh-danger-soft: #fbe9e7;
+  --wh-info: #3d6fa8;
+  --wh-info-soft: #e8f0fa;
+
+  --wh-sidebar-bg: #10231d;
+  --wh-sidebar-text: #d7e6df;
+  --wh-sidebar-text-muted: #7fa596;
+  --wh-sidebar-active: #17594a;
+
+  /* ---- typography ---- */
+  --wh-font: 'Inter', 'Noto Sans Arabic', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --wh-fs-xs: 0.75rem;
+  --wh-fs-sm: 0.8125rem;
+  --wh-fs-base: 0.9375rem;
+  --wh-fs-md: 1.0625rem;
+  --wh-fs-lg: 1.25rem;
+  --wh-fs-xl: 1.625rem;
+
+  /* ---- spacing ---- */
+  --wh-space-1: 4px;
+  --wh-space-2: 8px;
+  --wh-space-3: 12px;
+  --wh-space-4: 16px;
+  --wh-space-5: 20px;
+  --wh-space-6: 24px;
+  --wh-space-8: 32px;
+
+  /* ---- shape ---- */
+  --wh-radius-sm: 6px;
+  --wh-radius-md: 10px;
+  --wh-radius-lg: 14px;
+  --wh-shadow-sm: 0 1px 2px rgba(16, 35, 29, 0.06);
+  --wh-shadow-md: 0 4px 16px rgba(16, 35, 29, 0.08);
+
+  --wh-sidebar-width: 248px;
+  --wh-topbar-height: 64px;
+}
+
+/* ---------------------------------------------------------------------- */
+/* reset & base                                                           */
+/* ---------------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--wh-font);
+  font-size: var(--wh-fs-base);
+  color: var(--wh-text);
+  background: var(--wh-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4,
+p {
+  margin: 0;
+}
+
+button {
+  font-family: inherit;
+}
+
+a {
+  color: inherit;
+}
+
+/* ---------------------------------------------------------------------- */
+/* app shell                                                              */
+/* ---------------------------------------------------------------------- */
+
+.wh-shell {
+  display: grid;
+  grid-template-columns: var(--wh-sidebar-width) 1fr;
+  min-height: 100%;
+}
+
+/* ---- sidebar ---- */
+
+.wh-sidebar {
+  background: var(--wh-sidebar-bg);
+  color: var(--wh-sidebar-text);
+  padding: var(--wh-space-5) var(--wh-space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--wh-space-6);
+}
+
+.wh-sidebar__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--wh-space-2);
+  padding-inline: var(--wh-space-2);
+}
+
+.wh-sidebar__brand-mark {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--wh-radius-sm);
+  background: linear-gradient(135deg, var(--wh-brand), var(--wh-accent));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  color: #fff;
+  font-size: var(--wh-fs-sm);
+  flex-shrink: 0;
+}
+
+.wh-sidebar__brand-name {
+  font-weight: 700;
+  font-size: var(--wh-fs-md);
+  color: #fff;
+  line-height: 1.15;
+}
+
+.wh-sidebar__brand-sub {
+  font-size: var(--wh-fs-xs);
+  color: var(--wh-sidebar-text-muted);
+}
+
+.wh-sidebar__section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wh-sidebar__section-label {
+  font-size: var(--wh-fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--wh-sidebar-text-muted);
+  padding: var(--wh-space-2) var(--wh-space-3) var(--wh-space-1);
+}
+
+.wh-navitem {
+  display: flex;
+  align-items: center;
+  gap: var(--wh-space-3);
+  padding: var(--wh-space-2) var(--wh-space-3);
+  border-radius: var(--wh-radius-sm);
+  font-size: var(--wh-fs-sm);
+  font-weight: 500;
+  color: var(--wh-sidebar-text);
+  text-decoration: none;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  width: 100%;
+  text-align: start;
+}
+
+.wh-navitem:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.wh-navitem.is-active {
+  background: var(--wh-sidebar-active);
+  color: #fff;
+}
+
+.wh-navitem.is-disabled {
+  color: var(--wh-sidebar-text-muted);
+  cursor: default;
+}
+
+.wh-navitem.is-disabled:hover {
+  background: transparent;
+}
+
+.wh-navitem__icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  display: inline-flex;
+}
+
+.wh-navitem__badge {
+  margin-inline-start: auto;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--wh-sidebar-text-muted);
+  padding: 2px 6px;
+  border-radius: 999px;
+}
+
+/* ---- topbar ---- */
+
+.wh-topbar {
+  height: var(--wh-topbar-height);
+  background: var(--wh-surface);
+  border-bottom: 1px solid var(--wh-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-inline: var(--wh-space-6);
+  gap: var(--wh-space-4);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.wh-topbar__greeting {
+  font-size: var(--wh-fs-md);
+  font-weight: 600;
+}
+
+.wh-topbar__date {
+  font-size: var(--wh-fs-xs);
+  color: var(--wh-text-muted);
+}
+
+.wh-topbar__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--wh-space-4);
+}
+
+.wh-iconbutton {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 1px solid var(--wh-border);
+  background: var(--wh-surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--wh-text-muted);
+}
+
+.wh-iconbutton:hover {
+  background: var(--wh-bg);
+}
+
+.wh-iconbutton__dot {
+  position: absolute;
+  top: 6px;
+  inset-inline-end: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--wh-danger);
+  border: 1.5px solid var(--wh-surface);
+}
+
+.wh-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  color: #fff;
+  font-weight: 600;
+  font-size: var(--wh-fs-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.wh-topbar__profile {
+  display: flex;
+  align-items: center;
+  gap: var(--wh-space-2);
+  cursor: pointer;
+}
+
+.wh-topbar__profile-name {
+  font-size: var(--wh-fs-sm);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.wh-topbar__profile-role {
+  font-size: var(--wh-fs-xs);
+  color: var(--wh-text-muted);
+}
+
+/* ---------------------------------------------------------------------- */
+/* main / dashboard                                                       */
+/* ---------------------------------------------------------------------- */
+
+.wh-main {
+  padding: var(--wh-space-6);
+  max-width: 1280px;
+  width: 100%;
+  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--wh-space-6);
+}
+
+.wh-page-title {
+  font-size: var(--wh-fs-xl);
+  font-weight: 700;
+}
+
+.wh-page-subtitle {
+  font-size: var(--wh-fs-sm);
+  color: var(--wh-text-muted);
+  margin-top: var(--wh-space-1);
+}
+
+/* 12-column portlet grid, per Technical Design §7 */
+.wh-grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: var(--wh-space-5);
+}
+
+.wh-grid > * {
+  grid-column: span 12;
+}
+
+@media (min-width: 720px) {
+  .wh-col-4 {
+    grid-column: span 4;
+  }
+  .wh-col-6 {
+    grid-column: span 6;
+  }
+  .wh-col-8 {
+    grid-column: span 8;
+  }
+}
+
+/* ---- portlet / card ---- */
+
+.wh-portlet {
+  background: var(--wh-surface);
+  border: 1px solid var(--wh-border);
+  border-radius: var(--wh-radius-lg);
+  box-shadow: var(--wh-shadow-sm);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.wh-portlet__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--wh-space-4) var(--wh-space-5) var(--wh-space-3);
+}
+
+.wh-portlet__title {
+  font-size: var(--wh-fs-sm);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--wh-text-muted);
+}
+
+.wh-portlet__body {
+  padding: 0 var(--wh-space-5) var(--wh-space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--wh-space-3);
+  flex: 1;
+}
+
+.wh-portlet__link {
+  font-size: var(--wh-fs-xs);
+  font-weight: 600;
+  color: var(--wh-brand);
+  text-decoration: none;
+}
+
+.wh-portlet__empty {
+  color: var(--wh-text-faint);
+  font-size: var(--wh-fs-sm);
+  padding: var(--wh-space-4) 0;
+  text-align: center;
+}
+
+/* ---- profile / identity card ---- */
+
+.wh-profile-card {
+  display: flex;
+  align-items: center;
+  gap: var(--wh-space-4);
+  padding: var(--wh-space-5);
+  background: linear-gradient(135deg, var(--wh-brand-soft), var(--wh-surface));
+  border: 1px solid var(--wh-border);
+  border-radius: var(--wh-radius-lg);
+}
+
+.wh-profile-card__avatar {
+  width: 56px;
+  height: 56px;
+  font-size: var(--wh-fs-lg);
+}
+
+.wh-profile-card__name {
+  font-size: var(--wh-fs-md);
+  font-weight: 700;
+}
+
+.wh-profile-card__meta {
+  font-size: var(--wh-fs-sm);
+  color: var(--wh-text-muted);
+  margin-top: 2px;
+}
+
+.wh-profile-card__tags {
+  display: flex;
+  gap: var(--wh-space-2);
+  margin-top: var(--wh-space-2);
+  flex-wrap: wrap;
+}
+
+.wh-tag {
+  font-size: var(--wh-fs-xs);
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--wh-surface);
+  border: 1px solid var(--wh-border-strong);
+  color: var(--wh-text-muted);
+}
+
+/* ---- meeting / reservation rows ---- */
+
+.wh-meeting {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wh-space-2);
+  padding: var(--wh-space-3);
+  border: 1px solid var(--wh-border);
+  border-radius: var(--wh-radius-md);
+  background: var(--wh-bg);
+}
+
+.wh-meeting__title {
+  font-weight: 600;
+  font-size: var(--wh-fs-base);
+}
+
+.wh-meeting__meta {
+  font-size: var(--wh-fs-xs);
+  color: var(--wh-text-muted);
+  display: flex;
+  align-items: center;
+  gap: var(--wh-space-2);
+  flex-wrap: wrap;
+}
+
+.wh-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wh-space-2);
+}
+
+.wh-list-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wh-space-3);
+  padding: var(--wh-space-3);
+  border: 1px solid var(--wh-border);
+  border-radius: var(--wh-radius-md);
+}
+
+.wh-list-row__main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wh-list-row__title {
+  font-weight: 600;
+  font-size: var(--wh-fs-sm);
+}
+
+.wh-list-row__meta {
+  font-size: var(--wh-fs-xs);
+  color: var(--wh-text-muted);
+}
+
+/* ---- badges / status ---- */
+
+.wh-badge {
+  font-size: var(--wh-fs-xs);
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.wh-badge--success {
+  background: var(--wh-success-soft);
+  color: var(--wh-success);
+}
+
+.wh-badge--warning {
+  background: var(--wh-warning-soft);
+  color: var(--wh-warning);
+}
+
+.wh-badge--info {
+  background: var(--wh-info-soft);
+  color: var(--wh-info);
+}
+
+.wh-badge--muted {
+  background: var(--wh-bg);
+  color: var(--wh-text-faint);
+  border: 1px solid var(--wh-border);
+}
+
+/* ---- buttons ---- */
+
+.wh-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--wh-space-2);
+  padding: 9px 16px;
+  border-radius: var(--wh-radius-sm);
+  font-size: var(--wh-fs-sm);
+  font-weight: 600;
+  border: 1px solid transparent;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.wh-btn--primary {
+  background: var(--wh-brand);
+  color: #fff;
+}
+
+.wh-btn--primary:hover {
+  background: var(--wh-brand-strong);
+}
+
+.wh-btn--secondary {
+  background: var(--wh-surface);
+  border-color: var(--wh-border-strong);
+  color: var(--wh-text);
+}
+
+.wh-btn--secondary:hover {
+  background: var(--wh-bg);
+}
+
+.wh-btn--block {
+  width: 100%;
+}
+
+.wh-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ---- quick actions ---- */
+
+.wh-quick-actions {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--wh-space-3);
+}
+
+.wh-quick-action {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wh-space-2);
+  align-items: flex-start;
+  padding: var(--wh-space-4);
+  border-radius: var(--wh-radius-md);
+  border: 1px solid var(--wh-border);
+  background: var(--wh-surface);
+  text-decoration: none;
+  color: var(--wh-text);
+  cursor: pointer;
+}
+
+.wh-quick-action:hover {
+  border-color: var(--wh-brand);
+  box-shadow: var(--wh-shadow-sm);
+}
+
+.wh-quick-action.is-disabled {
+  cursor: default;
+  color: var(--wh-text-faint);
+  background: var(--wh-bg);
+}
+
+.wh-quick-action.is-disabled:hover {
+  border-color: var(--wh-border);
+  box-shadow: none;
+}
+
+.wh-quick-action__icon {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--wh-radius-sm);
+  background: var(--wh-brand-soft);
+  color: var(--wh-brand);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wh-quick-action.is-disabled .wh-quick-action__icon {
+  background: var(--wh-border);
+  color: var(--wh-text-faint);
+}
+
+.wh-quick-action__label {
+  font-weight: 600;
+  font-size: var(--wh-fs-sm);
+}
+
+.wh-quick-action__desc {
+  font-size: var(--wh-fs-xs);
+  color: var(--wh-text-muted);
+}
+
+/* ---- notifications ---- */
+
+.wh-notification {
+  display: flex;
+  gap: var(--wh-space-3);
+  padding: var(--wh-space-3) 0;
+  border-bottom: 1px solid var(--wh-border);
+}
+
+.wh-notification:last-child {
+  border-bottom: none;
+}
+
+.wh-notification__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  margin-top: 6px;
+  flex-shrink: 0;
+  background: var(--wh-brand);
+}
+
+.wh-notification.is-read .wh-notification__dot {
+  background: var(--wh-border-strong);
+}
+
+.wh-notification__text {
+  font-size: var(--wh-fs-sm);
+}
+
+.wh-notification.is-read .wh-notification__text {
+  color: var(--wh-text-muted);
+}
+
+.wh-notification__time {
+  font-size: var(--wh-fs-xs);
+  color: var(--wh-text-faint);
+  margin-top: 2px;
+}
+
+/* ---- coming soon ---- */
+
+.wh-coming-soon-strip {
+  display: flex;
+  gap: var(--wh-space-3);
+  flex-wrap: wrap;
+}
+
+.wh-coming-soon-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--wh-space-2);
+  padding: var(--wh-space-2) var(--wh-space-3);
+  border-radius: 999px;
+  border: 1px dashed var(--wh-border-strong);
+  color: var(--wh-text-muted);
+  font-size: var(--wh-fs-xs);
+  font-weight: 600;
+}
+
+/* ---- loading / skeleton ---- */
+
+.wh-skeleton {
+  background: linear-gradient(90deg, var(--wh-border) 25%, #eef1ef 37%, var(--wh-border) 63%);
+  background-size: 400% 100%;
+  animation: wh-shimmer 1.4s ease infinite;
+  border-radius: var(--wh-radius-sm);
+}
+
+@keyframes wh-shimmer {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0 50%;
+  }
+}
+
+/* ---- RTL note ----
+   Setting dir="rtl" on <html> (Arabic locale) is sufficient: every rule above
+   uses logical properties (inline-start/end, margin-inline, etc.) rather than
+   left/right, so the sidebar, nav items and cards mirror automatically. */
+
+/* ---------------------------------------------------------------------- */
+/* responsive overrides                                                   */
+/* This block is deliberately last in the file: overriding an element's   */
+/* own base rule (e.g. .wh-sidebar's `display: flex`) from inside a media */
+/* query only wins the cascade if it appears after that base rule in      */
+/* source order — equal-specificity selectors fall back to source order,  */
+/* the media condition does not raise specificity on its own.             */
+/* ---------------------------------------------------------------------- */
+
+@media (max-width: 900px) {
+  .wh-shell {
+    grid-template-columns: 1fr;
+  }
+  .wh-sidebar {
+    display: none;
+  }
+}
