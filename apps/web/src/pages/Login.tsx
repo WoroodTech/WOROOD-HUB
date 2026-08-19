@@ -3,35 +3,13 @@ import { Navigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { Icon, WoroodLogo } from '../components/Icon';
 
-const DEMO_PASSWORD = 'Worood@2026';
 
-/**
- * This is a demonstration build, so the seeded accounts are on the screen.
- *
- * They are listed in the order that makes the permission model legible rather
- * than alphabetically or by seniority: start with the account that sees the
- * least and work up, so clicking down the list widens the portal a step at a
- * time. Each one exists to show a slice the others do not.
- */
-const ACCOUNTS = [
-  { email: 'omnia.osama@worood.co', who: 'Omnia Osama', role: 'Customer Care',
-    sees: 'Orders with customer identity. No dashboard from her role — one was granted to her personally.' },
-  { email: 'nadia@worood.co', who: 'Nadia', role: 'Marketing Director',
-    sees: 'Marketing dashboards only. No orders at all: a campaign is not a reason to read an address.' },
-  { email: 'Yousry@worood.co', who: 'Mohamed Yousry', role: 'Financial Manager',
-    sees: 'Finance reconciliation and the daily figures, with orders and customers.' },
-  { email: 'heba.fayed@worood.co', who: 'Heba Fayed', role: 'Operations Manager',
-    sees: 'Room administration, anyone’s reservation, order flow and Data & Sync — but not the composer.' },
-  { email: 'Kandil@worood.co', who: 'Mohamed Kandil', role: 'Chief Executive Officer',
-    sees: 'All five dashboards, orders and customers. No administration console.' },
-  { email: 'Admin@worood.co', who: 'Khalid Hesham', role: 'System Administrator',
-    sees: 'Everything, including People and Roles.' },
-];
 
 export function Login() {
   const { signIn, status } = useAuth();
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState(DEMO_PASSWORD);
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -61,8 +39,6 @@ export function Login() {
     }
   };
 
-  const pick = (address: string) => { setEmail(address); setPassword(DEMO_PASSWORD); setError(null); };
-
   return (
     <div className="login">
       <div className="login__panel">
@@ -86,40 +62,37 @@ export function Login() {
 
           <label className="field">
             <span className="field__label">Password</span>
-            <input
-              className="input" type="password" name="password" autoComplete="current-password" required
-              value={password} onChange={(e) => setPassword(e.target.value)}
-            />
+            <div className="password-field">
+              <input
+              className="input"
+              type={showPassword ? 'text' : 'password'}
+              name="password"
+              autoComplete="current-password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="your password"
+              />
+              <button
+                type="button"
+                className="password-field__toggle"
+                onClick={() => setShowPassword((prev) => !prev)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+              >
+                <Icon
+                  name={showPassword ? 'eye-off' : 'eye'}
+                  size={18}
+                />
+              </button>
+            </div>
           </label>
 
           {error ? <p className="login__error" role="alert"><Icon name="warning" size={16} /> {error}</p> : null}
 
-          <button className="btn btn--primary btn--block" type="submit" disabled={busy || !email}>
-            {busy ? 'Signing in…' : 'Sign in'}
+          <button className="btn btn--primary btn--block" type="submit" disabled={busy || !email || !password}>
+            {busy ? 'Signing in…' : !email ? 'Enter email' : !password ? 'Enter password' : 'Sign in'}
           </button>
         </form>
-      </div>
-
-      <div className="login__demo">
-        <h1 className="login__demoTitle">Demonstration accounts</h1>
-        <p className="login__demoHint">
-          Every account below uses the password <code>{DEMO_PASSWORD}</code>. Pick one to fill the form —
-          the portal is built entirely from what the API grants each of them, so the screens genuinely differ.
-        </p>
-        <ul className="accounts">
-          {ACCOUNTS.map((a) => (
-            <li key={a.email}>
-              <button type="button" className="account" onClick={() => pick(a.email)}>
-                <span className="account__top">
-                  <strong>{a.who}</strong>
-                  <span className="account__role">{a.role}</span>
-                </span>
-                <span className="account__email">{a.email}</span>
-                <span className="account__sees">{a.sees}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
       </div>
     </div>
   );
