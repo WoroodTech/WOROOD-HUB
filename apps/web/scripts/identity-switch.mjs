@@ -49,15 +49,17 @@ const who = () => page.locator('.who__name').innerText();
 
 console.log('\nidentity switch');
 
-/* Karim is the sales admin: dashboards, orders and the composer. Data & Sync
-   belongs to Nour the ops engineer, not to him -- the roles are deliberately
-   not nested, so "admin" here does not mean "everything". */
+/* Khalid is the administrator: dashboards, orders, the composer, and the
+   People and Roles screens nobody else reaches. Omnia is Customer Care: orders
+   and nothing else from the sales module, and no administration at all. The
+   gap between the two is what a leaked cache would show. */
 await page.goto(BASE + '/login');
-await signIn('karim.fouad@worood.co');
-const karimNav = await nav();
-check('a sales admin sees the dashboard composer',
-  karimNav.some((t) => /Manage Dashboards/i.test(t)), karimNav.join(' | '));
-check('...and orders', karimNav.some((t) => /Orders/i.test(t)), karimNav.join(' | '));
+await signIn('Admin@worood.co');
+const adminNav = await nav();
+check('an administrator sees the dashboard composer',
+  adminNav.some((t) => /Manage Dashboards/i.test(t)), adminNav.join(' | '));
+check('...and the People screen',
+  adminNav.some((t) => /People/i.test(t)), adminNav.join(' | '));
 
 // Land on a sales screen, so "back to where we were" has something to get wrong.
 await page.goto(BASE + '/sales');
@@ -66,17 +68,19 @@ await page.waitForSelector('.pagehead__title', { timeout: 15000 });
 await page.click('button:has-text("Sign out")');
 await page.waitForSelector('input[type="email"]', { timeout: 15000 });
 
-// Omar: plain employee. No sales access of any kind.
-await signIn('omar.khaled@worood.co');
+// Omnia: Customer Care. Orders, and no dashboard permission of any kind.
+await signIn('omnia.osama@worood.co');
 
 check('the new sign-in lands on home, not the last session’s page',
   new URL(page.url()).pathname === '/', page.url());
 check('the top bar names the person who just signed in',
-  (await who()).includes('Omar'), await who());
+  (await who()).includes('Omnia'), await who());
 
-const omarNav = await nav();
-check('an employee sees no sales navigation at all',
-  !omarNav.some((t) => /Composer|Sync|Orders|Dashboards/i.test(t)), omarNav.join(' | '));
+const careNav = await nav();
+check('the narrower account sees none of the administration navigation',
+  !careNav.some((t) => /People|Roles|Manage Dashboards|Data & Sync/i.test(t)), careNav.join(' | '));
+check('...nor the dashboards it holds no permission for',
+  !careNav.some((t) => /^\s*Sales\s*$/.test(t)), careNav.join(' | '));
 
 const cards = await page.locator('.card__title').allInnerTexts();
 check('and no sales portlets are left on screen from the previous session',
@@ -89,10 +93,11 @@ await page.screenshot({ path: '/root/worood-hub/screenshots/ui/identity-switch-a
 // And back the other way: the employee's narrower view must not stick.
 await page.click('button:has-text("Sign out")');
 await page.waitForSelector('input[type="email"]', { timeout: 15000 });
-await signIn('karim.fouad@worood.co');
+await signIn('Admin@worood.co');
 const again = await nav();
 check('switching back restores the wider account’s navigation',
-  again.some((t) => /Manage Dashboards/i.test(t)), again.join(' | '));
+  again.some((t) => /Manage Dashboards/i.test(t)) && again.some((t) => /People/i.test(t)),
+  again.join(' | '));
 
 console.log(`\n  ${pass} passed, ${fail} failed`);
 await b.close();

@@ -34,7 +34,7 @@ async function signIn(email) {
   await page.waitForSelector('.profile__name', { timeout: 15000 });
 }
 
-await signIn('facilities@worood.co');
+await signIn('heba.fayed@worood.co');
 await shot('mr-home');
 
 await page.goto(BASE + '/meeting-rooms/book');

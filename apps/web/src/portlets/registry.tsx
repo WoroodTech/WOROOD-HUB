@@ -58,7 +58,7 @@ function NextMeeting({ moduleKey, portletKey, title }: PortletProps) {
   return (
     <Card
       title={title}
-      subtitle={meeting && !meeting.isOrganiser
+      subtitle={meeting?.organiserName
         ? `Booked by ${meeting.organiserName}`
         : 'Your next booking'}
     >
@@ -76,7 +76,7 @@ function NextMeeting({ moduleKey, portletKey, title }: PortletProps) {
                 <span className="meeting__time">{formatTime(meeting.startsAt)} – {formatTime(meeting.endsAt)}</span>
               </p>
               <p className="meeting__title">{meeting.title}</p>
-              {!meeting.isOrganiser && meeting.myResponse === 'INVITED' ? (
+              {meeting.myResponse === 'INVITED' ? (
                 <p className="meeting__pending">
                   <Icon name="clock" size={13} /> You have not replied yet
                 </p>
@@ -143,7 +143,7 @@ function UpcomingReservations({ moduleKey, portletKey, title }: PortletProps) {
                       <strong>{r.title}</strong>
                       <span>
                         {r.room} · <span className="mono">{r.reference}</span>
-                        {!r.isOrganiser ? <> · <em>by {r.organiserName}</em></> : null}
+                        {r.organiserName ? <> · <em>by {r.organiserName}</em></> : null}
                       </span>
                     </span>
                   </li>

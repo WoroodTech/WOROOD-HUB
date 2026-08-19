@@ -1,21 +1,45 @@
-# dependencies
+# Dependencies
 node_modules/
 
-# build output
-dist/
-apps/web/dist/
-*.tsbuildinfo
-
-# secrets — .env.example is the template that IS committed
+# Environment
 .env
 .env.local
-.env.*.local
+.env.development.local
+.env.test.local
+.env.production.local
 
-# logs and runtime
+
+# Real Shopify fixtures / business data
+fixtures/shopify/
+
+# Build
+dist/
+build/
+coverage/
+
+# Logs
 *.log
-npm-debug.log*
-.DS_Store
+logs/
 
-# editor
-.vscode/
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
 .idea/
+
+# Temporary
+tmp/
+temp/
+
+# Archives
+*.zip
+*.tar
+*.gz
+*.bundle
+
+# Runtime
+*.pid

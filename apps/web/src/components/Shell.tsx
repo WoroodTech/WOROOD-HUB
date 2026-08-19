@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Icon, WoroodMark } from './Icon';
+import { Icon, WoroodMark, WoroodWordmark } from './Icon';
 import { useAuth } from '../lib/auth';
 import { useHubModules } from '../lib/hub';
 import { useRealtime } from '../lib/realtime';
@@ -48,9 +48,9 @@ export function Shell() {
 
       <aside className="sidebar" id="sidebar">
         <div className="sidebar__brand">
-          <span className="sidebar__mark"><WoroodMark /></span>
+          <span className="sidebar__mark"><WoroodMark size={30} title="WOROOD" /></span>
           <span className="sidebar__wordmark">
-            <strong>WOROOD</strong>
+            <WoroodWordmark width={104} />
             <small>Hub</small>
           </span>
         </div>

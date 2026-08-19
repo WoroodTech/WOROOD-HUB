@@ -25,10 +25,10 @@ const BASE = process.env.PREVIEW_URL ?? 'http://127.0.0.1:4173';
 const iso = (offsetMinutes) => new Date(Date.UTC(2026, 7, 17, 9, 0) + offsetMinutes * 60_000).toISOString();
 
 const principal = {
-  id: 'u-omar', email: 'omar.hassan@worood.co', fullName: 'Omar Hassan', fullNameAr: 'عمر حسن',
-  jobTitle: 'Head of Commercial', department: 'Commercial',
+  id: 'u-kandil', email: 'Kandil@worood.co', fullName: 'Mohamed Kandil', fullNameAr: 'محمد قنديل',
+  jobTitle: 'Chief Executive Officer', department: 'Executive',
   timezone: 'Africa/Cairo', locale: 'en',
-  roles: ['sales-manager', 'employee'], permissions: ['sales.dashboard.view'],
+  roles: ['executive'], permissions: ['sales.dashboard.view', 'sales.order.view', 'sales.customer.view'],
 };
 
 const hub = {
@@ -56,6 +56,7 @@ const hub = {
   dashboard: [
     { key: 'store-pulse', moduleKey: 'sales-dashboard', title: 'Store pulse', width: 8, order: 10 },
     { key: 'next-meeting', moduleKey: 'meeting-rooms', title: 'Next meeting', width: 4, order: 20 },
+    { key: 'my-invitations', moduleKey: 'meeting-rooms', title: 'Awaiting your reply', width: 4, order: 22 },
     { key: 'my-dashboards', moduleKey: 'sales-dashboard', title: 'My dashboards', width: 4, order: 30 },
     { key: 'free-now', moduleKey: 'meeting-rooms', title: 'Free right now', width: 4, order: 40 },
     { key: 'my-alerts', moduleKey: 'sales-dashboard', title: 'My alerts', width: 4, order: 50 },
@@ -68,7 +69,15 @@ const PORTLETS = {
     meeting: {
       title: 'Q3 channel review', room: 'Nile', floor: 4, attendees: 9,
       reference: 'MR-2026-0841', startsAt: iso(75), endsAt: iso(135),
+      isOrganiser: false, organiserName: 'Heba Fayed', myResponse: 'ACCEPTED',
     },
+  },
+  '/meeting-rooms/portlets/my-invitations': {
+    invitations: [
+      { id: 'inv-1', reference: 'MR-2026-0852', title: 'Pricing review',
+        room: 'Papyrus', floor: 3, startsAt: iso(1450), endsAt: iso(1510),
+        organiserName: 'Mohamed Yousry' },
+    ],
   },
   '/meeting-rooms/portlets/free-now': {
     rooms: [
@@ -79,8 +88,10 @@ const PORTLETS = {
   },
   '/meeting-rooms/portlets/upcoming-reservations': {
     reservations: [
-      { reference: 'MR-2026-0844', title: 'Supplier call', room: 'Lotus', startsAt: iso(1500), endsAt: iso(1560) },
-      { reference: 'MR-2026-0851', title: 'Weekly commercial sync', room: 'Nile', startsAt: iso(2900), endsAt: iso(2960) },
+      { reference: 'MR-2026-0844', title: 'Supplier call', room: 'Lotus',
+        startsAt: iso(1500), endsAt: iso(1560), isOrganiser: true, organiserName: null },
+      { reference: 'MR-2026-0851', title: 'Weekly commercial sync', room: 'Nile',
+        startsAt: iso(2900), endsAt: iso(2960), isOrganiser: false, organiserName: 'Nadia' },
     ],
   },
   '/sales/portlets/my-dashboards': {

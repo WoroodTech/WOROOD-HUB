@@ -71,15 +71,9 @@ export function Icon({ name, size = 18, className }: IconProps) {
   );
 }
 
-/** The mark in the sidebar: a stylised bloom, drawn rather than an asset. */
-export function WoroodMark({ size = 28 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" focusable="false">
-      <g fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
-        <path d="M16 4c3.6 2.6 5.4 5.7 5.4 9.3 0 3.6-1.8 6.7-5.4 9.3-3.6-2.6-5.4-5.7-5.4-9.3C10.6 9.7 12.4 6.6 16 4Z" />
-        <path d="M16 22.6c2.9-2.4 6-3.3 9.3-2.6-1.4 3.1-3.8 5-7.3 5.7M16 22.6c-2.9-2.4-6-3.3-9.3-2.6 1.4 3.1 3.8 5 7.3 5.7" />
-        <path d="M16 25.7V28" />
-      </g>
-    </svg>
-  );
-}
+/* The mark used to be drawn here as a stylised bloom, because there was no
+   artwork to hand. There is now: see WoroodLogo.tsx. It is re-exported from
+   this file so every existing `import { WoroodMark } from './Icon'` keeps
+   working -- the mark is a brand asset, not an icon, but callers should not
+   have to care. */
+export { WoroodMark, WoroodWordmark, WoroodLogo } from './WoroodLogo';

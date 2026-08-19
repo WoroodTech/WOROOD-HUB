@@ -60,26 +60,26 @@ async function cleanup() {
 async function run() {
   await cleanup();
 
-  const yara = await login('yara.saleh@worood.co');       // organiser
-  const omar = await login('omar.khaled@worood.co');       // guest
-  const hala = await login('hala.mansour@worood.co');      // guest
-  const omarId = await userId('omar.khaled@worood.co');
-  const halaId = await userId('hala.mansour@worood.co');
-  const yaraId = await userId('yara.saleh@worood.co');
+  const yousry = await login('Yousry@worood.co');       // organiser
+  const nadia = await login('nadia@worood.co');       // guest
+  const omnia = await login('omnia.osama@worood.co');      // guest
+  const nadiaId = await userId('nadia@worood.co');
+  const omniaId = await userId('omnia.osama@worood.co');
+  const yousryId = await userId('Yousry@worood.co');
 
-  const rooms = await call(yara, '/meeting-rooms/rooms');
+  const rooms = await call(yousry, '/meeting-rooms/rooms');
   const nile = rooms.body.rooms.find((r: any) => r.code === 'NILE');       // seats 14
   const jasmine = rooms.body.rooms.find((r: any) => r.code === 'JASMINE'); // seats 4
 
   console.log('\ninvitations — booking with guests');
 
-  const booked = await call(yara, '/meeting-rooms/reservations', {
+  const booked = await call(yousry, '/meeting-rooms/reservations', {
     method: 'POST',
     body: JSON.stringify({
       roomId: nile.id, title: 'INVITE autumn range review',
       description: 'Bring the sample board.',
       startsAt: dayAt(10), endsAt: dayAt(11),
-      attendeeUserIds: [omarId, halaId],
+      attendeeUserIds: [nadiaId, omniaId],
     }),
   });
   check('a meeting can be booked with colleagues named',
@@ -97,33 +97,33 @@ async function run() {
 
   /* The whole point of the feature. These are the same endpoints the invitee's
      browser calls when they sign in. */
-  const omarInvites = await call(omar, '/meeting-rooms/portlets/my-invitations');
+  const nadiaInvites = await call(nadia, '/meeting-rooms/portlets/my-invitations');
   check('the invitation is on the guest’s home screen',
-    omarInvites.body?.invitations?.some((i: any) => i.id === meetingId),
-    JSON.stringify(omarInvites.body).slice(0, 200));
-  const mine = omarInvites.body.invitations.find((i: any) => i.id === meetingId);
-  check('...naming who invited them', mine?.organiserName === 'Yara Saleh', mine?.organiserName);
+    nadiaInvites.body?.invitations?.some((i: any) => i.id === meetingId),
+    JSON.stringify(nadiaInvites.body).slice(0, 200));
+  const mine = nadiaInvites.body.invitations.find((i: any) => i.id === meetingId);
+  check('...naming who invited them', mine?.organiserName === 'Mohamed Yousry', mine?.organiserName);
   check('...and where it is', mine?.room === nile.name);
 
-  const omarNext = await call(omar, '/meeting-rooms/portlets/next-meeting');
+  const nadiaNext = await call(nadia, '/meeting-rooms/portlets/next-meeting');
   check('"my next meeting" includes a meeting somebody else booked',
-    !!omarNext.body?.meeting, JSON.stringify(omarNext.body).slice(0, 160));
+    !!nadiaNext.body?.meeting, JSON.stringify(nadiaNext.body).slice(0, 160));
 
-  const omarUpcoming = await call(omar, '/meeting-rooms/portlets/upcoming-reservations');
+  const nadiaUpcoming = await call(nadia, '/meeting-rooms/portlets/upcoming-reservations');
   check('so does "my meetings"',
-    omarUpcoming.body?.reservations?.some((r: any) => r.title === 'INVITE autumn range review'),
-    (omarUpcoming.body?.reservations ?? []).map((r: any) => r.title).join(' | '));
-  const onList = omarUpcoming.body.reservations.find((r: any) => r.title === 'INVITE autumn range review');
+    nadiaUpcoming.body?.reservations?.some((r: any) => r.title === 'INVITE autumn range review'),
+    (nadiaUpcoming.body?.reservations ?? []).map((r: any) => r.title).join(' | '));
+  const onList = nadiaUpcoming.body.reservations.find((r: any) => r.title === 'INVITE autumn range review');
   check('...marked as not theirs, with the organiser named',
-    onList?.isOrganiser === false && onList?.organiserName === 'Yara Saleh');
+    onList?.isOrganiser === false && onList?.organiserName === 'Mohamed Yousry');
 
-  const listed = await call(omar, '/meeting-rooms/reservations?scope=invited&period=upcoming');
+  const listed = await call(nadia, '/meeting-rooms/reservations?scope=invited&period=upcoming');
   check('the reservations screen can show only what they were invited to',
     listed.body?.reservations?.some((r: any) => r.id === meetingId)
     && listed.body.reservations.every((r: any) => r.myRole === 'attendee'),
     JSON.stringify(listed.body?.reservations?.map((r: any) => r.myRole)));
 
-  const organised = await call(omar, '/meeting-rooms/reservations?scope=organised&period=upcoming');
+  const organised = await call(nadia, '/meeting-rooms/reservations?scope=organised&period=upcoming');
   check('...and only what they booked, which excludes this one',
     !organised.body.reservations.some((r: any) => r.id === meetingId));
 
@@ -132,58 +132,58 @@ async function run() {
   const note = await one(
     `SELECT title, body, link FROM core_notifications
       WHERE user_id = $1 AND title LIKE '%invited you%'
-      ORDER BY created_at DESC LIMIT 1`, [omarId]);
+      ORDER BY created_at DESC LIMIT 1`, [nadiaId]);
   check('the guest gets a notification', !!note, 'none found');
-  check('...naming the organiser', /Yara Saleh/.test(note?.title ?? ''), note?.title);
+  check('...naming the organiser', /Mohamed Yousry/.test(note?.title ?? ''), note?.title);
   check('...with the time, room and reference in it',
     /INVITE autumn range review/.test(note?.body ?? '') && /Nile/.test(note?.body ?? ''),
     note?.body);
 
   const organiserNote = await one(
-    `SELECT id FROM core_notifications WHERE user_id = $1 AND title LIKE '%invited you%'`, [yaraId]);
+    `SELECT id FROM core_notifications WHERE user_id = $1 AND title LIKE '%invited you%'`, [yousryId]);
   check('the organiser does not invite themselves', !organiserNote);
 
   console.log('\ninvitations — replying');
 
-  const notInvited = await call(await login('nour.hassan@worood.co'),
+  const notInvited = await call(await login('heba.fayed@worood.co'),
     `/meeting-rooms/reservations/${meetingId}/response`, {
       method: 'POST', body: JSON.stringify({ response: 'ACCEPTED' }),
     });
   check('somebody not invited cannot reply', notInvited.status === 404, `got ${notInvited.status}`);
 
-  const accepted = await call(omar, `/meeting-rooms/reservations/${meetingId}/response`, {
+  const accepted = await call(nadia, `/meeting-rooms/reservations/${meetingId}/response`, {
     method: 'POST', body: JSON.stringify({ response: 'ACCEPTED' }),
   });
   check('a guest can accept', accepted.status === 200 || accepted.status === 201);
   check('...and their own answer comes back', accepted.body?.myResponse === 'ACCEPTED');
-  check('...timestamped', accepted.body?.attendees.find((a: any) => a.userId === omarId)?.respondedAt !== null);
+  check('...timestamped', accepted.body?.attendees.find((a: any) => a.userId === nadiaId)?.respondedAt !== null);
 
-  const afterAccept = await call(omar, '/meeting-rooms/portlets/my-invitations');
+  const afterAccept = await call(nadia, '/meeting-rooms/portlets/my-invitations');
   check('an answered invitation leaves the waiting list',
     !afterAccept.body.invitations.some((i: any) => i.id === meetingId));
-  const stillThere = await call(omar, '/meeting-rooms/portlets/upcoming-reservations');
+  const stillThere = await call(nadia, '/meeting-rooms/portlets/upcoming-reservations');
   check('...but the meeting stays in their meetings',
     stillThere.body.reservations.some((r: any) => r.title === 'INVITE autumn range review'));
 
   const answerNote = await one(
     `SELECT title FROM core_notifications WHERE user_id = $1 AND title LIKE '%accepted%'
-      ORDER BY created_at DESC LIMIT 1`, [yaraId]);
-  check('the organiser is told the answer', /Omar Khaled accepted/.test(answerNote?.title ?? ''),
+      ORDER BY created_at DESC LIMIT 1`, [yousryId]);
+  check('the organiser is told the answer', /Nadia accepted/.test(answerNote?.title ?? ''),
     answerNote?.title);
 
-  const declined = await call(hala, `/meeting-rooms/reservations/${meetingId}/response`, {
+  const declined = await call(omnia, `/meeting-rooms/reservations/${meetingId}/response`, {
     method: 'POST', body: JSON.stringify({ response: 'DECLINED' }),
   });
   check('a guest can decline', declined.body?.myResponse === 'DECLINED');
 
-  const halaUpcoming = await call(hala, '/meeting-rooms/portlets/upcoming-reservations');
+  const omniaUpcoming = await call(omnia, '/meeting-rooms/portlets/upcoming-reservations');
   check('a declined meeting drops off their own list',
-    !halaUpcoming.body.reservations.some((r: any) => r.title === 'INVITE autumn range review'));
+    !omniaUpcoming.body.reservations.some((r: any) => r.title === 'INVITE autumn range review'));
 
-  const asOrganiser = await call(yara, `/meeting-rooms/reservations/${meetingId}`);
-  const halaRow = asOrganiser.body.attendees.find((a: any) => a.userId === halaId);
+  const asOrganiser = await call(yousry, `/meeting-rooms/reservations/${meetingId}`);
+  const omniaRow = asOrganiser.body.attendees.find((a: any) => a.userId === omniaId);
   check('but the organiser still sees they were asked, and said no',
-    halaRow?.response === 'DECLINED',
+    omniaRow?.response === 'DECLINED',
     JSON.stringify(asOrganiser.body.attendees.map((a: any) => a.response)));
 
   console.log('\ninvitations — editing the guest list');
@@ -191,37 +191,37 @@ async function run() {
   /* The trap this guards: rebuilding the attendee rows on every edit would
      reset everyone's reply to INVITED, and the accepts already collected would
      silently vanish. */
-  const edited = await call(yara, `/meeting-rooms/reservations/${meetingId}`, {
+  const edited = await call(yousry, `/meeting-rooms/reservations/${meetingId}`, {
     method: 'PATCH',
-    body: JSON.stringify({ attendeeUserIds: [omarId, halaId, await userId('facilities@worood.co')] }),
+    body: JSON.stringify({ attendeeUserIds: [nadiaId, omniaId, await userId('heba.fayed@worood.co')] }),
   });
   check('a guest can be added later', edited.body?.attendees?.length === 3);
-  const omarAfterEdit = edited.body.attendees.find((a: any) => a.userId === omarId);
+  const nadiaAfterEdit = edited.body.attendees.find((a: any) => a.userId === nadiaId);
   check('...without resetting the replies already given',
-    omarAfterEdit?.response === 'ACCEPTED', omarAfterEdit?.response);
+    nadiaAfterEdit?.response === 'ACCEPTED', nadiaAfterEdit?.response);
 
-  const raniaId = await userId('facilities@worood.co');
-  const raniaNote = await one(
+  const hebaId = await userId('heba.fayed@worood.co');
+  const hebaNote = await one(
     `SELECT title FROM core_notifications WHERE user_id = $1 AND title LIKE '%invited you%'
-      ORDER BY created_at DESC LIMIT 1`, [raniaId]);
-  check('the newly added guest is told', !!raniaNote);
+      ORDER BY created_at DESC LIMIT 1`, [hebaId]);
+  check('the newly added guest is told', !!hebaNote);
 
-  const dropped = await call(yara, `/meeting-rooms/reservations/${meetingId}`, {
-    method: 'PATCH', body: JSON.stringify({ attendeeUserIds: [omarId] }),
+  const dropped = await call(yousry, `/meeting-rooms/reservations/${meetingId}`, {
+    method: 'PATCH', body: JSON.stringify({ attendeeUserIds: [nadiaId] }),
   });
   check('a guest can be removed', dropped.body?.attendees?.length === 1);
-  const halaAfterDrop = await call(hala, '/meeting-rooms/portlets/my-invitations');
+  const omniaAfterDrop = await call(omnia, '/meeting-rooms/portlets/my-invitations');
   check('...and it leaves their screen',
-    !halaAfterDrop.body.invitations.some((i: any) => i.id === meetingId));
+    !omniaAfterDrop.body.invitations.some((i: any) => i.id === meetingId));
 
   console.log('\ninvitations — capacity and moving');
 
-  const tooMany = await call(yara, '/meeting-rooms/reservations', {
+  const tooMany = await call(yousry, '/meeting-rooms/reservations', {
     method: 'POST',
     body: JSON.stringify({
       roomId: jasmine.id, title: 'INVITE too many for jasmine',
       startsAt: dayAt(14), endsAt: dayAt(15),
-      attendeeUserIds: [omarId, halaId, raniaId, await userId('karim.fouad@worood.co')],
+      attendeeUserIds: [nadiaId, omniaId, hebaId, await userId('Kandil@worood.co')],
     }),
   });
   check('naming more guests than the room seats is refused',
@@ -230,35 +230,35 @@ async function run() {
     /seats 4\. You have 5/.test(tooMany.body?.error?.message ?? ''),
     tooMany.body?.error?.message);
 
-  const moved = await call(yara, `/meeting-rooms/reservations/${meetingId}`, {
+  const moved = await call(yousry, `/meeting-rooms/reservations/${meetingId}`, {
     method: 'PATCH', body: JSON.stringify({ startsAt: dayAt(15), endsAt: dayAt(16) }),
   });
   check('the organiser can move the meeting', moved.status === 200, JSON.stringify(moved.body).slice(0, 160));
   const movedNote = await one(
     `SELECT title, body FROM core_notifications WHERE user_id = $1 AND title = 'Meeting moved'
-      ORDER BY created_at DESC LIMIT 1`, [omarId]);
+      ORDER BY created_at DESC LIMIT 1`, [nadiaId]);
   check('the guests are told it moved, not that they were invited again',
     !!movedNote && /is now/.test(movedNote.body ?? ''), movedNote?.body);
 
   console.log('\ninvitations — cancelling');
 
-  const cancelled = await call(yara, `/meeting-rooms/reservations/${meetingId}`, {
+  const cancelled = await call(yousry, `/meeting-rooms/reservations/${meetingId}`, {
     method: 'DELETE', body: JSON.stringify({ reason: 'INVITE clash with the board' }),
   });
   check('the organiser can cancel', cancelled.body?.status === 'CANCELLED');
 
   const cancelNote = await one(
     `SELECT title, body FROM core_notifications WHERE user_id = $1 AND title = 'Meeting cancelled'
-      ORDER BY created_at DESC LIMIT 1`, [omarId]);
+      ORDER BY created_at DESC LIMIT 1`, [nadiaId]);
   check('every guest is told it is off', !!cancelNote, 'no notification');
   check('...with the reason, so nobody turns up to an empty room',
     /clash with the board/.test(cancelNote?.body ?? ''), cancelNote?.body);
 
-  const afterCancel = await call(omar, '/meeting-rooms/portlets/upcoming-reservations');
+  const afterCancel = await call(nadia, '/meeting-rooms/portlets/upcoming-reservations');
   check('a cancelled meeting leaves the guest’s home screen',
     !afterCancel.body.reservations.some((r: any) => r.title === 'INVITE autumn range review'));
 
-  const replyAfter = await call(omar, `/meeting-rooms/reservations/${meetingId}/response`, {
+  const replyAfter = await call(nadia, `/meeting-rooms/reservations/${meetingId}/response`, {
     method: 'POST', body: JSON.stringify({ response: 'DECLINED' }),
   });
   check('and it can no longer be replied to', replyAfter.status === 409, `got ${replyAfter.status}`);

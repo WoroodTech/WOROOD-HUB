@@ -68,12 +68,12 @@ async function main() {
   /* ------------------------------------------------------ auth and lockout -- */
   await section('Authentication');
   {
-    const good = await login('yara.saleh@worood.co');
+    const good = await login('Yousry@worood.co');
     check('correct credentials sign in', good.status === 201 || good.status === 200);
     check('principal carries roles and effective permissions',
       good.body?.principal?.permissions?.includes('sales.order.view'));
 
-    const bad = await login('yara.saleh@worood.co', 'wrong-password');
+    const bad = await login('Yousry@worood.co', 'wrong-password');
     check('wrong password is rejected', bad.status === 401);
 
     const unknown = await login('nobody@worood.co', 'whatever');
@@ -99,13 +99,13 @@ async function main() {
   /* ------------------------------------------- access resolution, all paths -- */
   await section('Dashboard access resolution');
   {
-    const expect: [string, number, string][] = [
-      ['omar.khaled@worood.co', 0, 'no sales permission at all'],
-      ['nour.hassan@worood.co', 0, 'sync permission only, which is not a dashboard permission'],
-      ['hala.mansour@worood.co', 1, 'role grants two, an individual REVOKE removes one'],
-      ['yara.saleh@worood.co', 4, 'role grants three, an individual GRANT adds one'],
-      ['karim.fouad@worood.co', 5, 'holds manage, so sees every dashboard'],
-      ['admin@worood.co', 5, 'administrator'],
+    const expect: Array<[string, number, string]> = [
+      ['omnia.osama@worood.co', 0, 'Customer Care holds no dashboard permission at all'],
+      ['nadia@worood.co',       1, 'Marketing reaches two, and one is revoked from her personally'],
+      ['heba.fayed@worood.co',  2, 'Operations reaches one, and one more is granted to her personally'],
+      ['Yousry@worood.co',      2, 'Finance reaches exactly the two it needs'],
+      ['Kandil@worood.co',      5, 'the Executive role reaches all of them'],
+      ['Admin@worood.co',       5, 'administrator'],
     ];
     for (const [email, n, why] of expect) {
       const l = await login(email);
@@ -114,53 +114,73 @@ async function main() {
       check(`${email.split('@')[0]} sees ${n} dashboards — ${why}`, count === n, `got ${count}`);
     }
 
-    const hala = await login('hala.mansour@worood.co');
-    const hr = await get('/sales/dashboards', hala.body.accessToken);
+    const nadia = await login('nadia@worood.co');
+    const nr = await get('/sales/dashboards', nadia.body.accessToken);
     check('an individual REVOKE beats the role grant',
-      !hr.body.some((d: any) => d.key === 'marketing-traffic'));
+      !nr.body.some((d: any) => d.key === 'combined-sales-marketing'),
+      nr.body.map((d: any) => d.key).join(','));
 
-    const yara = await login('yara.saleh@worood.co');
-    const yr = await get('/sales/dashboards', yara.body.accessToken);
+    const heba = await login('heba.fayed@worood.co');
+    const hr = await get('/sales/dashboards', heba.body.accessToken);
     check('an individual GRANT is reported as USER, not ROLE',
-      yr.body.find((d: any) => d.key === 'finance-reconciliation')?.grantedBy === 'USER');
+      hr.body.find((d: any) => d.key === 'executive-daily')?.grantedBy === 'USER');
     check('a role grant is reported as ROLE',
-      yr.body.find((d: any) => d.key === 'executive-daily')?.grantedBy === 'ROLE');
+      hr.body.find((d: any) => d.key === 'sales-operations')?.grantedBy === 'ROLE');
   }
 
   /* -------------------------------------------- permission independence -- */
   await section('Permission keys are independent, not hierarchical');
   {
-    const nour = await login('nour.hassan@worood.co');
-    const sync = await get('/sales/admin/sync', nour.body.accessToken);
-    check('sync-only engineer reaches Data & Sync', sync.status === 200);
-    const dash = await get('/sales/dashboards', nour.body.accessToken);
-    check('sync-only engineer is refused dashboards', dash.status === 403);
-    const orders = await get('/sales/orders', nour.body.accessToken);
-    check('sync-only engineer is refused orders', orders.status === 403);
+    /* Independence proven in both directions on the same pair of keys, which
+       is stronger than one account missing everything: Marketing holds
+       dashboard.view and not order.view, Customer Care holds order.view and
+       not dashboard.view. Neither key implies the other. */
+    const marketing = await login('nadia@worood.co');
+    check('marketing reaches dashboards',
+      (await get('/sales/dashboards', marketing.body.accessToken)).status === 200);
+    check('...and is refused orders',
+      (await get('/sales/orders', marketing.body.accessToken)).status === 403);
 
-    const karim = await login('karim.fouad@worood.co');
-    const karimSync = await get('/sales/admin/sync', karim.body.accessToken);
-    check('sales admin without sync.manage is refused Data & Sync', karimSync.status === 403);
+    const care = await login('omnia.osama@worood.co');
+    check('customer care reaches orders',
+      (await get('/sales/orders', care.body.accessToken)).status === 200);
+    check('...and is refused dashboards',
+      (await get('/sales/dashboards', care.body.accessToken)).status === 403);
+
+    const ops = await login('heba.fayed@worood.co');
+    check('operations reaches Data & Sync',
+      (await get('/sales/admin/sync', ops.body.accessToken)).status === 200);
+
+    const ceo = await login('Kandil@worood.co');
+    check('the CEO, with every reading permission, is still refused Data & Sync',
+      (await get('/sales/admin/sync', ceo.body.accessToken)).status === 403);
   }
 
   /* ------------------------------------------------ portlet gating on home -- */
   await section('Home dashboard portlets');
   {
-    const omar = await login('omar.khaled@worood.co');
-    const hub = await get('/hub/modules', omar.body.accessToken);
+    /* Customer Care is the account that makes the gate visibly true: she has
+       no dashboard permission, so the sales portlets are absent from the
+       response entirely -- not present and empty. */
+    const care = await login('omnia.osama@worood.co');
+    const hub = await get('/hub/modules', care.body.accessToken);
     const keys = hub.body.dashboard.map((p: any) => p.key);
-    check('employee with no sales access sees meeting-room portlets',
+    check('an account with no dashboard permission still sees meeting-room portlets',
       keys.includes('next-meeting') && keys.includes('free-now'));
-    check('employee with no sales access sees NO sales portlets',
+    check('...and NO sales portlets',
       !keys.some((k: string) => ['my-dashboards', 'store-pulse', 'my-alerts'].includes(k)),
       keys.join(','));
-    check('no sales navigation either',
-      !hub.body.modules.find((m: any) => m.key === 'sales-dashboard')?.navigation.length);
+    check('but the Orders link is there, because order.view is a separate key',
+      !!hub.body.modules.find((m: any) => m.key === 'sales-dashboard')
+        ?.navigation.some((n: any) => n.path === '/sales/orders'));
+    check('while the Dashboards link is not',
+      !hub.body.modules.find((m: any) => m.key === 'sales-dashboard')
+        ?.navigation.some((n: any) => n.path === '/sales'));
 
-    const karim = await login('karim.fouad@worood.co');
+    const karim = await login('Kandil@worood.co');
     const hub2 = await get('/hub/modules', karim.body.accessToken);
     const keys2 = hub2.body.dashboard.map((p: any) => p.key);
-    check('sales admin sees all three sales portlets',
+    check('the CEO sees all three sales portlets',
       ['my-dashboards', 'store-pulse', 'my-alerts'].every((k) => keys2.includes(k)));
     check('portlets are ordered', hub2.body.dashboard.every((p: any, i: number, a: any[]) =>
       i === 0 || a[i - 1].order <= p.order));
@@ -169,26 +189,24 @@ async function main() {
   /* ------------------------------------------- customer data at field level -- */
   await section('Protected customer data');
   {
-    const yara = await login('yara.saleh@worood.co');           // has customer.view
-    const withPii = await get('/sales/orders?pageSize=5', yara.body.accessToken);
+    const yousry = await login('Yousry@worood.co');          // has customer.view
+    const withPii = await get('/sales/orders?pageSize=5', yousry.body.accessToken);
     check('manager sees customer data', withPii.body.customerDataRedacted === false);
     check('customer object is populated', !!withPii.body.orders[0]?.customer);
 
     const before = Number((await one(
       `SELECT COUNT(*) AS n FROM core_audit_logs WHERE action = 'sales.customer.read'`)).n);
-    await get('/sales/orders?pageSize=5', yara.body.accessToken);
+    await get('/sales/orders?pageSize=5', yousry.body.accessToken);
     const after = Number((await one(
       `SELECT COUNT(*) AS n FROM core_audit_logs WHERE action = 'sales.customer.read'`)).n);
     // Shopify Level 2 obliges an access log to protected customer data.
     check('reading customer data writes an audit row', after > before, `${before} -> ${after}`);
 
-    // A user holding order.view but not customer.view: create one on the fly.
-    const roleId = (await one(`SELECT id FROM core_roles WHERE key = 'sales-viewer'`)).id;
-    const permId = (await one(`SELECT id FROM core_permissions WHERE key = 'sales.order.view'`)).id;
-    await query(`INSERT INTO core_role_permissions (role_id, permission_id) VALUES ($1,$2)
-                 ON CONFLICT DO NOTHING`, [roleId, permId]);
-    const hala = await login('hala.mansour@worood.co');
-    const redacted = await get('/sales/orders?pageSize=5', hala.body.accessToken);
+    /* Operations holds order.view and not customer.view -- fulfilment does not
+       need a name and an address. No role has to be fabricated for this any
+       more; it is how the company is actually set up. */
+    const ops = await login('heba.fayed@worood.co');
+    const redacted = await get('/sales/orders?pageSize=5', ops.body.accessToken);
     check('viewer without customer.view is told data is withheld',
       redacted.body.customerDataRedacted === true);
     check('customer field is ABSENT, not blanked',
@@ -196,8 +214,6 @@ async function main() {
     const raw = JSON.stringify(redacted.body);
     check('no customer name leaks anywhere in the payload',
       !raw.includes('displayName":"') || redacted.body.orders.every((o: any) => !o.customer?.displayName));
-    await query(`DELETE FROM core_role_permissions WHERE role_id = $1 AND permission_id = $2`,
-      [roleId, permId]);
   }
 
   /* ------------------------------------------------------- webhook receipt -- */
@@ -281,7 +297,7 @@ async function main() {
   /* ----------------------------------------------------- figures and shape -- */
   await section('Widget data and the sales figures');
   {
-    const admin = await login('admin@worood.co');
+    const admin = await login('Admin@worood.co');
     const t = admin.body.accessToken;
     const d = await get('/sales/dashboards/executive-daily/data?range=30d', t);
     check('a dashboard returns every widget in one round trip',
@@ -353,23 +369,45 @@ async function main() {
   /* ----------------------------------------------------- widget visibility -- */
   await section('Widget-level permission filtering');
   {
-    const hala = await login('hala.mansour@worood.co');   // no sales.order.view
-    const admin = await login('admin@worood.co');
-    const a = await get('/sales/dashboards/executive-daily', admin.body.accessToken);
-    const h = await get('/sales/dashboards/executive-daily', hala.body.accessToken);
-    check('admin and viewer resolve the same dashboard', a.status === 200 && h.status === 200);
-    check('a widget requiring order.view is absent from the viewer\'s layout',
-      !h.body.widgets.some((w: any) => w.widgetKey === 'table-recent-orders'));
+    /* Marketing is the account for this: it holds dashboard.view and not
+       order.view, so the two of them resolve the *same* dashboard and get
+       different widgets inside it -- which is the filtering being at widget
+       level rather than at dashboard level. */
+    const marketing = await login('nadia@worood.co');
+    const admin = await login('Admin@worood.co');
+    const a = await get('/sales/dashboards/marketing-traffic', admin.body.accessToken);
+    const m = await get('/sales/dashboards/marketing-traffic', marketing.body.accessToken);
+    check('admin and viewer resolve the same dashboard',
+      a.status === 200 && m.status === 200, `${a.status}/${m.status}`);
 
-    const ops = await get('/sales/dashboards/sales-operations', admin.body.accessToken);
+    /* Put an order-gated widget on their shared dashboard for the length of
+       this check, so the difference is observed on one dashboard rather than
+       inferred from two. */
+    const dashId = (await one(`SELECT id FROM sd_dashboards WHERE key = 'marketing-traffic'`)).id;
+    await query(
+      `INSERT INTO sd_dashboard_widgets (dashboard_id, position, width, widget_id)
+       SELECT $1, 99, 12, id FROM sd_widgets WHERE key = 'table-recent-orders'
+       ON CONFLICT DO NOTHING`, [dashId]);
+
+    const a2 = await get('/sales/dashboards/marketing-traffic', admin.body.accessToken);
+    const m2 = await get('/sales/dashboards/marketing-traffic', marketing.body.accessToken);
+    check('a widget requiring order.view is absent from the viewer\'s layout',
+      !m2.body.widgets.some((w: any) => w.widgetKey === 'table-recent-orders'),
+      m2.body.widgets.map((w: any) => w.widgetKey).join(','));
     check('the same widget IS present for someone who holds the permission',
-      ops.body.widgets.some((w: any) => w.widgetKey === 'table-recent-orders'));
+      a2.body.widgets.some((w: any) => w.widgetKey === 'table-recent-orders'),
+      a2.body.widgets.map((w: any) => w.widgetKey).join(','));
+
+    await query(
+      `DELETE FROM sd_dashboard_widgets
+        WHERE dashboard_id = $1 AND widget_id = (SELECT id FROM sd_widgets WHERE key = 'table-recent-orders')
+          AND position = 99`, [dashId]);
   }
 
   /* --------------------------------------------------------- sync health -- */
   await section('Sync health');
   {
-    const nour = await login('nour.hassan@worood.co');
+    const nour = await login('heba.fayed@worood.co');
     const h = await get('/sales/admin/sync', nour.body.accessToken);
     check('health reports the shop and its plan', h.body.shop?.plan === 'Advanced');
     check('the cost governor reports the Advanced restore rate',

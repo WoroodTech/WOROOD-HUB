@@ -29,16 +29,16 @@ const signIn = async (email) => {
 };
 
 // The organiser books, and invites two colleagues.
-await signIn('yara.saleh@worood.co');
+await signIn('Yousry@worood.co');
 await page.goto(BASE + '/meeting-rooms/book');
 await page.waitForSelector('.slot', { timeout: 15000 });
 await page.locator('.slot').first().click();
 await page.waitForSelector('.modal__panel');
 await page.fill('.modal__body input.input', 'Autumn range review');
-await page.fill('.attendees input.input', 'Omar');
+await page.fill('.attendees input.input', 'Omnia');
 await page.waitForSelector('.attendees__result', { timeout: 10000 });
 await page.locator('.attendees__result').first().click();
-await page.fill('.attendees input.input', 'Hala');
+await page.fill('.attendees input.input', 'Kandil');
 await page.waitForSelector('.attendees__result', { timeout: 10000 });
 await page.locator('.attendees__result').first().click();
 await shot('invite-picker');
@@ -49,7 +49,7 @@ await shot('invite-organiser-view');
 // The guest signs in and finds it waiting.
 await page.click('button:has-text("Sign out")');
 await page.waitForSelector('input[type="email"]', { timeout: 15000 });
-await signIn('omar.khaled@worood.co');
+await signIn('nadia@worood.co');
 await shot('invite-guest-home');
 
 await page.goto(BASE + '/meeting-rooms/reservations');

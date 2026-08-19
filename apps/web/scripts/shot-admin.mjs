@@ -23,7 +23,7 @@ await page.route('**/socket.io/**', (r) => r.abort());
 const shot = async (n) => { await page.waitForTimeout(900); await page.screenshot({ path: `${OUT}/${n}.png`, fullPage: true }); console.log('  ✓', n); };
 
 await page.goto(BASE + '/login');
-await page.fill('input[type="email"]', 'admin@worood.co');
+await page.fill('input[type="email"]', 'Admin@worood.co');
 await page.fill('input[type="password"]', 'Worood@2026');
 await page.click('button[type="submit"]');
 await page.waitForSelector('.profile__name', { timeout: 15000 });
@@ -33,7 +33,7 @@ console.log('  admin sidebar:', nav.join(' | '));
 
 await page.goto(BASE + '/admin/people');
 await page.waitForSelector('.person', { timeout: 15000 });
-await page.click('.person:has-text("Yara")');
+await page.click('.person:has-text("Heba")');
 await page.waitForSelector('.grantlist', { timeout: 15000 });
 await shot('admin-people');
 
@@ -49,7 +49,7 @@ await page.click('.modal__foot .btn--ghost');
 
 await page.goto(BASE + '/admin/roles');
 await page.waitForSelector('.rolerow', { timeout: 15000 });
-await page.click('.rolerow:has-text("Sales Manager")');
+await page.click('.rolerow:has-text("Operations")');
 await page.waitForSelector('.permgroup', { timeout: 15000 });
 await shot('admin-roles');
 

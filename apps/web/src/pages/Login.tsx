@@ -1,19 +1,31 @@
 import { useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
-import { Icon, WoroodMark } from '../components/Icon';
+import { Icon, WoroodLogo } from '../components/Icon';
 
 const DEMO_PASSWORD = 'Worood@2026';
 
-/** This is a demonstration build, so the seeded accounts are on the screen --
- *  each one exists to show a different slice of the permission model. */
+/**
+ * This is a demonstration build, so the seeded accounts are on the screen.
+ *
+ * They are listed in the order that makes the permission model legible rather
+ * than alphabetically or by seniority: start with the account that sees the
+ * least and work up, so clicking down the list widens the portal a step at a
+ * time. Each one exists to show a slice the others do not.
+ */
 const ACCOUNTS = [
-  { email: 'omar.khaled@worood.co', who: 'Omar Khaled', role: 'Employee', sees: 'Meeting rooms only — no sales access at all' },
-  { email: 'hala.mansour@worood.co', who: 'Hala Mansour', role: 'Sales viewer', sees: 'One dashboard, no orders' },
-  { email: 'yara.saleh@worood.co', who: 'Yara Saleh', role: 'Sales manager', sees: 'Four dashboards, orders with customer data' },
-  { email: 'karim.fouad@worood.co', who: 'Karim Fouad', role: 'Sales admin', sees: 'All five dashboards, plus the composer' },
-  { email: 'nour.hassan@worood.co', who: 'Nour Hassan', role: 'Ops engineer', sees: 'Data & Sync only' },
-  { email: 'admin@worood.co', who: 'Sherif Wagdy', role: 'Administrator', sees: 'Everything' },
+  { email: 'omnia.osama@worood.co', who: 'Omnia Osama', role: 'Customer Care',
+    sees: 'Orders with customer identity. No dashboard from her role — one was granted to her personally.' },
+  { email: 'nadia@worood.co', who: 'Nadia', role: 'Marketing Director',
+    sees: 'Marketing dashboards only. No orders at all: a campaign is not a reason to read an address.' },
+  { email: 'Yousry@worood.co', who: 'Mohamed Yousry', role: 'Financial Manager',
+    sees: 'Finance reconciliation and the daily figures, with orders and customers.' },
+  { email: 'heba.fayed@worood.co', who: 'Heba Fayed', role: 'Operations Manager',
+    sees: 'Room administration, anyone’s reservation, order flow and Data & Sync — but not the composer.' },
+  { email: 'Kandil@worood.co', who: 'Mohamed Kandil', role: 'Chief Executive Officer',
+    sees: 'All five dashboards, orders and customers. No administration console.' },
+  { email: 'Admin@worood.co', who: 'Khalid Hesham', role: 'System Administrator',
+    sees: 'Everything, including People and Roles.' },
 ];
 
 export function Login() {
@@ -55,11 +67,11 @@ export function Login() {
     <div className="login">
       <div className="login__panel">
         <div className="login__brand">
-          <span className="login__mark"><WoroodMark size={34} /></span>
-          <div>
-            <p className="login__word">WOROOD <span>Hub</span></p>
-            <p className="login__tag">The internal portal for scarves, modal and everything after the sale.</p>
-          </div>
+          <WoroodLogo width={190} className="login__logo" />
+          <p className="login__tag">
+            <span className="login__word">Hub</span>
+            The internal portal for scarves, modal and everything after the sale.
+          </p>
         </div>
 
         <form className="login__form" onSubmit={submit}>

@@ -131,11 +131,11 @@ the point — otherwise you have added a role rather than changed one.
 ```sql
 BEGIN;
 DELETE FROM core_user_roles
- WHERE user_id = (SELECT id FROM core_users WHERE email = 'omar.khaled@worood.co');
+ WHERE user_id = (SELECT id FROM core_users WHERE email = 'nadia@worood.co');
 
 INSERT INTO core_user_roles (user_id, role_id)
 SELECT u.id, r.id FROM core_users u, core_roles r
- WHERE u.email = 'omar.khaled@worood.co' AND r.key = 'sales-viewer';
+ WHERE u.email = 'nadia@worood.co' AND r.key = 'finance';
 COMMIT;
 ```
 
@@ -179,15 +179,15 @@ to a name.
 ### Change what a role can do
 
 ```sql
--- Give sales managers the ability to administer rooms.
+-- Let Finance administer rooms too.
 INSERT INTO core_role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM core_roles r, core_permissions p
- WHERE r.key = 'sales-manager' AND p.key = 'meeting-rooms.room.manage'
+ WHERE r.key = 'finance' AND p.key = 'meeting-rooms.room.manage'
 ON CONFLICT DO NOTHING;
 
 -- Take it away again.
 DELETE FROM core_role_permissions
- WHERE role_id = (SELECT id FROM core_roles WHERE key = 'sales-manager')
+ WHERE role_id = (SELECT id FROM core_roles WHERE key = 'finance')
    AND permission_id = (SELECT id FROM core_permissions WHERE key = 'meeting-rooms.room.manage');
 ```
 
@@ -208,14 +208,14 @@ INSERT INTO core_roles (key, name, name_ar) VALUES ('facilities-lead', 'Faciliti
 -- A role gets a dashboard.
 INSERT INTO sd_role_dashboard_access (role_id, dashboard_id)
 SELECT r.id, d.id FROM core_roles r, sd_dashboards d
- WHERE r.key = 'ops-engineer' AND d.key = 'sales-operations'
+ WHERE r.key = 'customer-care' AND d.key = 'sales-operations'
 ON CONFLICT DO NOTHING;
 
 -- One person, in addition to (or in spite of) their role.
 INSERT INTO sd_user_dashboard_access (user_id, dashboard_id, effect, granted_by)
-SELECT u.id, d.id, 'GRANT', (SELECT id FROM core_users WHERE email = 'admin@worood.co')
+SELECT u.id, d.id, 'GRANT', (SELECT id FROM core_users WHERE email = 'Admin@worood.co')
   FROM core_users u, sd_dashboards d
- WHERE u.email = 'hala.mansour@worood.co' AND d.key = 'sales-operations'
+ WHERE u.email = 'omnia.osama@worood.co' AND d.key = 'sales-operations'
 ON CONFLICT (user_id, dashboard_id) DO UPDATE SET effect = EXCLUDED.effect;
 ```
 

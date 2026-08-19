@@ -66,29 +66,30 @@ async function cleanup() {
 async function run() {
   await cleanup();
 
-  const admin = await login('admin@worood.co');          // core.user.manage + core.role.manage
-  const yara = await login('yara.saleh@worood.co');       // no core permissions at all
+  const admin = await login('Admin@worood.co');          // core.user.manage + core.role.manage
+  const yousry = await login('Yousry@worood.co');          // no core permissions at all
 
   console.log('\nadministration — who may open it');
 
   for (const [path, verb] of [['/admin/users', 'GET'], ['/admin/roles', 'GET'], ['/admin/permissions', 'GET']] as const) {
-    const denied = await call(yara, path, { method: verb });
+    const denied = await call(yousry, path, { method: verb });
     check(`a non-administrator is refused ${verb} ${path}`, denied.status === 403, `got ${denied.status}`);
   }
-  const deniedWrite = await call(yara, '/admin/users', {
+  const deniedWrite = await call(yousry, '/admin/users', {
     method: 'POST', body: JSON.stringify({ email: 'x@worood.co', fullName: 'X', password: STRONG }),
   });
   check('...and cannot create an account', deniedWrite.status === 403);
 
   const list = await call(admin, '/admin/users');
-  check('an administrator sees every account', list.status === 200 && list.body.users.length >= 7);
+  check('an administrator sees every account',
+    list.status === 200 && list.body.users.length >= 6, String(list.body?.users?.length));
   check('each row says whether that account can administer',
     list.body.users.some((u: any) => u.isAdministrator === true)
     && list.body.users.some((u: any) => u.isAdministrator === false));
 
   const roles = await call(admin, '/admin/roles');
   const roleByKey = (k: string) => roles.body.roles.find((r: any) => r.key === k);
-  check('roles come back with holder counts', roleByKey('sales-manager')?.holders >= 1);
+  check('roles come back with holder counts', roleByKey('finance')?.holders >= 1);
   check('...and which role opens the console is computed, not guessed',
     roleByKey('admin')?.grantsConsole === true && roleByKey('employee')?.grantsConsole === false);
 
@@ -125,11 +126,11 @@ async function run() {
   const renamed = await call(admin, `/admin/users/${userId}`, {
     method: 'PATCH',
     body: JSON.stringify({ fullName: 'Console Tester', jobTitle: 'Senior Analyst',
-                           roleIds: [roleByKey('sales-viewer').id] }),
+                           roleIds: [roleByKey('marketing').id] }),
   });
   check('name and job title change', renamed.body?.fullName === 'Console Tester');
   check('roles are replaced, not added to',
-    renamed.body?.roles.length === 1 && renamed.body.roles[0].key === 'sales-viewer',
+    renamed.body?.roles.length === 1 && renamed.body.roles[0].key === 'marketing',
     JSON.stringify(renamed.body?.roles));
   check('effective permissions are computed from the new roles',
     renamed.body?.permissions.some((p: any) => p.key === 'sales.dashboard.view'));
@@ -182,14 +183,18 @@ async function run() {
 
   console.log('\nadministration — assigning dashboards');
 
-  const dashboards = await call(admin, '/admin/dashboards');
-  const exec = dashboards.body.dashboards.find((d: any) => d.key === 'executive-daily');
-  const finance = dashboards.body.dashboards.find((d: any) => d.key === 'finance-reconciliation');
-
+  /* Which dashboards a role carries is seeded data and will change as the
+     company's roles do, so the two the assertions need are *found* rather than
+     named: one this person already reaches through their role, and one they do
+     not. Hard-coding keys here would make this test a hostage to the seed. */
   const beforeAssign = await call(admin, `/admin/users/${userId}`);
-  const execBefore = beforeAssign.body.dashboards.find((d: any) => d.key === 'executive-daily');
+  const exec = beforeAssign.body.dashboards.find((d: any) => d.viaRole === true);
+  const finance = beforeAssign.body.dashboards.find((d: any) => d.viaRole === false);
+  check('their role carries at least one dashboard, and not all of them',
+    !!exec && !!finance,
+    JSON.stringify(beforeAssign.body.dashboards.map((d: any) => [d.key, d.viaRole])));
   check('a dashboard reached through a role is reported as such',
-    execBefore?.viaRole === true && execBefore?.effective === true, JSON.stringify(execBefore));
+    exec?.viaRole === true && exec?.effective === true, JSON.stringify(exec));
 
   const assigned = await call(admin, `/admin/users/${userId}/dashboards`, {
     method: 'PUT',
@@ -198,8 +203,8 @@ async function run() {
       { dashboardId: exec.id, effect: 'REVOKE' },     // one it does
     ] }),
   });
-  const fin = assigned.body.dashboards.find((d: any) => d.key === 'finance-reconciliation');
-  const ex = assigned.body.dashboards.find((d: any) => d.key === 'executive-daily');
+  const fin = assigned.body.dashboards.find((d: any) => d.id === finance.id);
+  const ex = assigned.body.dashboards.find((d: any) => d.id === exec.id);
   check('an individual grant adds a dashboard their role does not carry',
     fin?.override === 'GRANT' && fin?.effective === true);
   check('an individual revoke beats a role grant',
@@ -217,21 +222,22 @@ async function run() {
   const keys = mine.map((d: any) => d.key);
   check('the module actually serves them dashboards', keys.length > 0, JSON.stringify(theirs.body).slice(0, 160));
   check('the sales module agrees: the granted one is there',
-    keys.includes('finance-reconciliation'), keys.join(','));
-  check('...and the revoked one is not', keys.length > 0 && !keys.includes('executive-daily'), keys.join(','));
+    keys.includes(finance.key), `${finance.key} not in ${keys.join(',')}`);
+  check('...and the revoked one is not',
+    keys.length > 0 && !keys.includes(exec.key), `${exec.key} still in ${keys.join(',')}`);
 
   const unassigned = await call(admin, `/admin/users/${userId}/dashboards`, {
     method: 'PUT', body: JSON.stringify({ assignments: [] }),
   });
-  const finAfter = unassigned.body.dashboards.find((d: any) => d.key === 'finance-reconciliation');
-  const exAfter = unassigned.body.dashboards.find((d: any) => d.key === 'executive-daily');
+  const finAfter = unassigned.body.dashboards.find((d: any) => d.id === finance.id);
+  const exAfter = unassigned.body.dashboards.find((d: any) => d.id === exec.id);
   check('unassigning clears the override and role access returns',
     finAfter?.override === null && finAfter?.effective === false
     && exAfter?.override === null && exAfter?.effective === true);
 
   console.log('\nadministration — the lockout rails');
 
-  const adminUser = list.body.users.find((u: any) => u.email === 'admin@worood.co');
+  const adminUser = list.body.users.find((u: any) => u.email === 'Admin@worood.co');
 
   const suspendSelf = await call(admin, `/admin/users/${adminUser.id}`, {
     method: 'PATCH', body: JSON.stringify({ status: 'SUSPENDED' }),
@@ -280,7 +286,7 @@ async function run() {
 
   console.log('\nadministration — roles');
 
-  const adminAgain = await login('admin@worood.co');
+  const adminAgain = await login('Admin@worood.co');
 
   const newRole = await call(adminAgain, '/admin/roles', {
     method: 'POST',

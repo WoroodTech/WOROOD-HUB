@@ -29,7 +29,8 @@ const num = (v: unknown) => {
 
 /* ---------------------------------------------------------------- people -- */
 
-const DEPARTMENTS = ['Executive', 'Sales', 'Marketing', 'Finance', 'Operations', 'Facilities', 'Technology'];
+const DEPARTMENTS = ['Executive', 'Sales', 'Marketing', 'Finance', 'Operations',
+                     'Customer Care', 'Facilities', 'Technology'];
 
 const PERMISSIONS: [string, string, string][] = [
   ['sales.dashboard.view',   'sales-dashboard', 'Open sales dashboards assigned to me'],
@@ -45,31 +46,58 @@ const PERMISSIONS: [string, string, string][] = [
   ['core.audit.view',  'core', 'Read the audit trail'],
 ];
 
+/**
+ * Roles follow the actual shape of the company rather than a ladder.
+ *
+ * The keys are independent, not hierarchical: nothing is implied by anything
+ * else, and each role below reaches something the others do not. That is the
+ * point of the demonstration -- Operations reaches Data & Sync and room
+ * administration but not the dashboard composer, Customer Care sees customer
+ * identity on an order but holds no dashboard through its role at all, and only
+ * the administrator can open the administration console.
+ */
 const ROLES: Record<string, { name: string; nameAr: string; perms: string[] }> = {
-  'employee':      { name: 'Employee', nameAr: 'موظف', perms: [] },
-  'sales-viewer':  { name: 'Sales Viewer', nameAr: 'مطّلع المبيعات', perms: ['sales.dashboard.view'] },
-  'sales-manager': { name: 'Sales Manager', nameAr: 'مدير المبيعات',
-                     perms: ['sales.dashboard.view', 'sales.order.view', 'sales.customer.view'] },
-  'sales-admin':   { name: 'Sales Administrator', nameAr: 'مسؤول المبيعات',
-                     perms: ['sales.dashboard.view', 'sales.order.view', 'sales.customer.view',
-                             'sales.dashboard.manage', 'sales.dashboard.assign'] },
-  // Exists to prove the permission keys are independent, not hierarchical:
-  // this person reaches Data & Sync and nothing else.
-  'ops-engineer':  { name: 'Operations Engineer', nameAr: 'مهندس التشغيل', perms: ['sales.sync.manage'] },
-  'facilities':    { name: 'Facilities Coordinator', nameAr: 'منسق المرافق',
-                     perms: ['meeting-rooms.room.manage', 'meeting-rooms.reservation.manage-any'] },
-  'admin':         { name: 'System Administrator', nameAr: 'مدير النظام', perms: PERMISSIONS.map((p) => p[0]) },
+  'employee': { name: 'Employee', nameAr: 'موظف', perms: [] },
+
+  'executive': { name: 'Executive', nameAr: 'الإدارة التنفيذية',
+                 perms: ['sales.dashboard.view', 'sales.order.view', 'sales.customer.view'] },
+
+  'finance': { name: 'Finance', nameAr: 'المالية',
+               perms: ['sales.dashboard.view', 'sales.order.view', 'sales.customer.view'] },
+
+  'marketing': { name: 'Marketing', nameAr: 'التسويق',
+                 // No order access at all: campaign performance is not a reason
+                 // to read a customer's address.
+                 perms: ['sales.dashboard.view'] },
+
+  'operations': { name: 'Operations', nameAr: 'العمليات',
+                  // Order *flow* without customer identity: fulfilment does not
+                  // require a name and address, so the API withholds them and
+                  // says it is doing so rather than blanking the field.
+                  perms: ['sales.dashboard.view', 'sales.order.view', 'sales.sync.manage',
+                          'meeting-rooms.room.manage', 'meeting-rooms.reservation.manage-any'] },
+
+  'customer-care': { name: 'Customer Care', nameAr: 'خدمة العملاء',
+                     // Orders and customer identity, because answering the
+                     // phone means knowing who is on it -- and *no* dashboard
+                     // permission at all. Company-wide figures are not needed
+                     // to resolve a complaint, and this account is the one that
+                     // makes the permission gate visibly true: the sales
+                     // portlets do not appear on her home screen at all.
+                     perms: ['sales.order.view', 'sales.customer.view'] },
+
+  'admin': { name: 'System Administrator', nameAr: 'مدير النظام',
+             perms: PERMISSIONS.map((p) => p[0]) },
 };
 
 const USERS: [string, string, string, string, string, string][] = [
   // email, name, name_ar, job title, department, role
-  ['omar.khaled@worood.co',   'Omar Khaled',   'عمر خالد',   'Merchandising Assistant', 'Operations', 'employee'],
-  ['facilities@worood.co',    'Rania Adel',    'رانيا عادل',  'Facilities Coordinator',  'Facilities', 'facilities'],
-  ['hala.mansour@worood.co',  'Hala Mansour',  'هالة منصور',  'Retail Supervisor',       'Sales',      'sales-viewer'],
-  ['yara.saleh@worood.co',    'Yara Saleh',    'يارا صالح',   'Sales Manager',           'Sales',      'sales-manager'],
-  ['karim.fouad@worood.co',   'Karim Fouad',   'كريم فؤاد',   'Head of Commerce',        'Executive',  'sales-admin'],
-  ['nour.hassan@worood.co',   'Nour Hassan',   'نور حسن',     'Platform Engineer',       'Technology', 'ops-engineer'],
-  ['admin@worood.co',         'Sherif Wagdy',  'شريف وجدي',   'IT Manager',              'Technology', 'admin'],
+  ['Admin@worood.co',           'Khalid Hesham', 'خالد هشام',  'IT & Systems Administrator', 'Technology',    'admin'],
+  ['Kandil@worood.co',          'Mohamed Kandil', 'محمد قنديل', 'Chief Executive Officer',    'Executive',     'executive'],
+  ['heba.fayed@worood.co',      'Heba Fayed',    'هبة فايد',    'Operations Manager',         'Operations',    'operations'],
+  ['omnia.osama@worood.co',     'Omnia Osama',   'أمنية أسامة', 'Customer Care',              'Customer Care', 'customer-care'],
+  ['nadia@worood.co',           'Nadia',         'نادية',       'Marketing Director',         'Marketing',     'marketing'],
+  ['Yousry@worood.co',          'Mohamed Yousry', 'محمد يسري',  'Financial Manager',          'Finance',       'finance'],
 ];
 
 /* --------------------------------------------------------------- widgets -- */
@@ -329,15 +357,15 @@ async function main() {
   await query(`DELETE FROM mr_reservations`);
   const now = DateTime.now().setZone(TZ);
   const meetings: Array<[string, string, number, number, number, number]> = [
-    // organiser email index into USERS, title, dayOffset, startHour, durationMins, roomIndex
-    ['omar.khaled@worood.co',  'Autumn range review',        0, now.hour + 2, 60, 1] as any,
-    ['omar.khaled@worood.co',  'Supplier catch-up',          1, 11, 45, 2] as any,
-    ['yara.saleh@worood.co',   'Weekly sales stand-up',      0, now.hour + 1, 30, 0] as any,
-    ['yara.saleh@worood.co',   'Courier performance review', 2, 13, 60, 0] as any,
-    ['karim.fouad@worood.co',  'Board pre-read',             1, 9,  90, 0] as any,
-    ['hala.mansour@worood.co', 'Store visit debrief',        0, now.hour + 3, 45, 3] as any,
-    ['nour.hassan@worood.co',  'Shopify app cut-over plan',  3, 10, 60, 2] as any,
-    ['facilities@worood.co',   'Quarterly safety briefing',  4, 14, 120, 4] as any,
+    // organiser email, title, dayOffset, startHour, durationMins, roomIndex
+    ['nadia@worood.co',       'Autumn campaign review',      0, now.hour + 2, 60, 1] as any,
+    ['nadia@worood.co',       'Agency catch-up',             1, 11, 45, 2] as any,
+    ['Yousry@worood.co',      'Monthly close walkthrough',   0, now.hour + 1, 30, 0] as any,
+    ['Yousry@worood.co',      'Courier settlement review',   2, 13, 60, 0] as any,
+    ['Kandil@worood.co',      'Board pre-read',              1, 9,  90, 0] as any,
+    ['omnia.osama@worood.co', 'Complaints debrief',          0, now.hour + 3, 45, 3] as any,
+    ['Admin@worood.co',       'Portal cut-over plan',        3, 10, 60, 2] as any,
+    ['heba.fayed@worood.co',  'Quarterly safety briefing',   4, 14, 120, 4] as any,
   ];
   let reservations = 0;
   for (let i = 0; i < meetings.length; i++) {
@@ -364,10 +392,10 @@ async function main() {
   await query(`DELETE FROM mr_reservation_attendees`);
   const GUESTS: Array<[string, string[], string]> = [
     // organiser email, guest emails, their response
-    ['yara.saleh@worood.co',   ['omar.khaled@worood.co', 'hala.mansour@worood.co'], 'INVITED'],
-    ['karim.fouad@worood.co',  ['yara.saleh@worood.co', 'nour.hassan@worood.co'],   'ACCEPTED'],
-    ['facilities@worood.co',   ['omar.khaled@worood.co'],                            'DECLINED'],
-    ['omar.khaled@worood.co',  ['facilities@worood.co'],                             'INVITED'],
+    ['Yousry@worood.co',      ['Kandil@worood.co', 'nadia@worood.co'],       'INVITED'],
+    ['Kandil@worood.co',      ['Yousry@worood.co', 'heba.fayed@worood.co'],  'ACCEPTED'],
+    ['heba.fayed@worood.co',  ['omnia.osama@worood.co'],                     'DECLINED'],
+    ['nadia@worood.co',       ['omnia.osama@worood.co', 'Kandil@worood.co'], 'INVITED'],
   ];
   let invitations = 0;
   for (const [organiser, guests, response] of GUESTS) {
@@ -433,7 +461,7 @@ async function main() {
        ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name, name_ar = EXCLUDED.name_ar,
          description = EXCLUDED.description, is_system = EXCLUDED.is_system
        RETURNING id`,
-      [d.key, d.name, d.nameAr, d.description, d.system, userIds['admin@worood.co']]);
+      [d.key, d.name, d.nameAr, d.description, d.system, userIds['Admin@worood.co']]);
     dashIds[d.key] = row.id;
 
     await query(`DELETE FROM sd_dashboard_widgets WHERE dashboard_id = $1`, [row.id]);
@@ -453,22 +481,38 @@ async function main() {
     `INSERT INTO sd_role_dashboard_access (role_id, dashboard_id) VALUES ($1,$2)
      ON CONFLICT DO NOTHING`, [roleIds[role], dashIds[dash]]);
 
-  await grantRole('sales-viewer', 'executive-daily');
-  await grantRole('sales-viewer', 'marketing-traffic');
-  await grantRole('sales-manager', 'executive-daily');
-  await grantRole('sales-manager', 'sales-operations');
-  await grantRole('sales-manager', 'marketing-traffic');
+  /* Every branch of the resolution rule, on real people:
+       - a role that reaches several dashboards (Executive)
+       - roles that reach exactly the one they need (Finance, Marketing, Operations)
+       - a role that reaches none, plus one granted to the person (Customer Care)
+       - a dashboard a role grants, taken away from one individual (Marketing) */
+  await grantRole('executive', 'executive-daily');
+  await grantRole('executive', 'sales-operations');
+  await grantRole('executive', 'marketing-traffic');
+  await grantRole('executive', 'finance-reconciliation');
+  await grantRole('executive', 'combined-sales-marketing');
 
-  // An individual addition beyond her role...
+  await grantRole('finance', 'finance-reconciliation');
+  await grantRole('finance', 'executive-daily');
+
+  await grantRole('marketing', 'marketing-traffic');
+  await grantRole('marketing', 'combined-sales-marketing');
+
+  await grantRole('operations', 'sales-operations');
+
+  /* One dashboard beyond what her role carries. Deliberately *not* given to
+     Customer Care: that role holds no dashboard permission at all, so a grant
+     there would be inert -- an access row that looks like access and is not. */
   await query(
     `INSERT INTO sd_user_dashboard_access (user_id, dashboard_id, effect, granted_by)
      VALUES ($1,$2,'GRANT',$3) ON CONFLICT (user_id, dashboard_id) DO UPDATE SET effect = 'GRANT'`,
-    [userIds['yara.saleh@worood.co'], dashIds['finance-reconciliation'], userIds['admin@worood.co']]);
-  // ...and an individual removal from something her role grants.
+    [userIds['heba.fayed@worood.co'], dashIds['executive-daily'], userIds['Admin@worood.co']]);
+
+  // ...and the other direction: something her role grants, withheld from her.
   await query(
     `INSERT INTO sd_user_dashboard_access (user_id, dashboard_id, effect, granted_by)
      VALUES ($1,$2,'REVOKE',$3) ON CONFLICT (user_id, dashboard_id) DO UPDATE SET effect = 'REVOKE'`,
-    [userIds['hala.mansour@worood.co'], dashIds['marketing-traffic'], userIds['admin@worood.co']]);
+    [userIds['nadia@worood.co'], dashIds['combined-sales-marketing'], userIds['Admin@worood.co']]);
 
   /* notifications, so my-alerts is not empty */
   await query(`DELETE FROM core_notifications WHERE module_key = 'sales-dashboard'`);
@@ -476,13 +520,13 @@ async function main() {
     `INSERT INTO core_notifications (user_id, module_key, severity, title, body, read_at)
      VALUES ($1,'sales-dashboard',$2,$3,$4,$5)`,
     [userIds[email], sev, title, body, read ? new Date() : null]);
-  await notify('yara.saleh@worood.co', 'INFO', 'Finance Reconciliation assigned to you',
-    'Karim Fouad gave you individual access to this dashboard.');
-  await notify('yara.saleh@worood.co', 'WARNING', 'Collected is 62% below ordered',
+  await notify('heba.fayed@worood.co', 'INFO', 'Executive Daily assigned to you',
+    'Khalid Hesham gave you individual access to this dashboard.');
+  await notify('Yousry@worood.co', 'WARNING', 'Collected is 62% below ordered',
     'Cash on delivery float is unusually high for the last 7 days.');
-  await notify('nour.hassan@worood.co', 'CRITICAL', 'Webhook subscription missing',
+  await notify('heba.fayed@worood.co', 'CRITICAL', 'Webhook subscription missing',
     'orders/updated was not present at the last watchdog run and has been re-registered.');
-  await notify('hala.mansour@worood.co', 'INFO', 'Executive Daily refreshed',
+  await notify('Kandil@worood.co', 'INFO', 'Executive Daily refreshed',
     'Nightly snapshot completed for the trailing 13 months.', true);
 
   /* Shopify mirror and snapshots from the captured fixtures */

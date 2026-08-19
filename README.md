@@ -21,6 +21,11 @@ Arabic, and a home screen each employee can rearrange for themselves. What was m
 this repository and why the UI looks the way it does is recorded in
 [`docs/UI-CONSOLIDATION-AND-ENHANCEMENTS.md`](docs/UI-CONSOLIDATION-AND-ENHANCEMENTS.md).
 
+The mark is traced from Worood's own artwork rather than approximated; how, and
+why the brand gold is kept separate from the interface accent, is in
+[`docs/BRAND-AND-ACCOUNTS.md`](docs/BRAND-AND-ACCOUNTS.md) — which also explains
+the six demonstration accounts and the permissions each one holds.
+
 `prototypes/` holds the two earlier explorations — the meeting-rooms prototype and the
 standalone employee dashboard — kept as a record of how the design arrived here. Nothing
 in `apps/` imports from them.
@@ -103,12 +108,17 @@ Then sign in with any of the accounts below. **Password for every account: `Woro
 
 | Account | Who they are | What they see |
 |---|---|---|
-| `omar.khaled@worood.co` | Merchandising Assistant | Meeting-room portlets only. **No sales portlets at all** — this is the permission gate, and it should be visibly true. |
-| `hala.mansour@worood.co` | Retail Supervisor | One dashboard. Her role grants two; an individual `REVOKE` removes one. |
-| `yara.saleh@worood.co` | Sales Manager | Four dashboards — three from her role, one from an individual `GRANT`. Sees orders with customer detail. |
-| `karim.fouad@worood.co` | Head of Commerce | All five, plus the composer and assignment screens. |
-| `nour.hassan@worood.co` | Platform Engineer | **Data & Sync and nothing else.** Proves the permission keys are independent, not a hierarchy. |
-| `admin@worood.co` | IT Manager | Everything. |
+| `omnia.osama@worood.co` | Omnia Osama — Customer Care | Orders, with customer identity, because answering the phone means knowing who is on it. **No dashboard permission at all** — the sales portlets are absent from her home screen, not empty. This is the permission gate, and it should be visibly true. |
+| `nadia@worood.co` | Nadia — Marketing Director | Marketing dashboards, and **no orders at all**: a campaign is not a reason to read a customer's address. Her role reaches two dashboards; an individual `REVOKE` takes one back. |
+| `Yousry@worood.co` | Mohamed Yousry — Financial Manager | Finance reconciliation and the daily figures, with orders and customers. |
+| `heba.fayed@worood.co` | Heba Fayed — Operations Manager | Room administration, anyone's reservation, order flow and Data & Sync — but **not** the dashboard composer, and orders arrive with the customer withheld. One dashboard from her role, one from an individual `GRANT`. |
+| `Kandil@worood.co` | Mohamed Kandil — Chief Executive Officer | All five dashboards, orders and customers. **No Data & Sync and no administration console** — the keys are independent, so the widest reading permission still does not imply an operational one. |
+| `Admin@worood.co` | Khalid Hesham — System Administrator | Everything, including People and Roles. |
+
+Between them these six cover every branch of the resolution rule: a role that
+reaches several dashboards, roles that reach exactly one, a role that reaches
+none, a dashboard added to one person, and a dashboard taken back from one
+person. Nothing is inherited from anything else.
 
 Tests, with the API running:
 

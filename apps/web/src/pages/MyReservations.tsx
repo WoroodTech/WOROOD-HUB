@@ -217,7 +217,7 @@ export function MyReservations() {
                     {' · '}{r.attendeeCount} attending
                   </p>
                   {r.description ? <p className="booking__note">{r.description}</p> : null}
-                  {r.myRole !== 'organiser' ? (
+                  {r.myRole !== 'organiser' && r.organiser?.fullName ? (
                     <p className="booking__meta">Booked by {r.organiser.fullName}</p>
                   ) : null}
 
