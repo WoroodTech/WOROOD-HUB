@@ -157,6 +157,42 @@ export interface RoomAvailability {
 export interface AvailabilityResponse {
   date: string; durationMinutes: number; rooms: RoomAvailability[];
 }
+export interface RoomCalendarEntry {
+  id: string; reference: string; title: string;
+  startsAt: string; endsAt: string;
+  status: 'PENDING' | 'CONFIRMED';
+  organiserName: string;
+  isMine: boolean;
+  canManage: boolean;
+}
+
+
+export type RoomCalendarBlock =
+  | {
+      type: 'BOOKING'; id: string; reference: string; title: string;
+      startsAt: string; endsAt: string; status: 'PENDING' | 'CONFIRMED';
+      organiserName: string; isMine: boolean; canManage: boolean;
+    }
+  | { type: 'BLACKOUT'; startsAt: string; endsAt: string; reason: string | null }
+  | { type: 'BUFFER'; startsAt: string; endsAt: string };
+
+/** A room's timeline for one day, in the room's own timezone -- same
+ *  transparency rule as viewing a single reservation directly: anyone in the
+ *  company may see that a room is taken, when, and who booked it. Attendee
+ *  identities are not part of this view.
+ *
+ * Only what blocks the room is sent -- BOOKING, BLACKOUT, BUFFER. Anything
+ * not covered by a block is implicitly available; the client does not need,
+ * and is not sent, a list of free slots to render this. That list already
+ * exists at a different address (`/availability`) for a different question:
+ * "what can I book right now" versus this endpoint's "what's happening, and
+ * why is it blocked". */
+export interface RoomCalendarResponse {
+  room: { id: string; name: string; nameAr: string | null; opensAt: string; closesAt: string; bufferMinutes: number };
+  date: string;
+  blocks: RoomCalendarBlock[];
+}
+
 
 export interface Reservation {
   id: string; reference: string; title: string; description: string | null;

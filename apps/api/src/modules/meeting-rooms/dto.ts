@@ -36,6 +36,7 @@ export class AvailabilityQuery {
   @IsOptional() @IsUUID() locationId?: string;
   @IsOptional() @IsString() @MaxLength(300) equipment?: string;
   @IsOptional() @IsUUID() roomId?: string;
+  @IsOptional() @IsString() @MaxLength(2000) roomIds?: string;
 }
 
 export class CreateReservation {
@@ -101,4 +102,8 @@ export class UpsertRoom {
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(60) bufferMinutes?: number;
   @IsOptional() @IsBoolean() requiresApproval?: boolean;
   @IsOptional() @IsArray() @ArrayMaxSize(24) @IsString({ each: true }) equipmentKeys?: string[];
+}
+
+export class RoomCalendarQuery {
+  @Matches(DATE, { message: 'date must be YYYY-MM-DD' }) date!: string;
 }

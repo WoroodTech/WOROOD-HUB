@@ -31,7 +31,7 @@ export interface RoomAvailability {
 
 @Injectable()
 export class AvailabilityService {
-  constructor(private readonly rooms: RoomsService) {}
+  constructor(private readonly rooms: RoomsService) { }
 
   async search(q: AvailabilityQuery): Promise<{
     date: string; durationMinutes: number; rooms: RoomAvailability[];
@@ -43,7 +43,11 @@ export class AvailabilityService {
       status: 'ACTIVE',
     });
 
-    const rooms = q.roomId ? candidates.filter((r) => r.id === q.roomId) : candidates;
+    const rooms = q.roomId
+      ? candidates.filter((r) => r.id === q.roomId)
+      : q.roomIds
+        ? this.filterByIds(candidates, q.roomIds)
+        : candidates;
     if (!rooms.length) return { date: q.date, durationMinutes: q.durationMinutes, rooms: [] };
 
     const busyByRoom = await this.busyFor(rooms.map((r) => r.id), q.date);
@@ -51,6 +55,13 @@ export class AvailabilityService {
 
     const out = rooms.map((room) => this.forRoom(room, q, busyByRoom.get(room.id) ?? [], now));
     return { date: q.date, durationMinutes: q.durationMinutes, rooms: out };
+  }
+
+  /** "id1, id2,id3" -> Set, trimmed and deduped -- mirrors how equipment keys
+ *  are parsed, kept local since it is only used here. */
+  private filterByIds(rooms: RoomView[], raw: string): RoomView[] {
+    const wanted = new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
+    return rooms.filter((r) => wanted.has(r.id));
   }
 
   /* ------------------------------------------------------------ internals -- */

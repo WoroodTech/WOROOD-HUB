@@ -96,3 +96,57 @@ export function computeFreeSlots(options: FreeSlotOptions): Interval[] {
 export function isWindowFree(window: Interval, busy: Interval[], bufferMinutes = 0): boolean {
   return !mergeIntervals(applyBuffer(busy, bufferMinutes)).some((b) => overlaps(window, b));
 }
+
+/* ------------------------------------------------------------- timeline -- */
+
+/** A busy period tagged with what it *is*, for callers that need to render
+ *  the reason a time is blocked rather than only whether it is. */
+export interface TaggedInterval<T = unknown> extends Interval {
+  kind: string;
+  ref: T;
+}
+
+export type TimelineBlock<T = unknown> =
+  | { kind: 'BUFFER'; start: Date; end: Date }
+  | { kind: string; start: Date; end: Date; ref: T };
+
+/**
+ * The same blocked timeline `computeFreeSlots` reasons about, but kept in
+ * pieces instead of collapsed into a yes/no per slot -- for a calendar view
+ * that needs to show *why* a stretch is blocked, not only that it is.
+ *
+ * Uses the exact same `applyBuffer` + `mergeIntervals` pair as
+ * `computeFreeSlots`, so the boundary of "blocked" here can never disagree
+ * with the boundary "blocked" excludes there. Only what happens *inside*
+ * each merged chunk is new: the original, unbuffered items are walked in
+ * order and the gaps left over are reported as BUFFER.
+ */
+export function computeBlockedTimeline<T>(
+  items: TaggedInterval<T>[],
+  bufferMinutes: number,
+): TimelineBlock<T>[] {
+  if (!items.length) return [];
+
+  // Identical computation to computeFreeSlots's `blocked` -- this is the
+  // guarantee that keeps the calendar and the availability search agreeing.
+  const merged = mergeIntervals(applyBuffer(items, bufferMinutes));
+
+  const blocks: TimelineBlock<T>[] = [];
+  for (const chunk of merged) {
+    const inside = items
+      .filter((it) => it.start < chunk.end && it.end > chunk.start)
+      .sort((a, b) => a.start.getTime() - b.start.getTime());
+
+    let cursor = chunk.start;
+    for (const it of inside) {
+      const start = it.start > chunk.start ? it.start : chunk.start;
+      const end = it.end < chunk.end ? it.end : chunk.end;
+      if (end <= cursor) continue; // fully covered by a previous item already
+      if (start > cursor) blocks.push({ kind: 'BUFFER', start: cursor, end: start });
+      blocks.push({ kind: it.kind, start, end, ref: it.ref });
+      cursor = end > cursor ? end : cursor;
+    }
+    if (cursor < chunk.end) blocks.push({ kind: 'BUFFER', start: cursor, end: chunk.end });
+  }
+  return blocks;
+}

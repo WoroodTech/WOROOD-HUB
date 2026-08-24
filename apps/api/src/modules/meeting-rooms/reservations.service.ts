@@ -31,6 +31,7 @@ import type {
   RespondToInvitation, UpdateReservation,
 } from './dto';
 import { RoomsService, type RoomView } from './rooms.service';
+import { computeBlockedTimeline, type TaggedInterval } from './slots';
 
 export interface ReservationView {
   id: string; reference: string; title: string; description: string | null;
@@ -77,7 +78,7 @@ export class ReservationsService {
   constructor(
     private readonly rooms: RoomsService,
     private readonly notifications: NotificationsService,
-  ) {}
+  ) { }
 
   private view(r: any, p: Principal): ReservationView {
     return {
@@ -166,6 +167,226 @@ export class ReservationsService {
     return this.view(row, p);
   }
 
+ async calendar(
+  p: Principal,
+  roomId: string,
+  date: string,
+): Promise<{
+  room: {
+    id: string;
+    name: string;
+    nameAr: string | null;
+    opensAt: string;
+    closesAt: string;
+    bufferMinutes: number;
+  };
+  date: string;
+  blocks: Array<
+    | {
+        type: 'BOOKING';
+        id: string;
+        reference: string;
+        title: string;
+        startsAt: string;
+        endsAt: string;
+        status: string;
+        organiserName: string;
+        isMine: boolean;
+        canManage: boolean;
+      }
+    | {
+        type: 'BLACKOUT';
+        startsAt: string;
+        endsAt: string;
+        reason: string | null;
+      }
+    | {
+        type: 'BUFFER';
+        startsAt: string;
+        endsAt: string;
+      }
+  >;
+}> {
+  const room = await this.rooms.get(roomId);
+  const zone = room.location.timezone;
+
+  const day = DateTime.fromISO(date, { zone });
+
+  if (!day.isValid) {
+    throw new BadRequestException(`${date} is not a real date`);
+  }
+
+  const dayStart = day.startOf('day').toJSDate();
+  const dayEnd = day.endOf('day').toJSDate();
+
+  /*
+   * Widened by the buffer either side, so a booking that sits just outside
+   * today's bounds but whose changeover bleeds into today is not missed.
+   */
+  const bufferMs = room.bufferMinutes * 60_000;
+
+  const queryFrom = new Date(dayStart.getTime() - bufferMs);
+  const queryTo = new Date(dayEnd.getTime() + bufferMs);
+
+  const [reservations, blackouts] = await Promise.all([
+    query(
+      `SELECT
+         res.id,
+         res.reference,
+         res.title,
+         res.starts_at,
+         res.ends_at,
+         res.status,
+         res.organizer_id,
+         u.full_name AS organiser_name
+       FROM mr_reservations res
+       JOIN core_users u ON u.id = res.organizer_id
+       WHERE res.room_id = $1
+         AND res.status IN ('PENDING', 'CONFIRMED')
+         AND res.starts_at < $3
+         AND res.ends_at > $2
+       ORDER BY res.starts_at ASC`,
+      [roomId, queryFrom, queryTo],
+    ),
+
+    query(
+      `SELECT
+         id,
+         starts_at,
+         ends_at,
+         reason
+       FROM mr_room_blackouts
+       WHERE room_id = $1
+         AND starts_at < $3
+         AND ends_at > $2
+       ORDER BY starts_at ASC`,
+      [roomId, queryFrom, queryTo],
+    ),
+  ]);
+
+  type Ref =
+    | {
+        kind: 'BOOKING';
+        row: (typeof reservations)[number];
+      }
+    | {
+        kind: 'BLACKOUT';
+        row: (typeof blackouts)[number];
+      };
+
+  const items: TaggedInterval<Ref>[] = [
+    ...reservations.map(
+      (r): TaggedInterval<Ref> => ({
+        start: new Date(r.starts_at),
+        end: new Date(r.ends_at),
+        kind: 'BOOKING',
+        ref: {
+          kind: 'BOOKING',
+          row: r,
+        },
+      }),
+    ),
+
+    ...blackouts.map(
+      (b): TaggedInterval<Ref> => ({
+        start: new Date(b.starts_at),
+        end: new Date(b.ends_at),
+        kind: 'BLACKOUT',
+        ref: {
+          kind: 'BLACKOUT',
+          row: b,
+        },
+      }),
+    ),
+  ];
+
+  const timeline = computeBlockedTimeline(
+    items,
+    room.bufferMinutes,
+  );
+
+  /*
+   * Clip to the requested calendar day.
+   * The widened query above can bring in a buffer edge that starts
+   * before midnight or ends after it.
+   */
+  const blocks = timeline
+    .map((b) => {
+      const start = b.start < dayStart ? dayStart : b.start;
+      const end = b.end > dayEnd ? dayEnd : b.end;
+
+      return {
+        ...b,
+        start,
+        end,
+      };
+    })
+    .filter((b) => b.start < b.end)
+    .map((b) => {
+      const startsAt =
+        DateTime.fromJSDate(b.start)
+          .setZone(zone)
+          .toISO()!;
+
+      const endsAt =
+        DateTime.fromJSDate(b.end)
+          .setZone(zone)
+          .toISO()!;
+
+      if (b.kind === 'BUFFER') {
+        return {
+          type: 'BUFFER' as const,
+          startsAt,
+          endsAt,
+        };
+      }
+
+      const ref = (b as { ref: Ref }).ref;
+
+      if (ref.kind === 'BOOKING') {
+        const r = ref.row;
+
+        return {
+          type: 'BOOKING' as const,
+          id: r.id,
+          reference: r.reference,
+          title: r.title,
+          startsAt,
+          endsAt,
+          status: r.status,
+          organiserName: r.organiser_name,
+          isMine: r.organizer_id === p.id,
+          canManage: this.mayManage(
+            p,
+            r.organizer_id,
+          ),
+        };
+      }
+
+      const bl = ref.row;
+
+      return {
+        type: 'BLACKOUT' as const,
+        startsAt,
+        endsAt,
+        reason: bl.reason,
+      };
+    });
+
+  return {
+    room: {
+      id: room.id,
+      name: room.name,
+      nameAr: room.nameAr,
+      opensAt: room.opensAt,
+      closesAt: room.closesAt,
+      bufferMinutes: room.bufferMinutes,
+    },
+    date,
+    blocks,
+  };
+}
+
   /* -------------------------------------------------------------- writes -- */
 
   async create(p: Principal, dto: CreateReservation): Promise<ReservationView> {
@@ -195,7 +416,7 @@ export class ReservationsService {
                    $1,$2,$3,$4,$5,$6,$7,$8)
            RETURNING id`,
           [room.id, p.id, dto.title, dto.description ?? null, start, end,
-           attendeeCount, status],
+            attendeeCount, status],
         )).rows[0];
       } catch (e: any) {
         // 23P01: the exclusion constraint. Someone took the slot between the

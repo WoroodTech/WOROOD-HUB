@@ -236,7 +236,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .iconbtn:disabled { opacity: 0.35; cursor: not-allowed; }
 .iconbtn--danger:hover:not(:disabled) { color: var(--critical-ink); border-color: var(--critical-ink); }
 
-.link { display: inline-flex; align-items: center; gap: 5px; font-weight: 550; }
+.link { display: inline-flex; align-items: center; gap: 10px; font-weight: 550; }
 
 /* ------------------------------------------------------------- forms -- */
 
@@ -1367,6 +1367,83 @@ button, input, select, textarea { font: inherit; color: inherit; }
     padding-block-end: 8px; border-block-end: 1px solid var(--line);
   }
   .booking__side { flex-direction: row; align-items: center; flex-wrap: wrap; }
+}
+
+/* ------------------------------------------------------- room calendar -- */
+
+.roomcal__wrap { margin-block-start: 14px; padding-block-start: 14px; border-block-start: 1px solid var(--line); }
+.roomcal__toolbar { display: flex; align-items: center; gap: 8px; margin-block-end: 10px; flex-wrap: wrap; }
+.roomcal__toolbar .input { max-inline-size: 160px; }
+.roomcal__legend { margin-inline-start: auto; display: inline-flex; gap: 12px; }
+.roomcal__legenditem { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--muted); }
+.roomcal__swatch { inline-size: 10px; block-size: 10px; border-radius: 3px; display: inline-block; }
+.roomcal__swatch--booked { background: var(--accent); }
+.roomcal__swatch--buffer {
+  background: repeating-linear-gradient(45deg, var(--warning-soft), var(--warning-soft) 3px, transparent 3px, transparent 6px);
+  border: 1px solid var(--warning-ink);
+}
+
+.roomcal { position: relative; display: flex; min-block-size: 420px; }
+.roomcal__hours { position: relative; inline-size: 46px; flex-shrink: 0; }
+.roomcal__hourlabel { position: absolute; inset-inline-start: 0; transform: translateY(-0.6em); font-size: 11px; color: var(--muted); }
+.roomcal__track { position: relative; flex: 1; border-inline-start: 1px solid var(--line); }
+.roomcal__gridline { position: absolute; inset-inline: 0; border-block-start: 1px dashed var(--line); }
+
+/* Booking -- the solid, informative block. */
+.roomcal__block {
+  position: absolute; inset-inline: 8px; border-radius: var(--radius-sm);
+  background: var(--accent-soft); border: 1px solid var(--accent-line); color: var(--ink);
+  padding-block: 4px; padding-inline: 8px; overflow: hidden;
+  display: flex; flex-direction: column; gap: 1px; z-index: 2;
+}
+.roomcal__block--pending { border-style: dashed; }
+.roomcal__block--mine { background: var(--accent); border-color: var(--accent); color: #fff; }
+.roomcal__block--mine .roomcal__blockmeta { color: rgba(255, 255, 255, 0.82); }
+.roomcal__blocktitle { font-size: 12.5px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.roomcal__blockmeta { font-size: 11px; color: var(--muted); }
+.roomcal__blockflag { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; color: var(--warning-ink); }
+.roomcal__block--mine .roomcal__blockflag { color: rgba(255, 255, 255, 0.9); }
+
+/* Buffer -- a quiet strip, not an event. No text sits on it; the reason
+   surfaces on hover via the title attribute, same as the rest of this file's
+   philosophy of not drawing what does not need to be read. */
+.roomcal__buffer {
+  position: absolute; inset-inline: 8px; z-index: 1; border-radius: 4px;
+  background: repeating-linear-gradient(45deg, var(--warning-soft), var(--warning-soft) 4px, transparent 4px, transparent 8px);
+  border-inline: 1px solid color-mix(in srgb, var(--warning-ink) 30%, transparent);
+}
+
+/* Blackout -- distinct from a buffer: this is the room being unavailable for
+   a reason that has nothing to do with a meeting. */
+.roomcal__blackout {
+  position: absolute; inset-inline: 8px; z-index: 1; border-radius: var(--radius-sm);
+  background: var(--surface-3); border: 1px dashed var(--line-strong); color: var(--muted);
+  padding-block: 4px; padding-inline: 8px; overflow: hidden;
+  display: flex; flex-direction: column; gap: 1px;
+}
+.roomcal__blackout .roomcal__blocktitle { color: var(--ink-2); }
+
+/* Past shading and the now-line -- purely visual, not a block type. Sits
+   under bookings/buffers/blackouts (lower z-index) so a real event drawn
+   over the past still reads clearly as itself. */
+.roomcal__pastshade {
+  position: absolute; inset-inline: 0; z-index: 0;
+  background: repeating-linear-gradient(135deg, var(--surface-3), var(--surface-3) 6px, transparent 6px, transparent 12px);
+  opacity: 0.55;
+}
+
+.roomcal__nowline {
+  position: absolute; inset-inline: 0; z-index: 3;
+  border-block-start: 1.5px solid var(--critical-ink);
+  pointer-events: none;
+}
+.roomcal__nowdot {
+  position: absolute; inset-inline-start: -3px; inset-block-start: -3.5px;
+  inline-size: 7px; block-size: 7px; border-radius: 50%; background: var(--critical-ink);
+}
+
+.roomcal__swatch--past {
+  background: repeating-linear-gradient(135deg, var(--surface-3), var(--surface-3) 3px, var(--line) 3px, var(--line) 6px);
 }
 
 /* --------------------------------------------------------- room admin -- */

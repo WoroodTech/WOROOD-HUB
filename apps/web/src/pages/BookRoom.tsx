@@ -17,7 +17,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
-  AvailabilityResponse, DirectoryPerson, MeetingLocation, MeetingRoomEquipment,
+  AvailabilityResponse, DirectoryPerson, MeetingLocation, MeetingRoom, MeetingRoomEquipment,
   Reservation, RoomAvailability,
 } from '../contract';
 import { api, ApiError } from '../lib/api';
@@ -28,6 +28,7 @@ import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import { Icon } from '../components/Icon';
 import { AttendeePicker } from '../components/AttendeePicker';
 import { CAIRO, formatTime, formatWeekday } from '../lib/format';
+import { RoomCalendar } from '../components/RoomCalendar';
 
 /** Durations people actually book, rather than a free-text minutes box. */
 const DURATIONS = [15, 30, 45, 60, 90, 120, 180, 240];
@@ -56,6 +57,13 @@ export function BookRoom() {
   const [minCapacity, setMinCapacity] = useState<number | ''>('');
   const [locationId, setLocationId] = useState('');
   const [equipment, setEquipment] = useState<string[]>([]);
+  const [roomId, setRoomId] = useState('');
+
+  const roomsCatalogue = useQuery({
+    queryKey: qk.rooms(''),
+    queryFn: () => api<{ rooms: MeetingRoom[] }>('/meeting-rooms/rooms'),
+    staleTime: 30 * 60 * 1000,
+  });
   const [chosen, setChosen] = useState<{ room: RoomAvailability['room']; startsAt: string; endsAt: string } | null>(null);
 
   const locations = useQuery({
@@ -75,8 +83,9 @@ export function BookRoom() {
     if (minCapacity) p.set('minCapacity', String(minCapacity));
     if (locationId) p.set('locationId', locationId);
     if (equipment.length) p.set('equipment', equipment.join(','));
+    if (roomId) p.set('roomId', roomId);
     return p.toString();
-  }, [date, durationMinutes, minCapacity, locationId, equipment]);
+  }, [date, durationMinutes, minCapacity, locationId, equipment, roomId]);
 
   const availability = useQuery({
     queryKey: qk.availability(params),
@@ -127,6 +136,17 @@ export function BookRoom() {
 
       <Card title="What do you need?" subtitle="Narrow it down, then pick a time">
         <div className="bookfilters">
+
+           <label className="field">
+            <span className="field__label">Room</span>
+            <select className="select" value={roomId} onChange={(e) => setRoomId(e.target.value)}>
+              <option value="">Any room</option>
+              {roomsCatalogue.data?.rooms.map((r) => (
+                <option key={r.id} value={r.id}>{r.name}</option>
+              ))}
+            </select>
+          </label>
+
           <label className="field">
             <span className="field__label">Day</span>
             <input
@@ -138,7 +158,7 @@ export function BookRoom() {
           <label className="field">
             <span className="field__label">For how long</span>
             <select className="select" value={durationMinutes}
-                    onChange={(e) => setDuration(Number(e.target.value))}>
+              onChange={(e) => setDuration(Number(e.target.value))}>
               {DURATIONS.map((m) => (
                 <option key={m} value={m}>{m < 60 ? `${m} min` : `${m / 60} h${m % 60 ? ` ${m % 60} min` : ''}`}</option>
               ))}
@@ -163,6 +183,7 @@ export function BookRoom() {
               ))}
             </select>
           </label>
+
         </div>
 
         {catalogue.data?.equipment.length ? (
@@ -249,8 +270,7 @@ function RoomOffer({ entry, date, onPick }: {
 }) {
   const { room, slots } = entry;
   const [expanded, setExpanded] = useState(false);
-  /* Twelve is about a screen's worth. Beyond that the grid stops being
-     scannable and starts being a wall, so the rest is behind one click. */
+  const [showCalendar, setShowCalendar] = useState(false);
   const shown = expanded ? slots : slots.slice(0, 12);
 
   return (
@@ -266,6 +286,12 @@ function RoomOffer({ entry, date, onPick }: {
         <span className="card__actionrow">
           {room.requiresApproval ? <Badge tone="warning" icon="clock">needs approval</Badge> : null}
           <Badge tone="good" icon="check">{slots.length} time{slots.length === 1 ? '' : 's'}</Badge>
+          <button
+            type="button" className="iconbtn" aria-label="Room calendar" aria-pressed={showCalendar}
+            onClick={() => setShowCalendar((v) => !v)}
+          >
+            <Icon name="calendar" size={15} />
+          </button>
         </span>
       }
       footer={room.description ? <span className="muted">{room.description}</span> : undefined}
@@ -298,10 +324,10 @@ function RoomOffer({ entry, date, onPick }: {
           <Icon name={expanded ? 'up' : 'down'} size={14} />
         </button>
       ) : null}
+      {showCalendar ? <RoomCalendar room={room} date={date} /> : null}
     </Card>
   );
 }
-
 /* ------------------------------------------------------------- confirm -- */
 
 function ConfirmBooking({ room, startsAt, endsAt, busy, error, onCancel, onConfirm }: {

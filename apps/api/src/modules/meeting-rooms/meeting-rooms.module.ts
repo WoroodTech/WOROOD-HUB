@@ -18,7 +18,7 @@ import { MR_PERMISSIONS } from './permissions';
 import { CoreModule } from '../../core/core.module';
 import {
   AvailabilityQuery, CancelReservation, CreateReservation, ListReservationsQuery,
-  ListRoomsQuery, RespondToInvitation, UpdateReservation, UpsertRoom,
+  ListRoomsQuery, RespondToInvitation, UpdateReservation, UpsertRoom,RoomCalendarQuery
 } from './dto';
 import { RoomsService } from './rooms.service';
 import { AvailabilityService } from './availability.service';
@@ -182,6 +182,11 @@ export class MeetingRoomsController {
      you are not allowed to know exists. Changing it is gated. */
   @Get('rooms')
   async listRooms(@Query() q: ListRoomsQuery) { return { rooms: await this.rooms.list(q) }; }
+
+  @Get('rooms/:id/calendar')
+  roomCalendar(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Query() q: RoomCalendarQuery) {
+  return this.reservations.calendar(p, id, q.date);
+}
 
   @Get('rooms/:id')
   getRoom(@Param('id', ParseUUIDPipe) id: string) { return this.rooms.get(id); }
