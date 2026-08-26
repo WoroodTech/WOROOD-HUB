@@ -1238,6 +1238,13 @@ button, input, select, textarea { font: inherit; color: inherit; }
 [dir='rtl'] .meeting__when,
 [dir='rtl'] .reslist__date,
 [dir='rtl'] .sidebar__date,
+/* The Meeting Rooms block below was written after this rule and never joined
+   it, so every clock range in the booking answers and on the room calendar was
+   being handed to the paragraph -- exactly the failure the note above
+   describes. `10:20-10:40` read right-to-left is a different window. */
+[dir='rtl'] .roomcal__hourlabel,
+[dir='rtl'] .roomcal__blockmeta,
+[dir='rtl'] .slotday .mono,
 [dir='rtl'] .alertlist__when { direction: ltr; unicode-bidi: isolate; }
 
 /* ...and where that atom sits in a row that is otherwise right-aligned, the
@@ -1269,6 +1276,47 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 .chipbtn--on { background: var(--accent); border-color: var(--accent); color: #fff; }
 .chipbtn--on:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: #fff; }
+
+/* ------------------------------------------------------ quick durations -- */
+
+/* The common lengths sit under the fields rather than beside them: they are a
+   shortcut for the number box above, not a separate way of asking. */
+.quickdurations {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-block-start: 14px; padding-block-start: 14px;
+  border-block-start: 1px solid var(--line);
+}
+
+/* ------------------------------------------------------- the one answer -- */
+
+/* Yes is a button and nothing else. No is a reason and a way forward, stacked
+   so the suggestion reads as the next step rather than as more explanation. */
+.answer { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.answer--no .notice { margin: 0; }
+
+/* --------------------------------------------------------- offered rooms -- */
+
+.roomoffers { display: flex; flex-direction: column; }
+.roomoffer {
+  padding-block: 12px; border-block-end: 1px solid var(--line);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.roomoffer:last-child { border-block-end: 0; padding-block-end: 0; }
+.roomoffer:first-child { padding-block-start: 0; }
+.roomoffer__head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
+}
+.roomoffer__name { display: flex; flex-direction: column; font-weight: 600; min-inline-size: 0; }
+.roomoffer__meta { font-size: 12.5px; font-weight: 450; color: var(--muted); }
+
+/* The room's own next opening, offered inside its "not available" row. It is a
+   link rather than a button because it does not book anything -- it puts a
+   time back in the form and lets the same answer run again. */
+.unavailable__why .link { margin-inline-start: 8px; }
+/* A changeover is not a clash. Same row, quieter reading -- the room is free,
+   it is being reset, and the colour should not say otherwise. */
+.unavailable__why--soft { color: var(--muted); font-style: normal; }
 
 /* --------------------------------------------------------------- slots -- */
 

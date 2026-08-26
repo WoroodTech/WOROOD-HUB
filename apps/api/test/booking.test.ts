@@ -83,8 +83,13 @@ async function run() {
   const jasmine = rooms.body.rooms.find((r: any) => r.code === 'JASMINE');
   const training = rooms.body.rooms.find((r: any) => r.code === 'TRAINING');
   const studio = rooms.body.rooms.find((r: any) => r.code === 'STUDIO');
-  check('rooms carry their own booking policy',
-    !!jasmine && jasmine.slotMinutes === 15 && jasmine.maxDurationMinutes === 120);
+  check('rooms carry the policy that is still theirs — hours, horizon, buffer',
+    !!jasmine && /^\d{2}:\d{2}$/.test(jasmine.opensAt) && jasmine.maxAdvanceDays > 0
+    && typeof jasmine.bufferMinutes === 'number');
+  check('the slot grid and per-room duration limits are gone from the wire',
+    !!jasmine && jasmine.slotMinutes === undefined
+    && jasmine.minDurationMinutes === undefined
+    && jasmine.maxDurationMinutes === undefined);
   check('fittings come back from the catalogue, not an array column',
     !!training && training.equipment.some((e: any) => e.key === 'projector'));
 
@@ -97,18 +102,60 @@ async function run() {
 
   console.log('\nbooking — availability');
 
-  const avail = await call(nadia, `/meeting-rooms/availability?date=${testDate()}&durationMinutes=60`);
-  check('availability returns slots for the test day',
-    avail.status === 200 && avail.body.rooms.some((r: any) => r.slots.length > 0));
+  const avail = await call(nadia,
+    `/meeting-rooms/availability?date=${testDate()}&startTime=09:00&durationMinutes=60`);
+  check('availability answers one window rather than listing slots',
+    avail.status === 200 && Array.isArray(avail.body.alternatives)
+    && typeof avail.body.startsAt === 'string');
+  check('rooms free at that time come back as alternatives',
+    avail.body.alternatives.length > 0);
 
-  const jasmineAvail = avail.body.rooms.find((r: any) => r.room.code === 'JASMINE');
-  check('a room refuses a duration outside its own policy with a reason, not an empty list',
-    !!jasmineAvail && jasmineAvail.slots.length > 0);
+  /* Twenty minutes was refused outright before: Jasmine's own floor was
+     fifteen and Lotus's was thirty. The point of the change is that neither
+     room has an opinion any more. */
+  const odd = await call(nadia,
+    `/meeting-rooms/availability?date=${testDate()}&startTime=10:20&durationMinutes=20`);
+  check('an off-grid start and a short duration are both accepted',
+    odd.status === 200 && odd.body.durationMinutes === 20
+    && odd.body.startsAt.includes('10:20'));
 
-  const longAvail = await call(nadia, `/meeting-rooms/availability?date=${testDate()}&durationMinutes=180`);
-  const jasmineLong = longAvail.body.rooms.find((r: any) => r.room.code === 'JASMINE');
-  check('...and says which policy refused it',
-    !!jasmineLong && jasmineLong.slots.length === 0 && /at most 120/.test(jasmineLong.note ?? ''));
+  const tooShort = await call(nadia,
+    `/meeting-rooms/availability?date=${testDate()}&startTime=10:00&durationMinutes=4`);
+  check('below the system floor is refused by validation, not by a room',
+    tooShort.status === 400);
+
+  const named = await call(nadia,
+    `/meeting-rooms/availability?date=${testDate()}&startTime=09:00&durationMinutes=60&roomId=${lotus.id}`);
+  check('naming a room answers about that room specifically',
+    named.status === 200 && named.body.requested?.room?.code === 'LOTUS'
+    && typeof named.body.requested.available === 'boolean');
+  check('the named room is never repeated among the alternatives',
+    named.body.alternatives.every((a: any) => a.room.code !== 'LOTUS'));
+
+  const outOfHours = await call(nadia,
+    `/meeting-rooms/availability?date=${testDate()}&startTime=03:00&durationMinutes=60&roomId=${lotus.id}`);
+  check('a window outside opening hours is refused with the hours in the message',
+    outOfHours.body.requested?.available === false
+    && /open/i.test(outOfHours.body.requested?.reason ?? ''));
+  check('a refusal that has nothing to do with the timeline carries no blockedBy',
+    outOfHours.body.requested?.blockedBy === undefined);
+
+  /* A room in its changeover buffer used to be reported in exactly the same
+     words as one that was genuinely double-booked, which sent people hunting
+     for a meeting that was not there. Nile carries a ten-minute buffer in the
+     seed, so a window starting the moment a booking ends is the case. */
+  const nile = rooms.body.rooms.find((r: any) => r.code === 'NILE');
+  if (nile?.bufferMinutes > 0) {
+    const held = await call(nadia,
+      `/meeting-rooms/availability?date=${testDate()}&startTime=09:00&durationMinutes=60&roomId=${nile.id}`);
+    const answer = held.body.requested;
+    if (answer && !answer.available) {
+      check('a blocked room says which kind of obstruction it is',
+        ['BOOKING', 'BUFFER', 'BLACKOUT'].includes(answer.blockedBy));
+      check('...and a changeover never claims the room is taken',
+        answer.blockedBy !== 'BUFFER' || !/taken/i.test(answer.reason ?? ''));
+    }
+  }
 
   console.log('\nbooking — making one');
 
@@ -271,7 +318,7 @@ async function run() {
     method: 'POST',
     body: JSON.stringify({
       code: 'TEST1', name: 'TEST room', locationId: lotus.location.id, capacity: 4,
-      slotMinutes: 30, minDurationMinutes: 30, equipmentKeys: ['whiteboard'],
+      equipmentKeys: ['whiteboard'],
     }),
   });
   check('facilities can create a room', created.status === 201 || created.status === 200,
@@ -280,10 +327,18 @@ async function run() {
   const badPolicy = await call(heba, `/meeting-rooms/admin/rooms/${created.body.id}`, {
     method: 'PATCH',
     body: JSON.stringify({ code: 'TEST1', name: 'TEST room', locationId: lotus.location.id,
-                           capacity: 4, slotMinutes: 30, minDurationMinutes: 20 }),
+                           capacity: 4, opensAt: '18:00', closesAt: '08:00' }),
   });
-  check('a minimum duration that the slot grid can never satisfy is refused',
+  check('a room that closes before it opens is refused',
     badPolicy.status === 400, badPolicy.body?.error?.message);
+
+  const tooNarrow = await call(heba, `/meeting-rooms/admin/rooms/${created.body.id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ code: 'TEST1', name: 'TEST room', locationId: lotus.location.id,
+                           capacity: 4, opensAt: '09:00', closesAt: '09:05' }),
+  });
+  check('a room open for less than the shortest booking is refused',
+    tooNarrow.status === 400, tooNarrow.body?.error?.message);
 
   const withBooking = await call(nadia, '/meeting-rooms/reservations', {
     method: 'POST',

@@ -2,10 +2,16 @@
  * Manage rooms — the Facilities screen.
  *
  * The booking policy is the reason this screen exists. Capacity and a name
- * could live in a spreadsheet; the slot grid, minimum and maximum duration,
- * changeover buffer and approval flag are what make a room behave correctly
- * without anyone deploying code, so the form treats them as first-class rather
- * than hiding them behind "advanced".
+ * could live in a spreadsheet; opening hours, the booking horizon, the
+ * changeover buffer and the approval flag are what make a room behave
+ * correctly without anyone deploying code, so the form treats them as
+ * first-class rather than hiding them behind "advanced".
+ *
+ * The slot grid and the per-room minimum and maximum length used to live here
+ * too. They are gone: an employee picks any start time and any length between
+ * ten minutes and eight hours, and a room no longer gets an opinion about it.
+ * Tying a twenty-minute stand-up to whichever room had been configured
+ * generously was the thing people worked around rather than with.
  *
  * Retiring a room is refused by the API while it still has meetings ahead of
  * it. That refusal is shown as-is: the number of affected bookings is the
@@ -25,6 +31,15 @@ import { Icon } from '../components/Icon';
 
 const STATUS_TONE: Record<string, 'good' | 'warning' | 'neutral'> = {
   ACTIVE: 'good', MAINTENANCE: 'warning', INACTIVE: 'neutral',
+};
+
+/** Mirrors BOOKING_LIMITS.MIN_MINUTES on the API — the shortest meeting
+ *  anyone can book, and therefore the least a room can usefully be open for. */
+const MIN_BOOKING_MINUTES = 10;
+
+const toMinutes = (hhmm: string): number => {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + m;
 };
 
 type Draft = Partial<MeetingRoom> & { equipmentKeys?: string[] };
@@ -123,7 +138,7 @@ export function ManageRooms() {
                     <td className="mono">{r.opensAt}–{r.closesAt}</td>
                     <td>
                       <span className="cell__sub">
-                        {r.slotMinutes} min grid · {r.minDurationMinutes}–{r.maxDurationMinutes} min
+                        Bookable {r.maxAdvanceDays} days ahead
                       </span>
                       <span className="cell__sub">
                         {r.bufferMinutes ? `${r.bufferMinutes} min buffer · ` : ''}
@@ -177,8 +192,7 @@ function toBody(d: Draft): Record<string, unknown> {
     locationId: d.location?.id, floor: d.floor || undefined,
     capacity: d.capacity, description: d.description || undefined,
     status: d.status, opensAt: d.opensAt, closesAt: d.closesAt,
-    slotMinutes: d.slotMinutes, minDurationMinutes: d.minDurationMinutes,
-    maxDurationMinutes: d.maxDurationMinutes, maxAdvanceDays: d.maxAdvanceDays,
+    maxAdvanceDays: d.maxAdvanceDays,
     bufferMinutes: d.bufferMinutes, requiresApproval: d.requiresApproval,
     equipmentKeys: d.equipmentKeys,
   };
@@ -196,13 +210,15 @@ function RoomForm({ draft, locations, catalogue, busy, error, onChange, onClose,
   const set = (patch: Draft) => onChange({ ...draft, ...patch });
   const isNew = !draft.id;
 
-  const slot = draft.slotMinutes ?? 30;
-  const min = draft.minDurationMinutes ?? 30;
-  /* The same rule the API enforces, said before the request rather than after:
-     a minimum that is not a whole number of slots can never be satisfied. */
-  const badMinimum = min % slot !== 0;
+  /* The same rules the API enforces, said before the request rather than after.
+     A room that closes before it opens, or is open for less than the shortest
+     possible booking, would sit in the catalogue refusing every window. */
+  const opens = draft.opensAt ?? '08:00';
+  const closes = draft.closesAt ?? '18:00';
+  const openMinutes = toMinutes(closes) - toMinutes(opens);
+  const badHours = openMinutes < MIN_BOOKING_MINUTES;
 
-  const ready = !!draft.code && !!draft.name && !!draft.location?.id && !!draft.capacity && !badMinimum;
+  const ready = !!draft.code && !!draft.name && !!draft.location?.id && !!draft.capacity && !badHours;
 
   return (
     <div className="modal" role="dialog" aria-modal="true" aria-labelledby="room-form-title">
@@ -266,34 +282,18 @@ function RoomForm({ draft, locations, catalogue, busy, error, onChange, onClose,
           <div className="formrow">
             <label className="field">
               <span className="field__label">Opens</span>
-              <input className="input" type="time" value={draft.opensAt ?? '08:00'}
+              <input className="input" type="time" value={opens}
                      onChange={(e) => set({ opensAt: e.target.value })} />
             </label>
             <label className="field">
               <span className="field__label">Closes</span>
-              <input className="input" type="time" value={draft.closesAt ?? '18:00'}
+              <input className="input" type="time" value={closes}
                      onChange={(e) => set({ closesAt: e.target.value })} />
-            </label>
-            <label className="field">
-              <span className="field__label">Slot grid</span>
-              <select className="select" value={slot}
-                      onChange={(e) => set({ slotMinutes: Number(e.target.value) })}>
-                {[5, 10, 15, 20, 30, 60].map((m) => <option key={m} value={m}>{m} min</option>)}
-              </select>
-            </label>
-            <label className="field">
-              <span className="field__label">Shortest booking</span>
-              <input className="input" type="number" min={5} step={5} value={min}
-                     onChange={(e) => set({ minDurationMinutes: Number(e.target.value) || 5 })} />
-              {badMinimum ? (
-                <span className="field__error">Must be a multiple of the {slot} min grid.</span>
+              {badHours ? (
+                <span className="field__error">
+                  Must be at least {MIN_BOOKING_MINUTES} minutes after opening.
+                </span>
               ) : null}
-            </label>
-            <label className="field">
-              <span className="field__label">Longest booking</span>
-              <input className="input" type="number" min={15} step={15}
-                     value={draft.maxDurationMinutes ?? 480}
-                     onChange={(e) => set({ maxDurationMinutes: Number(e.target.value) || 480 })} />
             </label>
             <label className="field">
               <span className="field__label">Bookable ahead</span>

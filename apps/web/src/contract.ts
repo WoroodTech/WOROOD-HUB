@@ -132,7 +132,6 @@ export interface MeetingRoom {
   description: string | null; photoUrl: string | null;
   status: 'ACTIVE' | 'MAINTENANCE' | 'INACTIVE';
   opensAt: string; closesAt: string;
-  slotMinutes: number; minDurationMinutes: number; maxDurationMinutes: number;
   maxAdvanceDays: number; bufferMinutes: number; requiresApproval: boolean;
   location: { id: string; code: string; name: string; building: string | null; timezone: string };
   equipment: MeetingRoomEquipment[];
@@ -145,17 +144,44 @@ export interface MeetingLocation {
 
 export interface AvailabilitySlot { startsAt: string; endsAt: string }
 
+/** One room's answer about one requested window.
+ *
+ *  This replaced a per-room list of offered slots. Rooms no longer publish the
+ *  start times they will accept -- the employee names a time and a length, so
+ *  each room has one thing to say about it and, when the answer is no, one
+ *  useful thing to say next. */
+/** What a blocked room is blocked by. A booking and a changeover buffer are
+ *  both "not available" and are not the same news. */
+export type BlockedBy = 'BOOKING' | 'BUFFER' | 'BLACKOUT';
+
 export interface RoomAvailability {
   room: MeetingRoom;
-  slots: AvailabilitySlot[];
-  requestedWindow?: { startsAt: string; endsAt: string; free: boolean };
-  /** Why a room offered nothing. An empty list with no note is "fully booked";
-   *  a note is the room telling you it could never have taken this booking. */
-  note?: string;
+  available: boolean;
+  /** Why not, when not. */
+  reason?: string;
+  /** The kind of obstruction. Absent when the room is free, and when the
+   *  refusal has nothing to do with the timeline -- too small, closed, past. */
+  blockedBy?: BlockedBy;
+  /** This same room's earliest window of the same length at or after the time
+   *  asked for. Null when nothing is left today. Only sent for a room that is
+   *  unavailable -- there is nothing to suggest about one that is free. */
+  nextFree?: { startsAt: string; endsAt: string } | null;
 }
 
 export interface AvailabilityResponse {
-  date: string; durationMinutes: number; rooms: RoomAvailability[];
+  date: string;
+  /** The window every answer below is about, stated once. */
+  startsAt: string;
+  endsAt: string;
+  durationMinutes: number;
+  /** The room the employee asked for, when they asked for one. */
+  requested?: RoomAvailability;
+  /** Other rooms free for exactly this window. */
+  alternatives: RoomAvailability[];
+  /** Rooms that matched the filters and cannot take it, each with its reason.
+   *  Kept visible rather than filtered away, so "why isn't Lotus here?" is
+   *  answered before it is asked. */
+  unavailable: RoomAvailability[];
 }
 export interface RoomCalendarEntry {
   id: string; reference: string; title: string;

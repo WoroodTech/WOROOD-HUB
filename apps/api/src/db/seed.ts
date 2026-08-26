@@ -265,8 +265,8 @@ async function main() {
      every room behaves identically hides the whole point of the policy. */
   interface SeedRoom {
     code: string; name: string; nameAr: string; capacity: number; floor: string;
-    equipment: string[]; opensAt?: string; closesAt?: string; slot?: number;
-    min?: number; max?: number; buffer?: number; approval?: boolean; status?: string;
+    equipment: string[]; opensAt?: string; closesAt?: string;
+    buffer?: number; approval?: boolean; status?: string;
     description?: string;
   }
   /* `--reset` truncates mr_equipment, which migration 0004 populated. The
@@ -296,12 +296,12 @@ async function main() {
     { code: 'LOTUS', name: 'Lotus', nameAr: 'لوتس', capacity: 6, floor: '2',
       equipment: ['display'] },
     { code: 'JASMINE', name: 'Jasmine', nameAr: 'ياسمين', capacity: 4, floor: '2',
-      equipment: ['whiteboard'], slot: 15, min: 15, max: 120,
-      description: 'Huddle room. Fifteen-minute bookings, two hours maximum.' },
+      equipment: ['whiteboard'],
+      description: 'Huddle room. Small, quick, and rarely booked more than an hour.' },
     { code: 'TRAINING', name: 'Training Hall', nameAr: 'قاعة التدريب', capacity: 30, floor: '1',
-      equipment: ['projector', 'speakerphone', 'accessible'], slot: 60, min: 60, max: 480, buffer: 30,
+      equipment: ['projector', 'speakerphone', 'accessible'], buffer: 30,
       opensAt: '08:00', closesAt: '17:00',
-      description: 'Hour-long blocks only. Half an hour of changeover is reserved either side.' },
+      description: 'Closes an hour early. Half an hour of changeover is reserved either side.' },
     { code: 'STUDIO', name: 'Studio', nameAr: 'الاستوديو', capacity: 5, floor: '1',
       equipment: ['display', 'speakerphone'], approval: true,
       description: 'Photography studio. Bookings are held until Facilities approve them.' },
@@ -311,22 +311,18 @@ async function main() {
   for (const r of ROOMS) {
     const row = await one(
       `INSERT INTO mr_rooms (code, location_id, name, name_ar, capacity, floor, description,
-         status, opens_at, closes_at, slot_minutes, min_duration_minutes,
-         max_duration_minutes, buffer_minutes, requires_approval)
+         status, opens_at, closes_at, buffer_minutes, requires_approval)
        VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8,'ACTIVE'),COALESCE($9::time,'08:00'),
-               COALESCE($10::time,'18:00'),COALESCE($11,30),COALESCE($12,30),
-               COALESCE($13,480),COALESCE($14,0),COALESCE($15,false))
+               COALESCE($10::time,'18:00'),COALESCE($11,0),COALESCE($12,false))
        ON CONFLICT (code) DO UPDATE SET
          name = EXCLUDED.name, name_ar = EXCLUDED.name_ar, capacity = EXCLUDED.capacity,
          floor = EXCLUDED.floor, description = EXCLUDED.description,
          opens_at = EXCLUDED.opens_at, closes_at = EXCLUDED.closes_at,
-         slot_minutes = EXCLUDED.slot_minutes, min_duration_minutes = EXCLUDED.min_duration_minutes,
-         max_duration_minutes = EXCLUDED.max_duration_minutes,
          buffer_minutes = EXCLUDED.buffer_minutes, requires_approval = EXCLUDED.requires_approval
        RETURNING id`,
       [r.code, loc.id, r.name, r.nameAr, r.capacity, r.floor, r.description ?? null,
-       r.status ?? null, r.opensAt ?? null, r.closesAt ?? null, r.slot ?? null,
-       r.min ?? null, r.max ?? null, r.buffer ?? null, r.approval ?? null]);
+       r.status ?? null, r.opensAt ?? null, r.closesAt ?? null,
+       r.buffer ?? null, r.approval ?? null]);
     roomIds.push(row.id);
 
     // Equipment is a join now, not an array on the row: replace the set rather
