@@ -5,12 +5,30 @@
  * Booking rules are the part of this module most likely to be argued about and
  * changed, so they live here as pure functions that `test/slots.test.ts` can
  * pin down exhaustively. The database still owns the *guarantee* against
- * double-booking; this file owns the *offer* -- which times to show someone.
+ * double-booking; this file owns the *answer* -- whether a time is free, and
+ * when the next one is.
  * The two are deliberately separate, because a slot list computed a second ago
  * is advice, and only the exclusion constraint is a promise.
  */
 
 export interface Interval { start: Date; end: Date }
+
+/**
+ * Duration rules, system-wide rather than per-room.
+ *
+ * Rooms used to carry their own slot grid and minimum/maximum length, which
+ * meant a twenty-minute conversation was refused by a room whose owner had
+ * set a thirty-minute floor. The floor now exists for one reason only: a
+ * booking of a minute or two is a mistake, not a meeting. The ceiling stops
+ * someone quietly holding a room for a whole day. STEP is presentation --
+ * what the time picker moves by, and what a suggested time is rounded to --
+ * and nothing rejects a start time that falls off it.
+ */
+export const BOOKING_LIMITS = {
+  MIN_MINUTES: 10,
+  MAX_MINUTES: 480,
+  STEP_MINUTES: 5,
+} as const;
 
 /** Half-open [start, end): a meeting ending at 10:00 does not clash with one
  *  starting at 10:00. Every comparison in this file uses this convention, and
@@ -47,48 +65,67 @@ export function applyBuffer(intervals: Interval[], bufferMinutes: number): Inter
   }));
 }
 
-export interface FreeSlotOptions {
-  /** Start of the room's bookable window for the day, as an instant. */
-  dayStart: Date;
-  /** End of that window. */
+export interface NextFreeOptions {
+  /** Earliest instant worth offering -- the requested start, or now. */
+  from: Date;
+  /** End of the room's bookable window for the day. */
   dayEnd: Date;
-  /** Granularity of candidate start times, e.g. every 30 minutes. */
-  slotMinutes: number;
   /** Length of the meeting being planned. */
   durationMinutes: number;
   /** Live reservations plus blackout windows. */
   busy: Interval[];
   bufferMinutes?: number;
-  /** Slots starting before this instant are dropped -- usually "now", so the
-   *  morning's past hours stop being offered as the day goes on. */
-  notBefore?: Date;
+  /** Round a suggestion up to this grid so the offered time is one the picker
+   *  can actually land on. Alignment only ever moves a suggestion later, and
+   *  the result is re-checked against `busy`, so it can never offer a taken
+   *  window. */
+  stepMinutes?: number;
 }
 
 /**
- * Every start time at which a meeting of `durationMinutes` fits entirely
- * inside the bookable window without touching a busy period.
+ * The earliest window of `durationMinutes` that fits, at or after `from`.
+ *
+ * This replaced `computeFreeSlots`. The old function enumerated every start
+ * time on a room's grid, because the employee was picking from that list. They
+ * now type a time, so the only question left is "and if that one is taken,
+ * when is the next one?" -- which is one answer, not a list, and is found by
+ * walking the gaps between busy periods rather than testing every candidate.
  */
-export function computeFreeSlots(options: FreeSlotOptions): Interval[] {
-  const {
-    dayStart, dayEnd, slotMinutes, durationMinutes, busy,
-    bufferMinutes = 0, notBefore,
-  } = options;
+export function nextFreeWindow(options: NextFreeOptions): Interval | null {
+  const { from, dayEnd, durationMinutes, busy, bufferMinutes = 0, stepMinutes = 0 } = options;
+  if (durationMinutes <= 0) return null;
 
-  if (durationMinutes <= 0 || slotMinutes <= 0) return [];
-
-  const blocked = mergeIntervals(applyBuffer(busy, bufferMinutes));
-  const stepMs = slotMinutes * 60_000;
   const durationMs = durationMinutes * 60_000;
-  const slots: Interval[] = [];
+  const blocked = mergeIntervals(applyBuffer(busy, bufferMinutes));
 
-  for (let t = dayStart.getTime(); t + durationMs <= dayEnd.getTime(); t += stepMs) {
-    const candidate: Interval = { start: new Date(t), end: new Date(t + durationMs) };
-    if (notBefore && candidate.start < notBefore) continue;
-    if (blocked.some((b) => overlaps(candidate, b))) continue;
-    slots.push(candidate);
+  const align = (t: Date): Date => {
+    if (stepMinutes <= 0) return t;
+    const stepMs = stepMinutes * 60_000;
+    const remainder = t.getTime() % stepMs;
+    return remainder === 0 ? t : new Date(t.getTime() + (stepMs - remainder));
+  };
+
+  const fits = (candidate: Date): Interval | null => {
+    const window = { start: candidate, end: new Date(candidate.getTime() + durationMs) };
+    if (window.end > dayEnd) return null;
+    return blocked.some((b) => overlaps(window, b)) ? null : window;
+  };
+
+  let cursor = align(from);
+  /* Walk forward through the busy periods. Each one either sits behind the
+     cursor and is skipped, or opens a gap in front of it -- and the gap is
+     only usable once the cursor has been aligned into it, which is why `fits`
+     re-tests rather than trusting the arithmetic. */
+  for (const b of blocked) {
+    if (b.end <= cursor) continue;
+    if (b.start > cursor) {
+      const found = fits(cursor);
+      if (found && found.end <= b.start) return found;
+    }
+    cursor = align(b.end);
   }
 
-  return slots;
+  return fits(cursor);
 }
 
 /** "Is this exact window free?" -- the check behind a direct booking, as
@@ -111,13 +148,13 @@ export type TimelineBlock<T = unknown> =
   | { kind: string; start: Date; end: Date; ref: T };
 
 /**
- * The same blocked timeline `computeFreeSlots` reasons about, but kept in
- * pieces instead of collapsed into a yes/no per slot -- for a calendar view
- * that needs to show *why* a stretch is blocked, not only that it is.
+ * The same blocked timeline the availability search reasons about, but kept
+ * in pieces instead of collapsed into a yes/no -- for a calendar view that
+ * needs to show *why* a stretch is blocked, not only that it is.
  *
  * Uses the exact same `applyBuffer` + `mergeIntervals` pair as
- * `computeFreeSlots`, so the boundary of "blocked" here can never disagree
- * with the boundary "blocked" excludes there. Only what happens *inside*
+ * `nextFreeWindow` and `isWindowFree`, so the boundary of "blocked" here can
+ * never disagree with the boundary they exclude. Only what happens *inside*
  * each merged chunk is new: the original, unbuffered items are walked in
  * order and the gaps left over are reported as BUFFER.
  */
@@ -127,8 +164,8 @@ export function computeBlockedTimeline<T>(
 ): TimelineBlock<T>[] {
   if (!items.length) return [];
 
-  // Identical computation to computeFreeSlots's `blocked` -- this is the
-  // guarantee that keeps the calendar and the availability search agreeing.
+  // Identical computation to the availability search's `blocked` -- this is
+  // the guarantee that keeps the calendar and the search agreeing.
   const merged = mergeIntervals(applyBuffer(items, bufferMinutes));
 
   const blocks: TimelineBlock<T>[] = [];
@@ -149,4 +186,35 @@ export function computeBlockedTimeline<T>(
     if (cursor < chunk.end) blocks.push({ kind: 'BUFFER', start: cursor, end: chunk.end });
   }
   return blocks;
+}
+
+/**
+ * *Why* a window is blocked, not only whether it is.
+ *
+ * `isWindowFree` answers yes or no, and for a long time that was all the
+ * availability search asked -- which meant a room sitting in its changeover
+ * buffer was reported with the same words as a room that was genuinely
+ * double-booked. "Nile is taken then" when Nile has nothing booked at that
+ * hour is worse than unhelpful: the employee goes looking for the meeting that
+ * is in their way, and there isn't one.
+ *
+ * This runs the same `computeBlockedTimeline` the calendar draws from and
+ * keeps only the pieces the window actually touches, so the reason an employee
+ * reads and the block they can see on the calendar are the same object. An
+ * empty result means free.
+ */
+export function blockingBlocks<T>(
+  window: Interval,
+  items: TaggedInterval<T>[],
+  bufferMinutes = 0,
+): TimelineBlock<T>[] {
+  return computeBlockedTimeline(items, bufferMinutes).filter((b) => overlaps(window, b));
+}
+
+/** The instant a window stops being blocked -- the far edge of the last piece
+ *  in its way. Not the same as "when is the next free window", which has to
+ *  fit a whole meeting; this is just when the obstruction ends. */
+export function blockedUntil(blocks: Array<{ end: Date }>): Date | null {
+  if (!blocks.length) return null;
+  return blocks.reduce((latest, b) => (b.end > latest ? b.end : latest), blocks[0].end);
 }

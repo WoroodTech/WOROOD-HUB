@@ -8,6 +8,7 @@
 
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { one, query, tx } from '../../common/db';
+import { BOOKING_LIMITS } from './slots';
 import type { ListRoomsQuery, UpsertRoom } from './dto';
 
 export interface RoomView {
@@ -16,7 +17,6 @@ export interface RoomView {
   description: string | null; photoUrl: string | null;
   status: 'ACTIVE' | 'MAINTENANCE' | 'INACTIVE';
   opensAt: string; closesAt: string;
-  slotMinutes: number; minDurationMinutes: number; maxDurationMinutes: number;
   maxAdvanceDays: number; bufferMinutes: number; requiresApproval: boolean;
   location: { id: string; code: string; name: string; building: string | null; timezone: string };
   equipment: Array<{ key: string; name: string; icon: string | null; quantity: number }>;
@@ -27,8 +27,8 @@ export interface RoomView {
    way and one this way. */
 const ROOM_SELECT = `
   SELECT r.id, r.code, r.name, r.name_ar, r.capacity, r.floor, r.description, r.photo_url,
-         r.status, r.opens_at, r.closes_at, r.slot_minutes, r.min_duration_minutes,
-         r.max_duration_minutes, r.max_advance_days, r.buffer_minutes, r.requires_approval,
+         r.status, r.opens_at, r.closes_at,
+         r.max_advance_days, r.buffer_minutes, r.requires_approval,
          l.id AS location_id, l.code AS location_code, l.name AS location_name,
          l.building AS location_building, l.iana_timezone AS location_timezone,
          COALESCE(
@@ -51,9 +51,6 @@ export function toRoomView(r: any): RoomView {
     // `time` comes back as HH:MM:SS; the portal wants HH:MM.
     opensAt: String(r.opens_at).slice(0, 5),
     closesAt: String(r.closes_at).slice(0, 5),
-    slotMinutes: r.slot_minutes,
-    minDurationMinutes: r.min_duration_minutes,
-    maxDurationMinutes: r.max_duration_minutes,
     maxAdvanceDays: r.max_advance_days,
     bufferMinutes: r.buffer_minutes,
     requiresApproval: r.requires_approval,
@@ -123,21 +120,25 @@ export class RoomsService {
 
   /* ------------------------------------------------------------- writes -- */
 
+  /**
+   * Opening hours are the only policy left that can contradict itself, now
+   * that the slot grid and the per-room duration limits are gone. Checked
+   * against the merged current-plus-patch values so a PATCH that moves only
+   * one of the two is still judged against the other.
+   *
+   * A room must also be open for longer than the shortest possible booking,
+   * or it would appear in the catalogue and refuse every window offered.
+   */
   private assertPolicy(dto: Partial<UpsertRoom>, current?: RoomView): void {
     const opens = dto.opensAt ?? current?.opensAt ?? '08:00';
     const closes = dto.closesAt ?? current?.closesAt ?? '18:00';
     if (closes <= opens) throw new BadRequestException('Closing time must be after opening time');
 
-    const min = dto.minDurationMinutes ?? current?.minDurationMinutes ?? 30;
-    const max = dto.maxDurationMinutes ?? current?.maxDurationMinutes ?? 480;
-    if (max < min) throw new BadRequestException('Maximum duration cannot be shorter than the minimum');
-
-    /* A minimum booking that is not a whole number of slots can never be
-       satisfied by the slot grid -- the room would look permanently full. */
-    const slot = dto.slotMinutes ?? current?.slotMinutes ?? 30;
-    if (min % slot !== 0) {
+    const openMinutes = toMinutes(closes) - toMinutes(opens);
+    if (openMinutes < BOOKING_LIMITS.MIN_MINUTES) {
       throw new BadRequestException(
-        `Minimum duration (${min} min) must be a multiple of the slot size (${slot} min)`);
+        `A room must be open for at least ${BOOKING_LIMITS.MIN_MINUTES} minutes ` +
+        `-- the shortest booking anyone can make.`);
     }
   }
 
@@ -148,17 +149,15 @@ export class RoomsService {
       try {
         row = (await c.query(
           `INSERT INTO mr_rooms (code, name, name_ar, location_id, floor, capacity, description,
-             photo_url, status, opens_at, closes_at, slot_minutes, min_duration_minutes,
-             max_duration_minutes, max_advance_days, buffer_minutes, requires_approval)
+             photo_url, status, opens_at, closes_at,
+             max_advance_days, buffer_minutes, requires_approval)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9,'ACTIVE'),
                    COALESCE($10::time,'08:00'),COALESCE($11::time,'18:00'),
-                   COALESCE($12,30),COALESCE($13,30),COALESCE($14,480),
-                   COALESCE($15,90),COALESCE($16,0),COALESCE($17,false))
+                   COALESCE($12,90),COALESCE($13,0),COALESCE($14,false))
            RETURNING id`,
           [dto.code, dto.name, dto.nameAr ?? null, dto.locationId, dto.floor ?? null, dto.capacity,
            dto.description ?? null, dto.photoUrl ?? null, dto.status ?? null,
-           dto.opensAt ?? null, dto.closesAt ?? null, dto.slotMinutes ?? null,
-           dto.minDurationMinutes ?? null, dto.maxDurationMinutes ?? null,
+           dto.opensAt ?? null, dto.closesAt ?? null,
            dto.maxAdvanceDays ?? null, dto.bufferMinutes ?? null, dto.requiresApproval ?? null],
         )).rows[0];
       } catch (e: any) {
@@ -194,8 +193,7 @@ export class RoomsService {
     // `time` columns need the cast: node-postgres sends a bare string as text.
     if (dto.opensAt !== undefined) { params.push(dto.opensAt); sets.push(`opens_at = $${params.length}::time`); }
     if (dto.closesAt !== undefined) { params.push(dto.closesAt); sets.push(`closes_at = $${params.length}::time`); }
-    set('slot_minutes', dto.slotMinutes); set('min_duration_minutes', dto.minDurationMinutes);
-    set('max_duration_minutes', dto.maxDurationMinutes); set('max_advance_days', dto.maxAdvanceDays);
+    set('max_advance_days', dto.maxAdvanceDays);
     set('buffer_minutes', dto.bufferMinutes); set('requires_approval', dto.requiresApproval);
 
     await tx(async (c) => {
@@ -250,4 +248,11 @@ export class RoomsService {
          ON CONFLICT DO NOTHING`, [roomId, r.id]);
     }
   }
+}
+
+/** "09:30" -> 570. Lexical comparison already orders HH:mm correctly, so this
+ *  exists only where the *difference* between two times is needed. */
+function toMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + m;
 }

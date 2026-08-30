@@ -7,6 +7,7 @@
  */
 
 import { Type } from 'class-transformer';
+import { BOOKING_LIMITS } from './slots';
 import {
   ArrayMaxSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsOptional,
   IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength,
@@ -29,9 +30,16 @@ export class AvailabilityQuery {
    *  "Tuesday" means Tuesday in Cairo, whatever the caller's clock says. */
   @Matches(DATE, { message: 'date must be YYYY-MM-DD' }) date!: string;
 
-  @Type(() => Number) @IsInt() @Min(15) @Max(720) durationMinutes: number = 60;
+  /** The exact time asked for. Required now: this endpoint answers "is this
+   *  window free", and without a start time there is no window to answer
+   *  about. Any HH:mm is accepted -- the five-minute step in the portal is a
+   *  picker convenience, not a rule, so 10:23 is a legitimate request. */
+  @Matches(TIME, { message: 'startTime must be HH:mm' }) startTime!: string;
 
-  @IsOptional() @Matches(TIME, { message: 'startTime must be HH:mm' }) startTime?: string;
+  @Type(() => Number) @IsInt()
+  @Min(BOOKING_LIMITS.MIN_MINUTES) @Max(BOOKING_LIMITS.MAX_MINUTES)
+  durationMinutes: number = 60;
+
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) minCapacity?: number;
   @IsOptional() @IsUUID() locationId?: string;
   @IsOptional() @IsString() @MaxLength(300) equipment?: string;
@@ -95,9 +103,10 @@ export class UpsertRoom {
   @IsOptional() @IsIn(['ACTIVE', 'MAINTENANCE', 'INACTIVE']) status?: 'ACTIVE' | 'MAINTENANCE' | 'INACTIVE';
   @IsOptional() @Matches(TIME) opensAt?: string;
   @IsOptional() @Matches(TIME) closesAt?: string;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(5) @Max(120) slotMinutes?: number;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(5) minDurationMinutes?: number;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(15) maxDurationMinutes?: number;
+  /* No slot grid and no per-room minimum or maximum length any more: an
+     employee picks a start time and a duration, and the only limits are the
+     system-wide ones in BOOKING_LIMITS. Opening hours, the booking horizon and
+     the changeover buffer are still the room's own. */
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) maxAdvanceDays?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(60) bufferMinutes?: number;
   @IsOptional() @IsBoolean() requiresApproval?: boolean;

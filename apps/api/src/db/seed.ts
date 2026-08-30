@@ -1,6 +1,4 @@
 /**
- * Seeds a demonstrable WOROOD HUB: departments, roles, permissions and people;
- * a meeting-room inventory with live reservations; the Shopify shop row; the
  * widget catalogue; five dashboards; and the access assignments that make every
  * branch of the resolution rule visible.
  *
@@ -30,20 +28,20 @@ const num = (v: unknown) => {
 /* ---------------------------------------------------------------- people -- */
 
 const DEPARTMENTS = ['Executive', 'Sales', 'Marketing', 'Finance', 'Operations',
-                     'Customer Care', 'Facilities', 'Technology'];
+  'Customer Care', 'Facilities', 'Technology'];
 
 const PERMISSIONS: [string, string, string][] = [
-  ['sales.dashboard.view',   'sales-dashboard', 'Open sales dashboards assigned to me'],
+  ['sales.dashboard.view', 'sales-dashboard', 'Open sales dashboards assigned to me'],
   ['sales.dashboard.manage', 'sales-dashboard', 'Create, edit and delete dashboards; see all of them'],
   ['sales.dashboard.assign', 'sales-dashboard', 'Assign dashboards to roles and to individuals'],
-  ['sales.order.view',       'sales-dashboard', 'Browse individual orders (no customer identity)'],
-  ['sales.customer.view',    'sales-dashboard', 'See customer name, e-mail, phone and address'],
-  ['sales.sync.manage',      'sales-dashboard', 'Trigger backfills, inspect sync health, re-register webhooks'],
+  ['sales.order.view', 'sales-dashboard', 'Browse individual orders (no customer identity)'],
+  ['sales.customer.view', 'sales-dashboard', 'See customer name, e-mail, phone and address'],
+  ['sales.sync.manage', 'sales-dashboard', 'Trigger backfills, inspect sync health, re-register webhooks'],
   ['meeting-rooms.room.manage', 'meeting-rooms', 'Create, edit and retire rooms'],
   ['meeting-rooms.reservation.manage-any', 'meeting-rooms', 'Modify or cancel any reservation'],
   ['core.user.manage', 'core', 'Create employee accounts, change their details and password, assign roles and dashboards'],
   ['core.role.manage', 'core', 'Create roles and decide which permissions each one carries'],
-  ['core.audit.view',  'core', 'Read the audit trail'],
+  ['core.audit.view', 'core', 'Read the audit trail'],
 ];
 
 /**
@@ -59,45 +57,57 @@ const PERMISSIONS: [string, string, string][] = [
 const ROLES: Record<string, { name: string; nameAr: string; perms: string[] }> = {
   'employee': { name: 'Employee', nameAr: 'موظف', perms: [] },
 
-  'executive': { name: 'Executive', nameAr: 'الإدارة التنفيذية',
-                 perms: ['sales.dashboard.view', 'sales.order.view', 'sales.customer.view'] },
+  'executive': {
+    name: 'Executive', nameAr: 'الإدارة التنفيذية',
+    perms: ['sales.dashboard.view', 'sales.order.view', 'sales.customer.view']
+  },
 
-  'finance': { name: 'Finance', nameAr: 'المالية',
-               perms: ['sales.dashboard.view', 'sales.order.view', 'sales.customer.view'] },
+  'finance': {
+    name: 'Finance', nameAr: 'المالية',
+    perms: ['sales.dashboard.view', 'sales.order.view', 'sales.customer.view']
+  },
 
-  'marketing': { name: 'Marketing', nameAr: 'التسويق',
-                 // No order access at all: campaign performance is not a reason
-                 // to read a customer's address.
-                 perms: ['sales.dashboard.view'] },
+  'marketing': {
+    name: 'Marketing', nameAr: 'التسويق',
+    // No order access at all: campaign performance is not a reason
+    // to read a customer's address.
+    perms: ['sales.dashboard.view']
+  },
 
-  'operations': { name: 'Operations', nameAr: 'العمليات',
-                  // Order *flow* without customer identity: fulfilment does not
-                  // require a name and address, so the API withholds them and
-                  // says it is doing so rather than blanking the field.
-                  perms: ['sales.dashboard.view', 'sales.order.view', 'sales.sync.manage',
-                          'meeting-rooms.room.manage', 'meeting-rooms.reservation.manage-any'] },
+  'operations': {
+    name: 'Operations', nameAr: 'العمليات',
+    // Order *flow* without customer identity: fulfilment does not
+    // require a name and address, so the API withholds them and
+    // says it is doing so rather than blanking the field.
+    perms: ['sales.dashboard.view', 'sales.order.view', 'sales.sync.manage',
+      'meeting-rooms.room.manage', 'meeting-rooms.reservation.manage-any']
+  },
 
-  'customer-care': { name: 'Customer Care', nameAr: 'خدمة العملاء',
-                     // Orders and customer identity, because answering the
-                     // phone means knowing who is on it -- and *no* dashboard
-                     // permission at all. Company-wide figures are not needed
-                     // to resolve a complaint, and this account is the one that
-                     // makes the permission gate visibly true: the sales
-                     // portlets do not appear on her home screen at all.
-                     perms: ['sales.order.view', 'sales.customer.view'] },
+  'customer-care': {
+    name: 'Customer Care', nameAr: 'خدمة العملاء',
+    // Orders and customer identity, because answering the
+    // phone means knowing who is on it -- and *no* dashboard
+    // permission at all. Company-wide figures are not needed
+    // to resolve a complaint, and this account is the one that
+    // makes the permission gate visibly true: the sales
+    // portlets do not appear on her home screen at all.
+    perms: ['sales.order.view', 'sales.customer.view']
+  },
 
-  'admin': { name: 'System Administrator', nameAr: 'مدير النظام',
-             perms: PERMISSIONS.map((p) => p[0]) },
+  'admin': {
+    name: 'System Administrator', nameAr: 'مدير النظام',
+    perms: PERMISSIONS.map((p) => p[0])
+  },
 };
 
 const USERS: [string, string, string, string, string, string][] = [
   // email, name, name_ar, job title, department, role
-  ['Admin@worood.co',           'Khalid Hesham', 'خالد هشام',  'IT & Systems Administrator', 'Technology',    'admin'],
-  ['Kandil@worood.co',          'Mohamed Kandil', 'محمد قنديل', 'Chief Executive Officer',    'Executive',     'executive'],
-  ['heba.fayed@worood.co',      'Heba Fayed',    'هبة فايد',    'Operations Manager',         'Operations',    'operations'],
-  ['omnia.osama@worood.co',     'Omnia Osama',   'أمنية أسامة', 'Customer Care',              'Customer Care', 'customer-care'],
-  ['nadia@worood.co',           'Nadia',         'نادية',       'Marketing Director',         'Marketing',     'marketing'],
-  ['Yousry@worood.co',          'Mohamed Yousry', 'محمد يسري',  'Financial Manager',          'Finance',       'finance'],
+  ['Admin@worood.co', 'Khalid Hesham', 'خالد هشام', 'IT & Systems Administrator', 'Technology', 'admin'],
+  ['Kandil@worood.co', 'Mohamed Kandil', 'محمد قنديل', 'Chief Executive Officer', 'Executive', 'executive'],
+  ['heba.fayed@worood.co', 'Heba Fayed', 'هبة فايد', 'Operations Manager', 'Operations', 'operations'],
+  ['omnia.osama@worood.co', 'Omnia Osama', 'أمنية أسامة', 'Customer Care', 'Customer Care', 'customer-care'],
+  ['nadia@worood.co', 'Nadia', 'نادية', 'Marketing Director', 'Marketing', 'marketing'],
+  ['Yousry@worood.co', 'Mohamed Yousry', 'محمد يسري', 'Financial Manager', 'Finance', 'finance'],
 ];
 
 /* --------------------------------------------------------------- widgets -- */
@@ -106,77 +116,129 @@ const WIDGETS: Array<{
   key: string; name: string; nameAr: string; kind: string; dataSource: string;
   width: number; description: string; permission?: string;
 }> = [
-  { key: 'kpi-total-sales', name: 'Total sales', nameAr: 'إجمالي المبيعات', kind: 'kpi', dataSource: 'sales.snapshot', width: 3,
-    description: 'Net sales plus shipping, taxes and duties, exactly as Shopify defines it.' },
-  { key: 'kpi-orders', name: 'Orders', nameAr: 'الطلبات', kind: 'kpi', dataSource: 'sales.snapshot', width: 3,
-    description: 'Order count, each order counted once regardless of item count.' },
-  { key: 'kpi-aov', name: 'Average order value', nameAr: 'متوسط قيمة الطلب', kind: 'kpi', dataSource: 'sales.snapshot', width: 3,
-    description: 'Gross sales less discounts, divided by orders — Shopify’s own formula.' },
-  { key: 'kpi-gross-sales', name: 'Gross sales', nameAr: 'المبيعات الإجمالية', kind: 'kpi', dataSource: 'sales.snapshot', width: 3,
-    description: 'Top-line revenue before discounts and returns.' },
-  { key: 'kpi-discounts', name: 'Discounts', nameAr: 'الخصومات', kind: 'kpi', dataSource: 'sales.snapshot', width: 3,
-    description: 'Amount taken off sales revenue through discounts.' },
-  { key: 'kpi-returns', name: 'Returns and reversals', nameAr: 'المرتجعات', kind: 'kpi', dataSource: 'sales.snapshot', width: 3,
-    description: 'Value removed through refunds, returns, cancellations and edits. Derived, because this store’s ShopifyQL schema does not expose the column.' },
-  { key: 'kpi-net-sales', name: 'Net sales', nameAr: 'صافي المبيعات', kind: 'kpi', dataSource: 'sales.snapshot', width: 3,
-    description: 'Gross sales less discounts and reversals, before shipping and tax.' },
-  { key: 'kpi-sessions', name: 'Sessions', nameAr: 'الجلسات', kind: 'kpi', dataSource: 'sessions.snapshot', width: 3,
-    description: 'Online store sessions, bot traffic excluded.' },
-  { key: 'kpi-conversion', name: 'Conversion rate', nameAr: 'معدل التحويل', kind: 'kpi', dataSource: 'sessions.snapshot', width: 3,
-    description: 'Share of sessions that completed checkout.' },
-  { key: 'kpi-collected', name: 'Collected', nameAr: 'المحصّل', kind: 'kpi', dataSource: 'orders.mirror', width: 3,
-    description: 'Money actually received. On a cash-on-delivery store this sits well below sales.' },
-  { key: 'kpi-outstanding', name: 'Outstanding with couriers', nameAr: 'مستحق لدى المندوبين', kind: 'kpi', dataSource: 'orders.mirror', width: 3,
-    description: 'Ordered but not yet collected — the cash-on-delivery float.' },
-  { key: 'chart-sales-trend', name: 'Sales trend', nameAr: 'اتجاه المبيعات', kind: 'line', dataSource: 'sales.snapshot', width: 8,
-    description: 'Total and net sales over the selected range.' },
-  { key: 'chart-orders-trend', name: 'Orders per day', nameAr: 'الطلبات يومياً', kind: 'bar', dataSource: 'sales.snapshot', width: 4,
-    description: 'Order volume per bucket.' },
-  { key: 'chart-sessions-trend', name: 'Sessions and conversion', nameAr: 'الجلسات والتحويل', kind: 'line', dataSource: 'sessions.snapshot', width: 8,
-    description: 'Traffic against conversion rate on one timeline.' },
-  { key: 'donut-traffic-sources', name: 'Traffic sources', nameAr: 'مصادر الزيارات', kind: 'donut', dataSource: 'traffic.snapshot', width: 4,
-    description: 'Where sessions came from over the last 30 days.' },
-  { key: 'donut-devices', name: 'Sessions by device', nameAr: 'الجلسات حسب الجهاز', kind: 'donut', dataSource: 'sessions.snapshot', width: 4,
-    description: 'Desktop, mobile and tablet split.' },
-  { key: 'table-top-products', name: 'Top products', nameAr: 'أفضل المنتجات', kind: 'table', dataSource: 'sales.snapshot', width: 6,
-    description: 'Best sellers by total sales over 90 days.' },
-  { key: 'table-top-countries', name: 'Sessions by country', nameAr: 'الجلسات حسب الدولة', kind: 'table', dataSource: 'sessions.snapshot', width: 6,
-    description: 'Where visitors are, and how well each converts.' },
-  { key: 'table-recent-orders', name: 'Recent orders', nameAr: 'أحدث الطلبات', kind: 'table', dataSource: 'orders.mirror', width: 12,
-    description: 'The latest orders from the mirror. Customer columns require sales.customer.view.',
-    permission: 'sales.order.view' },
-  { key: 'funnel-conversion', name: 'Conversion funnel', nameAr: 'مسار التحويل', kind: 'funnel', dataSource: 'sessions.snapshot', width: 4,
-    description: 'Sessions through cart, checkout and purchase.' },
-];
+    {
+      key: 'kpi-total-sales', name: 'Total sales', nameAr: 'إجمالي المبيعات', kind: 'kpi', dataSource: 'sales.snapshot', width: 3,
+      description: 'Net sales plus shipping, taxes and duties, exactly as Shopify defines it.'
+    },
+    {
+      key: 'kpi-orders', name: 'Orders', nameAr: 'الطلبات', kind: 'kpi', dataSource: 'sales.snapshot', width: 3,
+      description: 'Order count, each order counted once regardless of item count.'
+    },
+    {
+      key: 'kpi-aov', name: 'Average order value', nameAr: 'متوسط قيمة الطلب', kind: 'kpi', dataSource: 'sales.snapshot', width: 3,
+      description: 'Gross sales less discounts, divided by orders — Shopify’s own formula.'
+    },
+    {
+      key: 'kpi-gross-sales', name: 'Gross sales', nameAr: 'المبيعات الإجمالية', kind: 'kpi', dataSource: 'sales.snapshot', width: 3,
+      description: 'Top-line revenue before discounts and returns.'
+    },
+    {
+      key: 'kpi-discounts', name: 'Discounts', nameAr: 'الخصومات', kind: 'kpi', dataSource: 'sales.snapshot', width: 3,
+      description: 'Amount taken off sales revenue through discounts.'
+    },
+    {
+      key: 'kpi-returns', name: 'Returns and reversals', nameAr: 'المرتجعات', kind: 'kpi', dataSource: 'sales.snapshot', width: 3,
+      description: 'Value removed through refunds, returns, cancellations and edits. Derived, because this store’s ShopifyQL schema does not expose the column.'
+    },
+    {
+      key: 'kpi-net-sales', name: 'Net sales', nameAr: 'صافي المبيعات', kind: 'kpi', dataSource: 'sales.snapshot', width: 3,
+      description: 'Gross sales less discounts and reversals, before shipping and tax.'
+    },
+    {
+      key: 'kpi-sessions', name: 'Sessions', nameAr: 'الجلسات', kind: 'kpi', dataSource: 'sessions.snapshot', width: 3,
+      description: 'Online store sessions, bot traffic excluded.'
+    },
+    {
+      key: 'kpi-conversion', name: 'Conversion rate', nameAr: 'معدل التحويل', kind: 'kpi', dataSource: 'sessions.snapshot', width: 3,
+      description: 'Share of sessions that completed checkout.'
+    },
+    {
+      key: 'kpi-collected', name: 'Collected', nameAr: 'المحصّل', kind: 'kpi', dataSource: 'orders.mirror', width: 3,
+      description: 'Money actually received. On a cash-on-delivery store this sits well below sales.'
+    },
+    {
+      key: 'kpi-outstanding', name: 'Outstanding with couriers', nameAr: 'مستحق لدى المندوبين', kind: 'kpi', dataSource: 'orders.mirror', width: 3,
+      description: 'Ordered but not yet collected — the cash-on-delivery float.'
+    },
+    {
+      key: 'chart-sales-trend', name: 'Sales trend', nameAr: 'اتجاه المبيعات', kind: 'line', dataSource: 'sales.snapshot', width: 8,
+      description: 'Total and net sales over the selected range.'
+    },
+    {
+      key: 'chart-orders-trend', name: 'Orders per day', nameAr: 'الطلبات يومياً', kind: 'bar', dataSource: 'sales.snapshot', width: 4,
+      description: 'Order volume per bucket.'
+    },
+    {
+      key: 'chart-sessions-trend', name: 'Sessions and conversion', nameAr: 'الجلسات والتحويل', kind: 'line', dataSource: 'sessions.snapshot', width: 8,
+      description: 'Traffic against conversion rate on one timeline.'
+    },
+    {
+      key: 'donut-traffic-sources', name: 'Traffic sources', nameAr: 'مصادر الزيارات', kind: 'donut', dataSource: 'traffic.snapshot', width: 4,
+      description: 'Where sessions came from over the last 30 days.'
+    },
+    {
+      key: 'donut-devices', name: 'Sessions by device', nameAr: 'الجلسات حسب الجهاز', kind: 'donut', dataSource: 'sessions.snapshot', width: 4,
+      description: 'Desktop, mobile and tablet split.'
+    },
+    {
+      key: 'table-top-products', name: 'Top products', nameAr: 'أفضل المنتجات', kind: 'table', dataSource: 'sales.snapshot', width: 6,
+      description: 'Best sellers by total sales over 90 days.'
+    },
+    {
+      key: 'table-top-countries', name: 'Sessions by country', nameAr: 'الجلسات حسب الدولة', kind: 'table', dataSource: 'sessions.snapshot', width: 6,
+      description: 'Where visitors are, and how well each converts.'
+    },
+    {
+      key: 'table-recent-orders', name: 'Recent orders', nameAr: 'أحدث الطلبات', kind: 'table', dataSource: 'orders.mirror', width: 12,
+      description: 'The latest orders from the mirror. Customer columns require sales.customer.view.',
+      permission: 'sales.order.view'
+    },
+    {
+      key: 'funnel-conversion', name: 'Conversion funnel', nameAr: 'مسار التحويل', kind: 'funnel', dataSource: 'sessions.snapshot', width: 4,
+      description: 'Sessions through cart, checkout and purchase.'
+    },
+  ];
 
-const DASHBOARDS: Array<{ key: string; name: string; nameAr: string; description: string;
-                          system: boolean; widgets: [string, number][] }> = [
-  { key: 'executive-daily', name: 'Executive Daily', nameAr: 'اللوحة التنفيذية اليومية', system: true,
-    description: 'The headline view: what sold, how much, and where it came from.',
-    widgets: [['kpi-total-sales', 3], ['kpi-orders', 3], ['kpi-aov', 3], ['kpi-conversion', 3],
-              ['chart-sales-trend', 8], ['donut-traffic-sources', 4], ['table-top-products', 12]] },
-  { key: 'sales-operations', name: 'Sales Operations', nameAr: 'عمليات المبيعات', system: true,
-    description: 'Order flow and cash collection for a cash-on-delivery business.',
-    widgets: [['kpi-orders', 4], ['kpi-collected', 4], ['kpi-outstanding', 4],
-              ['chart-orders-trend', 12], ['table-recent-orders', 12]] },
-  { key: 'marketing-traffic', name: 'Marketing and Traffic', nameAr: 'التسويق والزيارات', system: true,
-    description: 'Where visitors come from and how far they get.',
-    widgets: [['kpi-sessions', 6], ['kpi-conversion', 6], ['chart-sessions-trend', 8],
-              ['funnel-conversion', 4], ['donut-traffic-sources', 4], ['donut-devices', 4],
-              ['table-top-countries', 4]] },
-  { key: 'finance-reconciliation', name: 'Finance Reconciliation', nameAr: 'تسوية الحسابات', system: true,
-    description: 'The sales build-up in Shopify’s own vocabulary, for reconciling against the admin.',
-    widgets: [['kpi-gross-sales', 3], ['kpi-discounts', 3], ['kpi-returns', 3], ['kpi-net-sales', 3],
-              ['kpi-total-sales', 3],
-              ['chart-sales-trend', 12], ['table-recent-orders', 12]] },
-  // Required no special-casing. A "combined" dashboard is just another row
-  // reusing widgets from two areas -- which is the whole point of the model.
-  { key: 'combined-sales-marketing', name: 'Combined Sales and Marketing', nameAr: 'المبيعات والتسويق معاً', system: false,
-    description: 'A hybrid view built by picking existing widgets from two areas — no new code.',
-    widgets: [['kpi-total-sales', 4], ['kpi-sessions', 4], ['kpi-conversion', 4],
-              ['chart-sales-trend', 8], ['chart-sessions-trend', 4],
-              ['donut-traffic-sources', 4], ['table-top-products', 8]] },
-];
+const DASHBOARDS: Array<{
+  key: string; name: string; nameAr: string; description: string;
+  system: boolean; widgets: [string, number][]
+}> = [
+    {
+      key: 'executive-daily', name: 'Executive Daily', nameAr: 'اللوحة التنفيذية اليومية', system: true,
+      description: 'The headline view: what sold, how much, and where it came from.',
+      widgets: [['kpi-total-sales', 3], ['kpi-orders', 3], ['kpi-aov', 3], ['kpi-conversion', 3],
+      ['chart-sales-trend', 8], ['donut-traffic-sources', 4], ['table-top-products', 12]]
+    },
+    {
+      key: 'sales-operations', name: 'Sales Operations', nameAr: 'عمليات المبيعات', system: true,
+      description: 'Order flow and cash collection for a cash-on-delivery business.',
+      widgets: [['kpi-orders', 4], ['kpi-collected', 4], ['kpi-outstanding', 4],
+      ['chart-orders-trend', 12], ['table-recent-orders', 12]]
+    },
+    {
+      key: 'marketing-traffic', name: 'Marketing and Traffic', nameAr: 'التسويق والزيارات', system: true,
+      description: 'Where visitors come from and how far they get.',
+      widgets: [['kpi-sessions', 6], ['kpi-conversion', 6], ['chart-sessions-trend', 8],
+      ['funnel-conversion', 4], ['donut-traffic-sources', 4], ['donut-devices', 4],
+      ['table-top-countries', 4]]
+    },
+    {
+      key: 'finance-reconciliation', name: 'Finance Reconciliation', nameAr: 'تسوية الحسابات', system: true,
+      description: 'The sales build-up in Shopify’s own vocabulary, for reconciling against the admin.',
+      widgets: [['kpi-gross-sales', 3], ['kpi-discounts', 3], ['kpi-returns', 3], ['kpi-net-sales', 3],
+      ['kpi-total-sales', 3],
+      ['chart-sales-trend', 12], ['table-recent-orders', 12]]
+    },
+    // Required no special-casing. A "combined" dashboard is just another row
+    // reusing widgets from two areas -- which is the whole point of the model.
+    {
+      key: 'combined-sales-marketing', name: 'Combined Sales and Marketing', nameAr: 'المبيعات والتسويق معاً', system: false,
+      description: 'A hybrid view built by picking existing widgets from two areas — no new code.',
+      widgets: [['kpi-total-sales', 4], ['kpi-sessions', 4], ['kpi-conversion', 4],
+      ['chart-sales-trend', 8], ['chart-sessions-trend', 4],
+      ['donut-traffic-sources', 4], ['table-top-products', 8]]
+    },
+  ];
 
 /* ------------------------------------------------------------------ main -- */
 
@@ -265,20 +327,20 @@ async function main() {
      every room behaves identically hides the whole point of the policy. */
   interface SeedRoom {
     code: string; name: string; nameAr: string; capacity: number; floor: string;
-    equipment: string[]; opensAt?: string; closesAt?: string; slot?: number;
-    min?: number; max?: number; buffer?: number; approval?: boolean; status?: string;
+    equipment: string[]; opensAt?: string; closesAt?: string;
+    buffer?: number; approval?: boolean; status?: string;
     description?: string;
   }
   /* `--reset` truncates mr_equipment, which migration 0004 populated. The
      catalogue is reference data, not demo data, so the seed restores it rather
      than leaving the fittings filter with nothing to offer. */
   const EQUIPMENT: [string, string, string, string][] = [
-    ['projector', 'Projector', 'جهاز عرض', 'video'],
-    ['video-conference', 'Video conference', 'اجتماع مرئي', 'users'],
+    ['display', 'Wall Display', 'شاشة عرض', 'monitor'],
+    ['internet', 'High-Speed Internet', 'إنترنت سريع', 'wifi'],
     ['whiteboard', 'Whiteboard', 'سبورة', 'edit'],
-    ['display', 'Wall display', 'شاشة', 'monitor'],
+    ['video-conference', 'Video Conferencing', 'مؤتمرات فيديو', 'users'],
+    ['projector', 'Projector', 'جهاز عرض', 'video'],
     ['speakerphone', 'Speakerphone', 'هاتف مؤتمرات', 'phone'],
-    ['accessible', 'Step-free access', 'وصول ميسر', 'accessible'],
   ];
   for (const [key, name, nameAr, icon] of EQUIPMENT) {
     await query(
@@ -288,46 +350,131 @@ async function main() {
   }
 
   const ROOMS: SeedRoom[] = [
-    { code: 'NILE', name: 'Nile Boardroom', nameAr: 'قاعة النيل', capacity: 14, floor: '3',
-      equipment: ['projector', 'video-conference', 'whiteboard'], buffer: 10,
-      description: 'The board table. Video conference unit is fixed, not portable.' },
-    { code: 'PAPYRUS', name: 'Papyrus', nameAr: 'بردي', capacity: 8, floor: '3',
-      equipment: ['display', 'whiteboard'] },
-    { code: 'LOTUS', name: 'Lotus', nameAr: 'لوتس', capacity: 6, floor: '2',
-      equipment: ['display'] },
-    { code: 'JASMINE', name: 'Jasmine', nameAr: 'ياسمين', capacity: 4, floor: '2',
-      equipment: ['whiteboard'], slot: 15, min: 15, max: 120,
-      description: 'Huddle room. Fifteen-minute bookings, two hours maximum.' },
-    { code: 'TRAINING', name: 'Training Hall', nameAr: 'قاعة التدريب', capacity: 30, floor: '1',
-      equipment: ['projector', 'speakerphone', 'accessible'], slot: 60, min: 60, max: 480, buffer: 30,
-      opensAt: '08:00', closesAt: '17:00',
-      description: 'Hour-long blocks only. Half an hour of changeover is reserved either side.' },
-    { code: 'STUDIO', name: 'Studio', nameAr: 'الاستوديو', capacity: 5, floor: '1',
-      equipment: ['display', 'speakerphone'], approval: true,
-      description: 'Photography studio. Bookings are held until Facilities approve them.' },
+    {
+      code: 'MEETING-ROOM',
+      name: 'Meeting Room',
+      nameAr: 'غرفة الاجتماعات',
+      capacity: 12,
+      floor: '2',
+      equipment: [
+        'display',
+        'internet',
+        'whiteboard',
+        'video-conference',
+        'projector',
+        'speakerphone',
+      ],
+      buffer: 15,
+      description:
+        'Main meeting room with a 12-seat table, display, video conferencing and presentation equipment.',
+    },
+
+    {
+      code: 'OMNIA-OFFICE',
+      name: 'Omnia Office',
+      nameAr: 'مكتب أمنية',
+      capacity: 4,
+      floor: '2',
+      equipment: [
+        'display',
+        'internet',
+        'whiteboard',
+      ],
+      description:
+        'Private office suitable for small meetings and one-to-one discussions.',
+    },
+
+    {
+      code: 'HEBA-OFFICE',
+      name: 'Heba Office',
+      nameAr: 'مكتب هبة',
+      capacity: 4,
+      floor: '2',
+      equipment: [
+        'display',
+        'internet',
+        'whiteboard',
+      ],
+      description:
+        'Private office suitable for small meetings and operational discussions.',
+    },
+
+    {
+      code: 'YOUSRY-OFFICE',
+      name: 'Yousry Office',
+      nameAr: 'مكتب يسري',
+      capacity: 4,
+      floor: '2',
+      equipment: [
+        'display',
+        'internet',
+        'whiteboard',
+      ],
+      description:
+        'Private office suitable for finance meetings and small team discussions.',
+    },
+
+    {
+      code: 'NADIA-OFFICE',
+      name: 'Nadia Office',
+      nameAr: 'مكتب نادية',
+      capacity: 4,
+      floor: '2',
+      equipment: [
+        'display',
+        'internet',
+        'whiteboard',
+      ],
+      description:
+        'Private office suitable for marketing meetings and one-to-one discussions.',
+    },
+
+    {
+      code: 'NOURA-OFFICE',
+      name: 'Noura Office',
+      nameAr: 'مكتب نورا',
+      capacity: 4,
+      floor: '2',
+      equipment: [
+        'display',
+        'internet',
+        'whiteboard',
+      ],
+      description:
+        'Private office suitable for small meetings and focused discussions.',
+    },
+
+    {
+      code: 'ALI-OFFICE',
+      name: 'Ali Office',
+      nameAr: 'مكتب علي',
+      capacity: 4,
+      floor: '2',
+      equipment: [
+        'display',
+        'internet',
+        'whiteboard',
+      ],
+      description:
+        'Private office suitable for small meetings and one-to-one discussions.',
+    },
   ];
 
-  const roomIds: string[] = [];
   for (const r of ROOMS) {
     const row = await one(
       `INSERT INTO mr_rooms (code, location_id, name, name_ar, capacity, floor, description,
-         status, opens_at, closes_at, slot_minutes, min_duration_minutes,
-         max_duration_minutes, buffer_minutes, requires_approval)
+         status, opens_at, closes_at, buffer_minutes, requires_approval)
        VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8,'ACTIVE'),COALESCE($9::time,'08:00'),
-               COALESCE($10::time,'18:00'),COALESCE($11,30),COALESCE($12,30),
-               COALESCE($13,480),COALESCE($14,0),COALESCE($15,false))
+               COALESCE($10::time,'18:00'),COALESCE($11,0),COALESCE($12,false))
        ON CONFLICT (code) DO UPDATE SET
          name = EXCLUDED.name, name_ar = EXCLUDED.name_ar, capacity = EXCLUDED.capacity,
          floor = EXCLUDED.floor, description = EXCLUDED.description,
          opens_at = EXCLUDED.opens_at, closes_at = EXCLUDED.closes_at,
-         slot_minutes = EXCLUDED.slot_minutes, min_duration_minutes = EXCLUDED.min_duration_minutes,
-         max_duration_minutes = EXCLUDED.max_duration_minutes,
          buffer_minutes = EXCLUDED.buffer_minutes, requires_approval = EXCLUDED.requires_approval
        RETURNING id`,
       [r.code, loc.id, r.name, r.nameAr, r.capacity, r.floor, r.description ?? null,
-       r.status ?? null, r.opensAt ?? null, r.closesAt ?? null, r.slot ?? null,
-       r.min ?? null, r.max ?? null, r.buffer ?? null, r.approval ?? null]);
-    roomIds.push(row.id);
+      r.status ?? null, r.opensAt ?? null, r.closesAt ?? null,
+      r.buffer ?? null, r.approval ?? null]);
 
     // Equipment is a join now, not an array on the row: replace the set rather
     // than accumulating duplicates across re-runs.
@@ -338,87 +485,8 @@ async function main() {
        ON CONFLICT DO NOTHING`, [row.id, r.equipment]);
   }
 
-  // One blackout, so availability has something to refuse that is not a
-  // booking -- the two are different states and the UI says so differently.
-  await query(`DELETE FROM mr_room_blackouts`);
-  {
-    // 09:00-13:00 Cairo, two days out. Computed here rather than with
-    // date_trunc(now()) because the server's clock may be UTC, and a blackout
-    // that lands four hours off the maintenance window is worse than none.
-    const day = DateTime.now().setZone(TZ).plus({ days: 2 }).startOf('day');
-    await query(
-      `INSERT INTO mr_room_blackouts (room_id, starts_at, ends_at, reason)
-       VALUES ($1,$2,$3,'Projector replacement')`,
-      [roomIds[4], day.set({ hour: 9 }).toJSDate(), day.set({ hour: 13 }).toJSDate()]);
-  }
-
-  // Reservations relative to now, so the home dashboard always has a "next
-  // meeting" and some rooms genuinely free right now.
-  await query(`DELETE FROM mr_reservations`);
-  const now = DateTime.now().setZone(TZ);
-  const meetings: Array<[string, string, number, number, number, number]> = [
-    // organiser email, title, dayOffset, startHour, durationMins, roomIndex
-    ['nadia@worood.co',       'Autumn campaign review',      0, now.hour + 2, 60, 1] as any,
-    ['nadia@worood.co',       'Agency catch-up',             1, 11, 45, 2] as any,
-    ['Yousry@worood.co',      'Monthly close walkthrough',   0, now.hour + 1, 30, 0] as any,
-    ['Yousry@worood.co',      'Courier settlement review',   2, 13, 60, 0] as any,
-    ['Kandil@worood.co',      'Board pre-read',              1, 9,  90, 0] as any,
-    ['omnia.osama@worood.co', 'Complaints debrief',          0, now.hour + 3, 45, 3] as any,
-    ['Admin@worood.co',       'Portal cut-over plan',        3, 10, 60, 2] as any,
-    ['heba.fayed@worood.co',  'Quarterly safety briefing',   4, 14, 120, 4] as any,
-  ];
-  let reservations = 0;
-  for (let i = 0; i < meetings.length; i++) {
-    const [email, title, dayOffset, hour, mins, roomIx] = meetings[i];
-    const start = now.plus({ days: dayOffset }).set({ hour: Math.min(hour, 17), minute: 0, second: 0, millisecond: 0 });
-    const end = start.plus({ minutes: mins });
-    try {
-      await query(
-        `INSERT INTO mr_reservations (reference, room_id, organizer_id, title, starts_at, ends_at, attendees)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-        [`MR-${String(1001 + i)}`, roomIds[roomIx], userIds[email], title,
-         start.toJSDate(), end.toJSDate(), 2 + (i % 6)]);
-      reservations++;
-    } catch (e: any) {
-      // 23P01 is the exclusion constraint doing its job. Skip and move on --
-      // the guarantee is the database's, not the seeder's.
-      if (e.code !== '23P01') throw e;
-    }
-  }
-
-  /* Guests on the seeded meetings, so the invitations portlet and the reply
-     buttons have something real to show on a fresh install -- and so at least
-     one person logs in to find a meeting they did not book. */
-  await query(`DELETE FROM mr_reservation_attendees`);
-  const GUESTS: Array<[string, string[], string]> = [
-    // organiser email, guest emails, their response
-    ['Yousry@worood.co',      ['Kandil@worood.co', 'nadia@worood.co'],       'INVITED'],
-    ['Kandil@worood.co',      ['Yousry@worood.co', 'heba.fayed@worood.co'],  'ACCEPTED'],
-    ['heba.fayed@worood.co',  ['omnia.osama@worood.co'],                     'DECLINED'],
-    ['nadia@worood.co',       ['omnia.osama@worood.co', 'Kandil@worood.co'], 'INVITED'],
-  ];
-  let invitations = 0;
-  for (const [organiser, guests, response] of GUESTS) {
-    const meeting = await one(
-      `SELECT id FROM mr_reservations
-        WHERE organizer_id = $1 AND status = 'CONFIRMED' AND starts_at > now()
-        ORDER BY starts_at ASC LIMIT 1`, [userIds[organiser]]);
-    if (!meeting) continue;
-    for (const guest of guests) {
-      if (!userIds[guest]) continue;
-      await query(
-        `INSERT INTO mr_reservation_attendees (reservation_id, user_id, response, responded_at)
-         VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`,
-        [meeting.id, userIds[guest], response,
-         response === 'INVITED' ? null : new Date()]);
-      invitations++;
-    }
-    // The headcount should agree with the guest list plus the organiser.
-    await query(
-      `UPDATE mr_reservations SET attendees = GREATEST(attendees, $2) WHERE id = $1`,
-      [meeting.id, guests.length + 1]);
-  }
-  console.log(`    invitations   ${invitations}`);
+ 
+ 
 
   /* shop */
   const shopFix = readFix('shop.json') ?? {};
@@ -432,11 +500,11 @@ async function main() {
        plan_name = EXCLUDED.plan_name, cost_restore_rate = EXCLUDED.cost_restore_rate
      RETURNING id`,
     [shopFix.myshopifyDomain ?? config.shopify.shopDomain, shopFix.name ?? 'WOROOD',
-     shopFix.domain ?? null, shopFix.ianaTimezone ?? TZ, shopFix.currencyCode ?? 'EGP',
-     shopFix.currencyFormats?.moneyFormat ?? 'EGP {{amount_no_decimals}}',
-     shopFix.planName ?? 'Advanced', config.shopify.apiVersion,
-     // Advanced plan restores 200 points per second.
-     config.shopify.costRestoreRate]);
+    shopFix.domain ?? null, shopFix.ianaTimezone ?? TZ, shopFix.currencyCode ?? 'EGP',
+    shopFix.currencyFormats?.moneyFormat ?? 'EGP {{amount_no_decimals}}',
+    shopFix.planName ?? 'Advanced', config.shopify.apiVersion,
+    // Advanced plan restores 200 points per second.
+    config.shopify.costRestoreRate]);
 
   /* widgets */
   for (const w of WIDGETS) {
@@ -449,7 +517,7 @@ async function main() {
          kind = EXCLUDED.kind, required_permission = EXCLUDED.required_permission,
          default_width = EXCLUDED.default_width`,
       [w.key, w.name, w.nameAr, w.description, w.dataSource, w.kind,
-       w.permission ?? null, w.width]);
+      w.permission ?? null, w.width]);
   }
 
   /* dashboards */
@@ -574,10 +642,10 @@ async function loadOrders(shopId: string): Promise<number> {
            last_order_at = GREATEST(sd_customers.last_order_at, EXCLUDED.last_order_at)
          RETURNING id`,
         [shopId, o.customer.id, o.customer.numberOfOrders ?? 0, o.customer.displayName ?? null,
-         o.customer.email ?? null, o.customer.phone ?? null,
-         o.shippingAddress?.city ?? null, o.shippingAddress?.province ?? null,
-         o.shippingAddress?.country ?? null, o.shippingAddress?.zip ?? null,
-         o.customer.createdAt ?? null, new Date(o.createdAt)]);
+          o.customer.email ?? null, o.customer.phone ?? null,
+          o.shippingAddress?.city ?? null, o.shippingAddress?.province ?? null,
+          o.shippingAddress?.country ?? null, o.shippingAddress?.zip ?? null,
+          o.customer.createdAt ?? null, new Date(o.createdAt)]);
       customerId = c.id;
     }
 
@@ -593,17 +661,17 @@ async function loadOrders(shopId: string): Promise<number> {
                $22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
        ON CONFLICT (shopify_gid) DO NOTHING RETURNING id`,
       [shopId, o.id, o.name, parseInt(String(o.name).replace(/\D/g, ''), 10) || null, customerId,
-       new Date(o.createdAt), o.processedAt ?? null, o.cancelledAt ?? null, o.cancelReason ?? null,
-       new Date(o.updatedAt ?? o.createdAt), !!o.test,
-       o.displayFinancialStatus ?? null, o.displayFulfillmentStatus ?? null,
-       o.sourceName ?? null, o.tags ?? [],
-       o.currencyCode ?? 'EGP', o.presentmentCurrencyCode ?? null,
-       money(o.totalPriceSet), money(o.currentTotalPriceSet), money(o.subtotalPriceSet),
-       money(o.currentSubtotalPriceSet), money(o.totalDiscountsSet), money(o.totalTaxSet),
-       money(o.totalShippingPriceSet), money(o.totalRefundedSet), money(o.netPaymentSet),
-       money(o.totalOutstandingSet), num(o.totalPriceSet?.presentmentMoney?.amount),
-       o.shippingAddress?.city ?? null, o.shippingAddress?.province ?? null,
-       o.shippingAddress?.country ?? null]);
+        new Date(o.createdAt), o.processedAt ?? null, o.cancelledAt ?? null, o.cancelReason ?? null,
+        new Date(o.updatedAt ?? o.createdAt), !!o.test,
+        o.displayFinancialStatus ?? null, o.displayFulfillmentStatus ?? null,
+        o.sourceName ?? null, o.tags ?? [],
+        o.currencyCode ?? 'EGP', o.presentmentCurrencyCode ?? null,
+        money(o.totalPriceSet), money(o.currentTotalPriceSet), money(o.subtotalPriceSet),
+        money(o.currentSubtotalPriceSet), money(o.totalDiscountsSet), money(o.totalTaxSet),
+        money(o.totalShippingPriceSet), money(o.totalRefundedSet), money(o.netPaymentSet),
+        money(o.totalOutstandingSet), num(o.totalPriceSet?.presentmentMoney?.amount),
+        o.shippingAddress?.city ?? null, o.shippingAddress?.province ?? null,
+        o.shippingAddress?.country ?? null]);
     if (!row) continue;
 
     for (const li of o.lineItems?.nodes ?? []) {
@@ -612,8 +680,8 @@ async function loadOrders(shopId: string): Promise<number> {
             title, variant_title, sku, quantity, current_quantity, original_total, discounted_total)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT (shopify_gid) DO NOTHING`,
         [row.id, li.id, li.product?.id ?? null, li.variant?.id ?? null, li.title,
-         li.variant?.title ?? null, li.sku ?? null, li.quantity ?? 0,
-         li.currentQuantity ?? li.quantity ?? 0, money(li.originalTotalSet), money(li.discountedTotalSet)]);
+        li.variant?.title ?? null, li.sku ?? null, li.quantity ?? 0,
+        li.currentQuantity ?? li.quantity ?? 0, money(li.originalTotalSet), money(li.discountedTotalSet)]);
     }
     for (const rf of o.refunds ?? []) {
       await query(
@@ -629,8 +697,8 @@ async function loadOrders(shopId: string): Promise<number> {
 async function loadSnapshots(shopId: string): Promise<number> {
   let n = 0;
   const upsert = async (schema: string, grain: string, bucket: Date,
-                        dims: Record<string, string>, metrics: Record<string, number>,
-                        isFinal: boolean) => {
+    dims: Record<string, string>, metrics: Record<string, number>,
+    isFinal: boolean) => {
     await query(
       `INSERT INTO sd_metric_snapshots (shop_id, schema_name, grain, bucket_start,
           bucket_timezone, dimensions, metrics, is_final)

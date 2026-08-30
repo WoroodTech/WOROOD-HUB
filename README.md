@@ -288,3 +288,62 @@ because the properties that matter cannot be proven with mocks:
   discounts less reversals equalling net
 - Module 1's double-booking guarantee: eight simultaneous inserts, exactly one survives,
   seven refused by the exclusion constraint, and a back-to-back booking accepted
+
+
+
+
+# Free-time booking — where each file goes
+
+Every file here replaces one in the repo, except the migration, which is new.
+Copy them in at these paths, from the repository root.
+
+| File in this folder | Goes to |
+|---|---|
+| `api/migrations/0007_meeting_rooms_free_time.sql` | `apps/api/src/db/migrations/` **(new file)** |
+| `api/meeting-rooms/slots.ts` | `apps/api/src/modules/meeting-rooms/` |
+| `api/meeting-rooms/availability.service.ts` | `apps/api/src/modules/meeting-rooms/` |
+| `api/meeting-rooms/dto.ts` | `apps/api/src/modules/meeting-rooms/` |
+| `api/meeting-rooms/rooms.service.ts` | `apps/api/src/modules/meeting-rooms/` |
+| `api/meeting-rooms/reservations.service.ts` | `apps/api/src/modules/meeting-rooms/` |
+| `api/db/seed.ts` | `apps/api/src/db/` |
+| `api/contract.ts` | `apps/api/src/` |
+| `api/test/slots.test.ts` | `apps/api/test/` |
+| `api/test/booking.test.ts` | `apps/api/test/` |
+| `web/pages/BookRoom.tsx` | `apps/web/src/pages/` |
+| `web/pages/ManageRooms.tsx` | `apps/web/src/pages/` |
+| `web/contract.ts` | `apps/web/src/` |
+| `web/styles.css` | `apps/web/src/` |
+| `web/contract-package-index.ts` | `packages/contract/index.ts` |
+
+`meeting-rooms.module.ts` and `permissions.ts` are unchanged — the routes and
+the permission keys are the same. `RoomCalendar.tsx` is unchanged too: it never
+read the slot grid, it only ever drew what blocks the room.
+
+## Running it
+
+```bash
+cd apps/api
+npm run migrate                  # applies 0007 and nothing else
+npm run seed -- --reset          # rooms no longer carry a grid
+npx tsx test/slots.test.ts       # 26 assertions, no database needed
+npm run build && node dist/main.js &
+npx tsx test/booking.test.ts
+```
+
+`0007` drops three columns. It is not reversible by re-running an earlier
+migration — take the usual `pg_dump` first if you are applying it anywhere that
+holds real bookings.
+
+## What changed, in one paragraph
+
+Rooms no longer carry `slot_minutes`, `min_duration_minutes` or
+`max_duration_minutes`. An employee picks any start time and any length between
+10 minutes and 8 hours, and `GET /meeting-rooms/availability` answers about
+that one window instead of listing the start times each room would have
+offered. The response now carries `requested` (the room they named),
+`alternatives` (other rooms free at exactly that time) and `unavailable` (rooms
+that matched the filters but cannot take it, each with its reason and its own
+next opening). `startTime` is now a required query parameter.
+
+Opening hours, the booking horizon, the changeover buffer, the approval flag
+and the GiST exclusion constraint are all untouched.

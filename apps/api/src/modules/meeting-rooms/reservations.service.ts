@@ -31,7 +31,7 @@ import type {
   RespondToInvitation, UpdateReservation,
 } from './dto';
 import { RoomsService, type RoomView } from './rooms.service';
-import { computeBlockedTimeline, type TaggedInterval } from './slots';
+import { BOOKING_LIMITS, computeBlockedTimeline, type TaggedInterval } from './slots';
 
 export interface ReservationView {
   id: string; reference: string; title: string; description: string | null;
@@ -579,12 +579,19 @@ export class ReservationsService {
         `${room.name} seats ${room.capacity}. You have ${attendeeCount} attending.`);
     }
 
+    /* Duration limits are the system's, not the room's. A room used to be able
+       to refuse a twenty-minute meeting because its owner had set a
+       thirty-minute floor, which is the constraint people worked around rather
+       than with. What is left is a floor that rules out a mis-typed one-minute
+       booking and a ceiling that stops a room being held all day. */
     const minutes = Math.round((end.getTime() - start.getTime()) / 60_000);
-    if (minutes < room.minDurationMinutes) {
-      throw new BadRequestException(`${room.name} takes bookings of at least ${room.minDurationMinutes} minutes.`);
+    if (minutes < BOOKING_LIMITS.MIN_MINUTES) {
+      throw new BadRequestException(
+        `A meeting must be at least ${BOOKING_LIMITS.MIN_MINUTES} minutes long.`);
     }
-    if (minutes > room.maxDurationMinutes) {
-      throw new BadRequestException(`${room.name} takes bookings of at most ${room.maxDurationMinutes} minutes.`);
+    if (minutes > BOOKING_LIMITS.MAX_MINUTES) {
+      throw new BadRequestException(
+        `A meeting cannot be longer than ${BOOKING_LIMITS.MAX_MINUTES / 60} hours.`);
     }
 
     const zone = room.location.timezone;
@@ -600,6 +607,14 @@ export class ReservationsService {
       throw new BadRequestException(`${room.name} can only be booked ${room.maxAdvanceDays} days ahead.`);
     }
 
+    /* Midnight is tested before opening hours, not after. A window running into
+       tomorrow also falls outside today's closing time, so with the old order
+       this check could never fire and the employee was told the room's hours
+       when the real problem was the date. The specific message goes first. */
+    if (!localEnd.hasSame(localStart, 'day')) {
+      throw new BadRequestException('A booking cannot run past midnight.');
+    }
+
     /* Opening hours are compared as wall-clock in the room's own zone -- the
        whole reason the location carries a timezone at all. */
     const opens = localStart.startOf('day').plus(minutesOf(room.opensAt));
@@ -607,9 +622,6 @@ export class ReservationsService {
     if (localStart < opens || localEnd > closes) {
       throw new BadRequestException(
         `${room.name} is open ${room.opensAt}–${room.closesAt}. Choose a time inside those hours.`);
-    }
-    if (!localEnd.hasSame(localStart, 'day')) {
-      throw new BadRequestException('A booking cannot run past midnight.');
     }
   }
 
