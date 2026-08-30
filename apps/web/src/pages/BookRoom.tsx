@@ -231,7 +231,7 @@ export function BookRoom() {
           </label>
 
           <label className="field">
-            <span className="field__label">Room <span className="field__opt">optional</span></span>
+            <span className="field__label">Room</span>
             <select className="select" value={roomId} onChange={(e) => setRoomId(e.target.value)}>
               <option value="">Any room</option>
               {roomsCatalogue.data?.rooms.map((r) => (
@@ -250,9 +250,8 @@ export function BookRoom() {
           </label>
 
           <label className="field">
-            <span className="field__label">Where</span>
+            <span className="field__label">Location</span>
             <select className="select" value={locationId} onChange={(e) => setLocationId(e.target.value)}>
-              <option value="">Anywhere</option>
               {locations.data?.locations.map((l) => (
                 <option key={l.id} value={l.id}>{l.name}{l.building ? ` — ${l.building}` : ''}</option>
               ))}
