@@ -364,7 +364,6 @@ async function main() {
         'projector',
         'speakerphone',
       ],
-      buffer: 15,
       description:
         'Main meeting room with a 12-seat table, display, video conferencing and presentation equipment.',
     },

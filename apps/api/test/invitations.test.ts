@@ -55,6 +55,14 @@ const userId = async (email: string): Promise<string> =>
 async function cleanup() {
   await query(`DELETE FROM mr_reservations WHERE title LIKE 'INVITE %'`);
   await query(`DELETE FROM core_notifications WHERE title LIKE '%invited you%' OR body LIKE '%INVITE %'`);
+  /* Rooms this suite created, swept by prefix so the list cannot fall out of
+     date. Runs before the suite as well as after it, so a crashed previous run
+     does not block this one on a duplicate room code. */
+  await query(`DELETE FROM mr_reservations WHERE room_id IN
+                 (SELECT id FROM mr_rooms WHERE code LIKE 'INV-%')`);
+  await query(`DELETE FROM mr_room_equipment WHERE room_id IN
+                 (SELECT id FROM mr_rooms WHERE code LIKE 'INV-%')`);
+  await query(`DELETE FROM mr_rooms WHERE code LIKE 'INV-%'`);
 }
 
 async function run() {
@@ -67,16 +75,38 @@ async function run() {
   const omniaId = await userId('omnia.osama@worood.co');
   const yousryId = await userId('Yousry@worood.co');
 
+  /* Both rooms below are created by this test and destroyed at the end of it.
+     Neither is a seeded room.
+
+     They used to be NILE and JASMINE, looked up by code, which made the suite
+     a hostage to the seed -- when Worood replaced the demonstration inventory
+     both lookups became `undefined`. What the assertions actually need is one
+     room with space to spare and one that is deliberately too small, so the
+     test makes exactly those. */
+  const heba = await login('heba.fayed@worood.co');   // room.manage
   const rooms = await call(yousry, '/meeting-rooms/rooms');
-  const nile = rooms.body.rooms.find((r: any) => r.code === 'NILE');       // seats 14
-  const jasmine = rooms.body.rooms.find((r: any) => r.code === 'JASMINE'); // seats 4
+  const locationId = rooms.body.rooms[0]?.location?.id;
+  if (!locationId) throw new Error('no rooms in the catalogue — run the seed first');
+
+  const makeRoom = async (body: Record<string, unknown>) => {
+    const res = await call(heba, '/meeting-rooms/admin/rooms', {
+      method: 'POST', body: JSON.stringify({ locationId, ...body }),
+    });
+    if (res.status !== 201 && res.status !== 200) {
+      throw new Error(`fixture room ${body.code} failed: ${res.status} ${JSON.stringify(res.body)}`);
+    }
+    return res.body;
+  };
+
+  const largeRoom = await makeRoom({ code: 'INV-LARGE', name: 'Invite Large Room', capacity: 14 });
+  const smallRoom = await makeRoom({ code: 'INV-SMALL', name: 'Invite Small Room', capacity: 4 });
 
   console.log('\ninvitations — booking with guests');
 
   const booked = await call(yousry, '/meeting-rooms/reservations', {
     method: 'POST',
     body: JSON.stringify({
-      roomId: nile.id, title: 'INVITE autumn range review',
+      roomId: largeRoom.id, title: 'INVITE autumn range review',
       description: 'Bring the sample board.',
       startsAt: dayAt(10), endsAt: dayAt(11),
       attendeeUserIds: [nadiaId, omniaId],
@@ -103,7 +133,7 @@ async function run() {
     JSON.stringify(nadiaInvites.body).slice(0, 200));
   const mine = nadiaInvites.body.invitations.find((i: any) => i.id === meetingId);
   check('...naming who invited them', mine?.organiserName === 'Mohamed Yousry', mine?.organiserName);
-  check('...and where it is', mine?.room === nile.name);
+  check('...and where it is', mine?.room === largeRoom.name);
 
   const nadiaNext = await call(nadia, '/meeting-rooms/portlets/next-meeting');
   check('"my next meeting" includes a meeting somebody else booked',
@@ -136,7 +166,8 @@ async function run() {
   check('the guest gets a notification', !!note, 'none found');
   check('...naming the organiser', /Mohamed Yousry/.test(note?.title ?? ''), note?.title);
   check('...with the time, room and reference in it',
-    /INVITE autumn range review/.test(note?.body ?? '') && /Nile/.test(note?.body ?? ''),
+    /INVITE autumn range review/.test(note?.body ?? '')
+    && note?.body?.includes(largeRoom.name) === true,
     note?.body);
 
   const organiserNote = await one(
@@ -219,7 +250,7 @@ async function run() {
   const tooMany = await call(yousry, '/meeting-rooms/reservations', {
     method: 'POST',
     body: JSON.stringify({
-      roomId: jasmine.id, title: 'INVITE too many for jasmine',
+      roomId: smallRoom.id, title: 'INVITE too many for the small room',
       startsAt: dayAt(14), endsAt: dayAt(15),
       attendeeUserIds: [nadiaId, omniaId, hebaId, await userId('Kandil@worood.co')],
     }),
@@ -264,6 +295,8 @@ async function run() {
   check('and it can no longer be replied to', replyAfter.status === 409, `got ${replyAfter.status}`);
 
   await cleanup();
+  await cleanup();
+
   console.log(`\n  ${pass} passed, ${fail} failed`);
   await closeDb();
   if (fail) { console.error('  failed:', failures.join(', ')); process.exit(1); }
