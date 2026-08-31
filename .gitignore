@@ -12,6 +12,8 @@ node_modules/
 # Real Shopify fixtures / business data
 fixtures/shopify/
 
+Shopify integration report.md
+
 # Build
 dist/
 build/

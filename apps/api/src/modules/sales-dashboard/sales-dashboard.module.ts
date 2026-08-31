@@ -9,6 +9,8 @@ import { DashboardsController } from './dashboards/dashboards.controller';
 import { PortletsController } from './portlets/portlets.controller';
 import { WebhooksController, WebhookProcessor } from './webhooks/webhooks';
 import { SyncController, SyncService } from './sync/sync.service';
+import { BackfillService } from './sync/backfill.service';
+import { SalesScheduler } from './sync/scheduler.service';
 import { SalesGateway } from './realtime/sales.gateway';
 
 /**
@@ -23,8 +25,8 @@ import { SalesGateway } from './realtime/sales.gateway';
   providers: [
     TokenManager, CostGovernor, ShopifyService,
     ShopContext, SnapshotService, MetricsService, AccessService,
-    WebhookProcessor, SyncService, SalesGateway,
+    WebhookProcessor, SyncService, BackfillService, SalesScheduler, SalesGateway,
   ],
-  exports: [ShopContext, SnapshotService, SyncService, MetricsService],
+  exports: [ShopContext, SnapshotService, SyncService, BackfillService, MetricsService],
 })
 export class SalesDashboardModule {}

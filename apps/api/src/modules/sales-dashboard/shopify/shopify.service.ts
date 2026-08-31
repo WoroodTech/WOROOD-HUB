@@ -17,12 +17,71 @@ import { config } from '../../../common/config';
 /* ------------------------------------------------------------- redis -- */
 
 let redisSingleton: Redis | null = null;
+let redisWarned = false;
+
+/**
+ * Redis is not optional in this module: the access token, the shared cost
+ * bucket and the webhook queue all live in it.
+ *
+ * It used to be created with `maxRetriesPerRequest: null`, which means retry
+ * forever. Paired with an error handler that only logged a warning, a Redis
+ * that was not running produced a server that started up looking healthy and
+ * then hung the first request that touched it -- no error, no timeout, no
+ * response. Diagnosing that from the outside is close to impossible: the
+ * symptom is a spinner.
+ *
+ * Now it fails in seconds and says what is wrong. A wrong answer quickly beats
+ * no answer forever, and an operator who reads "Redis is not reachable" fixes
+ * it in a minute.
+ */
 export function redis(): Redis {
   if (!redisSingleton) {
-    redisSingleton = new Redis(config.redisUrl, { maxRetriesPerRequest: null });
-    redisSingleton.on('error', (e) => Logger.warn(`redis: ${e.message}`, 'Shopify'));
+    redisSingleton = new Redis(config.redisUrl, {
+      maxRetriesPerRequest: 2,
+      connectTimeout: 3_000,
+
+      /* The offline queue stays on, and the timeout is what makes that safe.
+       *
+       * Turning the queue off was an overcorrection: it fixed the original
+       * hang, but it also meant a routine reconnect -- a Redis restart, a
+       * dropped socket, the fraction of a second between the two -- failed
+       * whatever request happened to be in flight with "Stream isn't
+       * writeable". Transient blips should be absorbed, not surfaced.
+       *
+       * With `commandTimeout` a queued command waits for a reconnection that is
+       * actually coming, and gives up after five seconds when one is not. Both
+       * failure modes are handled by the same number, and neither is a hang.
+       */
+      commandTimeout: 5_000,
+      retryStrategy: (times) => (times > 20 ? null : Math.min(times * 200, 2_000)),
+    });
+    redisSingleton.on('error', (e) => {
+      // Once, not once per retry: a dead Redis otherwise fills the log with
+      // the same line and buries whatever else went wrong.
+      if (!redisWarned) {
+        redisWarned = true;
+        Logger.error(
+          `Redis is not reachable at ${config.redisUrl} (${e.message}). ` +
+          `The sales module needs it for the Shopify token, the rate-limit ` +
+          `governor and the webhook queue.`, 'Shopify');
+      }
+    });
+    redisSingleton.on('ready', () => { redisWarned = false; });
   }
   return redisSingleton;
+}
+
+/** Wraps a Redis call so a connection failure reads as one, rather than as an
+ *  ioredis stack trace three layers from the cause. */
+export async function withRedis<T>(what: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e: any) {
+    if (/ECONNREFUSED|Stream isn't writeable|Connection is closed|Command timed out|enableOfflineQueue/i.test(e?.message ?? '')) {
+      throw new Error(`${what} needs Redis, which is not reachable at ${config.redisUrl}`);
+    }
+    throw e;
+  }
 }
 
 /* ------------------------------------------------------ token manager -- */
@@ -48,11 +107,12 @@ export class TokenManager {
     if (config.shopify.tokenStrategy === 'fixture') return 'fixture-token';
     if (config.shopify.tokenStrategy === 'offline') return config.shopify.offlineAccessToken;
 
-    const cached = await redis().get(this.cacheKey);
+    const cached = await withRedis('The Shopify token cache', () => redis().get(this.cacheKey));
     if (cached) return JSON.parse(cached).token;
 
     // Take a lock so a burst of workers causes one HTTP request, not twenty.
-    const got = await redis().set(this.lockKey, '1', 'PX', 10_000, 'NX');
+    const got = await withRedis('The Shopify token lock',
+      () => redis().set(this.lockKey, '1', 'PX', 10_000, 'NX'));
     if (!got) {
       for (let i = 0; i < 40; i++) {
         await new Promise((r) => setTimeout(r, 250));
@@ -147,10 +207,31 @@ export class CostGovernor {
   async acquire(estimatedCost = 10): Promise<void> {
     const rate = config.shopify.costRestoreRate;
     const provisionalCap = rate * 10;
-    const avail = parseFloat(await redis().eval(
-      CostGovernor.REFILL_AND_TAKE, 1, this.key,
-      String(Date.now()), String(rate), String(estimatedCost), String(provisionalCap),
-    ) as string);
+
+    let avail: number;
+    try {
+      avail = parseFloat(await redis().eval(
+        CostGovernor.REFILL_AND_TAKE, 1, this.key,
+        String(Date.now()), String(rate), String(estimatedCost), String(provisionalCap),
+      ) as string);
+    } catch (e: any) {
+      /* Redis is the shared bucket, and without it two processes could
+       * collectively exceed Shopify's restore rate. But refusing the call
+       * outright is the wrong trade: the governor exists to avoid a 429, and a
+       * 429 is a retry, while a hard failure here is a dashboard that does not
+       * load. Shopify's own limiter is still in front of us and the client
+       * already backs off on THROTTLED.
+       *
+       * So: warn, pause briefly to be a considerate client, and proceed. The
+       * token cache above is a different matter -- without it there is no call
+       * to make at all, so that one still fails.
+       */
+      this.log.warn(
+        `cost governor unavailable (${e?.message ?? e}) — proceeding without the ` +
+        `shared bucket; Shopify's own rate limiting still applies`);
+      await new Promise((r) => setTimeout(r, 250));
+      return;
+    }
 
     // A negative balance IS the queue: the deficit divided by the restore rate
     // is exactly how long this caller must wait before its points exist.
@@ -164,12 +245,16 @@ export class CostGovernor {
   async observe(extensions: any): Promise<void> {
     const t = extensions?.cost?.throttleStatus;
     if (!t) return;
-    await redis().hset(this.key, {
-      avail: String(t.currentlyAvailable),
-      cap: String(t.maximumAvailable),
-      ts: String(Date.now()),
-      measured: '1',
-    });
+    // Best effort: losing an observation costs accuracy in the bucket, not
+    // correctness of the call that just succeeded.
+    try {
+      await redis().hset(this.key, {
+        avail: String(t.currentlyAvailable),
+        cap: String(t.maximumAvailable),
+        ts: String(Date.now()),
+        measured: '1',
+      });
+    } catch { /* the bucket will re-derive itself on the next successful call */ }
   }
 
   async markThrottled() {
@@ -210,6 +295,10 @@ export interface ShopifySource {
   graphql<T = any>(q: string, variables?: Record<string, unknown>): Promise<T>;
   shopifyql(q: string): Promise<ShopifyQlResult>;
   orders(): Promise<any[]>;
+  /** Prove the connection end to end. Fixture mode answers from the captured
+   *  shop record, so a caller can tell the two apart by `kind` rather than by
+   *  the call failing. */
+  ping(): Promise<{ shop: string; plan: string; scopes: string[] }>;
 }
 
 const FIXTURES = config.shopify.fixtureDir;
@@ -232,6 +321,15 @@ export class FixtureShopifySource implements ShopifySource {
 
   async orders(): Promise<any[]> {
     return readFixture('orders_recent.json')?.orders ?? [];
+  }
+
+  async ping() {
+    const shop = readFixture('shop.json') ?? {};
+    return {
+      shop: `${shop.name ?? 'fixture'} (${shop.myshopifyDomain ?? shop.domain ?? 'captured'})`,
+      plan: shop.planName ?? 'fixture',
+      scopes: [],
+    };
   }
 
   /**
@@ -279,6 +377,11 @@ export class LiveShopifySource implements ShopifySource {
 
     for (let attempt = 0; attempt < 5; attempt++) {
       await this.governor.acquire(10);
+      /* An explicit timeout, because Node's fetch has none. Without it a
+         Shopify call that never answers holds the request open indefinitely --
+         the same class of failure as the Redis hang above, and just as opaque
+         from the outside. Thirty seconds is generous for the Admin API; the
+         bulk path does its waiting by polling, not by holding a socket. */
       const res = await fetch(url, {
         method: 'POST',
         headers: {
@@ -286,6 +389,7 @@ export class LiveShopifySource implements ShopifySource {
           'X-Shopify-Access-Token': await this.tokens.getToken(),
         },
         body: JSON.stringify({ query: q, variables }),
+        signal: AbortSignal.timeout(30_000),
       });
 
       if (res.status === 401 && !refreshedOnce) {
@@ -331,25 +435,67 @@ export class LiveShopifySource implements ShopifySource {
   }
 
   async shopifyql(q: string): Promise<ShopifyQlResult> {
+    /* The response shape changed. Through 2026-04 this was a union and the
+       table arrived behind `... on TableResponse`, with `rowData` and
+       structured parseErrors. In 2026-07 the fragment is gone -- the type does
+       not exist, so the whole query is rejected with `undefinedType` rather
+       than returning partial data -- the rows field is `rows`, and parseErrors
+       is a plain list of strings. */
     const data = await this.graphql<any>(
       `query($q: String!) {
          shopifyqlQuery(query: $q) {
-           __typename
-           ... on TableResponse {
-             tableData { columns { name dataType } rowData }
-             parseErrors { code message }
-           }
+           tableData { columns { name dataType displayName } rows }
+           parseErrors
          }
        }`, { q },
     );
     const r = data?.shopifyqlQuery;
+
     // ShopifyQL reports syntax problems as a populated parseErrors array inside
     // an HTTP 200, not as a GraphQL error. Check it explicitly or failures pass
     // unnoticed and the dashboard quietly shows nothing.
     if (r?.parseErrors?.length) {
-      throw new Error(`ShopifyQL parse error: ${r.parseErrors.map((e: any) => e.message).join('; ')}`);
+      // Strings now, objects before 2026-07. Handle both so a version bump in
+      // either direction does not turn a readable error into "[object Object]".
+      const messages = r.parseErrors.map((e: any) =>
+        typeof e === 'string' ? e : (e?.message ?? JSON.stringify(e)));
+      throw new Error(`ShopifyQL parse error: ${messages.join('; ')}`);
     }
-    return { columns: r?.tableData?.columns ?? [], rows: r?.tableData?.rowData ?? [] };
+
+    /* A null field is not an empty result, and conflating the two is how this
+       layer used to fail invisibly: `?? []` turned "Shopify refused" into
+       "there were no sales", the capture job wrote zero rows, the endpoint
+       answered 200, and the dashboard showed nothing with no error anywhere.
+       The usual cause is a missing read_reports scope or a token that is not
+       what it claims to be -- both worth saying out loud. */
+    if (r == null) {
+      throw new Error(
+        'ShopifyQL returned no response object. The usual causes are a missing ' +
+        'read_reports scope, or an access token that is not valid for this shop.');
+    }
+    if (!r.tableData) {
+      throw new Error('ShopifyQL returned a table response with no tableData');
+    }
+
+    return { columns: r.tableData.columns ?? [], rows: r.tableData.rows ?? [] };
+  }
+
+  /**
+   * A cheap round trip that proves the credentials, the domain and the scopes
+   * all line up, without writing anything. Exists because "200 and no rows" is
+   * indistinguishable from "everything works, the shop had a quiet day" until
+   * something asks Shopify who it thinks you are.
+   */
+  async ping(): Promise<{ shop: string; plan: string; scopes: string[] }> {
+    const data = await this.graphql<any>(
+      `{ shop { name myshopifyDomain plan { displayName } }
+         currentAppInstallation { accessScopes { handle } } }`);
+    if (!data?.shop) throw new Error('Shopify accepted the call but returned no shop');
+    return {
+      shop: `${data.shop.name} (${data.shop.myshopifyDomain})`,
+      plan: data.shop.plan?.displayName ?? 'unknown',
+      scopes: (data.currentAppInstallation?.accessScopes ?? []).map((s: any) => s.handle),
+    };
   }
 }
 

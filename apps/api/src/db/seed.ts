@@ -4,7 +4,14 @@
  *
  * Idempotent throughout -- safe to run repeatedly. `--reset` truncates first.
  *
- * Shopify data comes from fixtures captured read-only from the real Worood
+ * Shopify order and metric data is NOT seeded — it is pulled from the live
+ * store by the sync service. What is seeded is the shop row itself, plus the
+ * dashboards, widgets and access rules, which Shopify does not own.
+ *
+ * The shop row still reads its display fields from the captured fixture when
+ * one is present, because domain, timezone and currency are cheap to have
+ * right before the first sync runs. Historically all Shopify data came from
+ * fixtures captured read-only from the real Worood
  * store, so the aggregates on every dashboard are genuine figures.
  */
 import { readFileSync, existsSync } from 'node:fs';
@@ -596,171 +603,53 @@ async function main() {
   await notify('Kandil@worood.co', 'INFO', 'Executive Daily refreshed',
     'Nightly snapshot completed for the trailing 13 months.', true);
 
-  /* Shopify mirror and snapshots from the captured fixtures */
-  const existingOrders = Number((await one(`SELECT COUNT(*) AS n FROM sd_orders`)).n);
-  let orderCount = existingOrders;
-  if (existingOrders === 0) orderCount = await loadOrders(shop.id);
+  /* ------------------------------------------------- the Shopify mirror --
+   *
+   * The seed no longer fills sd_orders or sd_metric_snapshots.
+   *
+   * It used to load both from JSON captured read-only from the live store,
+   * which was the right call while the Dev Dashboard app did not exist: the
+   * dashboard could be built and demonstrated against real figures with no
+   * credentials. Now that the app exists, seeding them is worse than useless --
+   * it puts stale numbers in front of people who have no way to tell them from
+   * live ones, and it writes a sync watermark claiming those rows are current.
+   *
+   * The mirror is derived data. It comes from Shopify, through one door:
+   *
+   *   npm run seed -- --reset          structure, people, dashboards
+   *   POST /sales/admin/sync/backfill   the orders themselves
+   *   POST /sales/admin/sync/snapshots  the ShopifyQL figures
+   *
+   * What is seeded here is what Shopify does not own and cannot replace:
+   * dashboards, widget layouts, and who may see them. If the mirror is lost it
+   * can be rebuilt in an afternoon; those cannot be rebuilt at all.
+   */
+  const orderCount = Number((await one(`SELECT COUNT(*) AS n FROM sd_orders`)).n);
+  const snapCount = Number((await one(`SELECT COUNT(*) AS n FROM sd_metric_snapshots`)).n);
 
-  const existingSnaps = Number((await one(`SELECT COUNT(*) AS n FROM sd_metric_snapshots`)).n);
-  let snapCount = existingSnaps;
-  if (existingSnaps === 0) snapCount = await loadSnapshots(shop.id);
-
+  /* PENDING, not OK, and no watermark. A watermark is a claim that everything
+     up to that instant has been pulled; writing one here would tell the first
+     reconciliation that the last day is already covered, and it would skip it.
+     The Data & Sync screen shows this as work outstanding, which is exactly
+     what it is on a fresh install. */
   await query(
     `INSERT INTO sd_sync_state (shop_id, resource, watermark, last_run_at, last_ok_at, status, records)
-     VALUES ($1,'orders',now(),now(),now(),'OK',$2), ($1,'customers',now(),now(),now(),'OK',0),
-            ($1,'sales_snapshot',now(),now(),now(),'OK',$3), ($1,'sessions_snapshot',now(),now(),now(),'OK',$3),
-            ($1,'webhooks',now(),now(),now(),'OK',8)
-     ON CONFLICT (shop_id, resource) DO UPDATE
-       SET watermark = now(), last_run_at = now(), last_ok_at = now(), status = 'OK',
-           records = EXCLUDED.records`,
+     VALUES ($1,'orders',NULL,NULL,NULL,'PENDING',$2),
+            ($1,'customers',NULL,NULL,NULL,'PENDING',0),
+            ($1,'sales_snapshot',NULL,NULL,NULL,'PENDING',$3),
+            ($1,'sessions_snapshot',NULL,NULL,NULL,'PENDING',$3),
+            ($1,'webhooks',NULL,NULL,NULL,'PENDING',0)
+     ON CONFLICT (shop_id, resource) DO NOTHING`,
     [shop.id, orderCount, snapCount]);
+
+  if (orderCount === 0) {
+    console.log('  mirror        empty — run POST /sales/admin/sync/backfill to fill it');
+  }
 
   await report();
   await pool.end();
 }
 
-/* --------------------------------------------------------- fixture loads -- */
-
-async function loadOrders(shopId: string): Promise<number> {
-  const fix = readFix('orders_recent.json');
-  if (!fix?.orders?.length) { console.log('  no order fixture found — mirror left empty'); return 0; }
-  const money = (bag: any) => num(bag?.shopMoney?.amount);
-  let n = 0;
-
-  for (const o of fix.orders) {
-    let customerId: string | null = null;
-    if (o.customer?.id) {
-      const c = await one(
-        `INSERT INTO sd_customers (shop_id, shopify_gid, orders_count, display_name, email, phone,
-            address_city, address_province, address_country, address_zip,
-            shopify_created_at, shopify_updated_at, last_order_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now(),$12)
-         ON CONFLICT (shopify_gid) DO UPDATE SET
-           orders_count = EXCLUDED.orders_count, display_name = EXCLUDED.display_name,
-           email = EXCLUDED.email,
-           last_order_at = GREATEST(sd_customers.last_order_at, EXCLUDED.last_order_at)
-         RETURNING id`,
-        [shopId, o.customer.id, o.customer.numberOfOrders ?? 0, o.customer.displayName ?? null,
-          o.customer.email ?? null, o.customer.phone ?? null,
-          o.shippingAddress?.city ?? null, o.shippingAddress?.province ?? null,
-          o.shippingAddress?.country ?? null, o.shippingAddress?.zip ?? null,
-          o.customer.createdAt ?? null, new Date(o.createdAt)]);
-      customerId = c.id;
-    }
-
-    const row = await one(
-      `INSERT INTO sd_orders (shop_id, shopify_gid, name, order_number, customer_id,
-          shopify_created_at, processed_at, cancelled_at, cancel_reason, shopify_updated_at,
-          test, financial_status, fulfillment_status, source_name, tags,
-          currency_code, presentment_currency_code,
-          total_price, current_total_price, subtotal_price, current_subtotal_price,
-          total_discounts, total_tax, total_shipping, total_refunded, net_payment,
-          total_outstanding, presentment_total_price, ship_city, ship_province, ship_country)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
-               $22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
-       ON CONFLICT (shopify_gid) DO NOTHING RETURNING id`,
-      [shopId, o.id, o.name, parseInt(String(o.name).replace(/\D/g, ''), 10) || null, customerId,
-        new Date(o.createdAt), o.processedAt ?? null, o.cancelledAt ?? null, o.cancelReason ?? null,
-        new Date(o.updatedAt ?? o.createdAt), !!o.test,
-        o.displayFinancialStatus ?? null, o.displayFulfillmentStatus ?? null,
-        o.sourceName ?? null, o.tags ?? [],
-        o.currencyCode ?? 'EGP', o.presentmentCurrencyCode ?? null,
-        money(o.totalPriceSet), money(o.currentTotalPriceSet), money(o.subtotalPriceSet),
-        money(o.currentSubtotalPriceSet), money(o.totalDiscountsSet), money(o.totalTaxSet),
-        money(o.totalShippingPriceSet), money(o.totalRefundedSet), money(o.netPaymentSet),
-        money(o.totalOutstandingSet), num(o.totalPriceSet?.presentmentMoney?.amount),
-        o.shippingAddress?.city ?? null, o.shippingAddress?.province ?? null,
-        o.shippingAddress?.country ?? null]);
-    if (!row) continue;
-
-    for (const li of o.lineItems?.nodes ?? []) {
-      await query(
-        `INSERT INTO sd_order_line_items (order_id, shopify_gid, product_gid, variant_gid,
-            title, variant_title, sku, quantity, current_quantity, original_total, discounted_total)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT (shopify_gid) DO NOTHING`,
-        [row.id, li.id, li.product?.id ?? null, li.variant?.id ?? null, li.title,
-        li.variant?.title ?? null, li.sku ?? null, li.quantity ?? 0,
-        li.currentQuantity ?? li.quantity ?? 0, money(li.originalTotalSet), money(li.discountedTotalSet)]);
-    }
-    for (const rf of o.refunds ?? []) {
-      await query(
-        `INSERT INTO sd_refunds (order_id, shopify_gid, total_refunded, shopify_created_at)
-         VALUES ($1,$2,$3,$4) ON CONFLICT (shopify_gid) DO NOTHING`,
-        [row.id, rf.id, money(rf.totalRefundedSet), rf.createdAt]);
-    }
-    n++;
-  }
-  return n;
-}
-
-async function loadSnapshots(shopId: string): Promise<number> {
-  let n = 0;
-  const upsert = async (schema: string, grain: string, bucket: Date,
-    dims: Record<string, string>, metrics: Record<string, number>,
-    isFinal: boolean) => {
-    await query(
-      `INSERT INTO sd_metric_snapshots (shop_id, schema_name, grain, bucket_start,
-          bucket_timezone, dimensions, metrics, is_final)
-       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8)
-       ON CONFLICT ON CONSTRAINT sd_metric_snapshots_unique
-       DO UPDATE SET metrics = EXCLUDED.metrics, is_final = EXCLUDED.is_final, captured_at = now()`,
-      [shopId, schema, grain, bucket, TZ, JSON.stringify(dims), JSON.stringify(metrics), isFinal]);
-    n++;
-  };
-
-  const records = (f: any) => {
-    if (!f?.columns || !f?.rows) return [];
-    const names = f.columns.map((c: any) => c.name);
-    return f.rows.map((row: any) =>
-      Object.fromEntries(names.map((nm: string, i: number) =>
-        [nm, Array.isArray(row) ? row[i] : row[nm]])));
-  };
-
-  const nowTz = DateTime.now().setZone(TZ);
-
-  // Time series. Day buckets are shop-local dates; hour buckets are UTC
-  // instants. Both are normalised to an absolute instant here, so no widget can
-  // mix a Cairo day with a UTC hour -- a three-hour offset that can look like a
-  // factor of two on a partial current day.
-  for (const [file, schema, grain] of [
-    ['sales_daily.json', 'sales', 'day'], ['sales_hourly.json', 'sales', 'hour'],
-    ['sessions_daily.json', 'sessions', 'day'], ['sessions_hourly.json', 'sessions', 'hour'],
-  ] as const) {
-    for (const rec of records(readFix(file))) {
-      const raw = rec[grain] ?? Object.values(rec)[0];
-      if (!raw) continue;
-      const dt = grain === 'day'
-        ? DateTime.fromISO(String(raw).slice(0, 10), { zone: TZ }).startOf('day')
-        : DateTime.fromISO(String(raw), { zone: 'utc' });
-      if (!dt.isValid) continue;
-      const metrics: Record<string, number> = {};
-      for (const [k, v] of Object.entries(rec)) if (k !== grain) metrics[k] = num(v);
-      const isFinal = grain === 'day' ? dt < nowTz.startOf('day') : dt < DateTime.utc().startOf('hour');
-      await upsert(schema, grain, dt.toJSDate(), {}, metrics, isFinal);
-    }
-  }
-
-  // Dimensional breakdowns share one bucket_start so a batch can be read back
-  // whole; identifying them by captured_at would collapse them to one slice.
-  const bucket = DateTime.utc().startOf('hour').toJSDate();
-  for (const [file, schema, dim] of [
-    ['top_products_90d.json', 'sales', 'product_title'],
-    ['traffic_sources_30d.json', 'traffic', 'referrer_source'],
-    ['sessions_by_device_30d.json', 'sessions', 'session_device_type'],
-    ['sessions_by_country_30d.json', 'sessions', 'session_country'],
-  ] as const) {
-    const f = readFix(file);
-    const payload = f?.columns ? f : (f?.sessions_by_referrer ?? f?.by_device ?? f?.by_country ?? f);
-    for (const rec of records(payload)) {
-      const label = rec[dim] ?? Object.values(rec)[0];
-      if (label === undefined || label === null) continue;
-      const metrics: Record<string, number> = {};
-      for (const [k, v] of Object.entries(rec)) if (k !== dim) metrics[k] = num(v);
-      await upsert(schema, 'total', bucket, { [dim]: String(label) }, metrics, true);
-    }
-  }
-  return n;
-}
 
 /* ---------------------------------------------------------------- report -- */
 

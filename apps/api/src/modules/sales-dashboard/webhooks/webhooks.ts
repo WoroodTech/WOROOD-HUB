@@ -21,6 +21,12 @@ import { WebhookProcessor } from './webhook-processor';
 
 export const WEBHOOK_TOPICS = [
   'orders/create', 'orders/updated', 'orders/paid', 'orders/cancelled',
+  /* Deletion has to be subscribed to explicitly, and it is the one change no
+     other mechanism can catch. Reconciliation asks Shopify for orders whose
+     `updated_at` moved; a deleted order simply stops appearing, and absence is
+     not an event a delta pull can see. Without this topic a deleted order stays
+     in the mirror forever. */
+  'orders/delete',
   'refunds/create', 'customers/create', 'customers/update',
   'bulk_operations/finish',
 ];

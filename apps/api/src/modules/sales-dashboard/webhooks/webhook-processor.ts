@@ -5,13 +5,16 @@
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { query, one } from '../../../common/db';
-import { ShopContext } from '../analytics/snapshot.service';
+import { ShopContext, SnapshotService } from '../analytics/snapshot.service';
 import { redis } from '../shopify/shopify.service';
 
 @Injectable()
 export class WebhookProcessor {
   private readonly log = new Logger('WebhookProcessor');
-  constructor(private shops: ShopContext) {}
+  constructor(
+    private shops: ShopContext,
+    private snapshots: SnapshotService,
+  ) {}
 
   /** In this build the queue is a Redis list; BullMQ slots in unchanged behind
    *  the same two methods when the worker process is deployed. */
@@ -32,7 +35,22 @@ export class WebhookProcessor {
       await query(
         `UPDATE sd_webhook_events SET status = $2, processed_at = now(), attempts = attempts + 1
           WHERE id = $1`, [eventId, applied ? 'PROCESSED' : 'STALE']);
-      if (applied) await this.publish('order');
+      if (applied) {
+        await this.publish('order');
+
+        /* The mirror is now current; the snapshots are not, and the dashboard
+           reads the snapshots. Without this the order appears in the orders
+           table immediately and in the headline figures at the top of the next
+           hour -- which reads as the dashboard being broken rather than as two
+           tables refreshing on different clocks.
+
+           Debounced inside scheduleRefresh, so a burst of orders produces one
+           ShopifyQL round trip rather than one per order. Only order and refund
+           events move a figure; a customer's phone number changing does not. */
+        if (ev.topic.startsWith('orders/') || ev.topic === 'refunds/create') {
+          this.snapshots.scheduleRefresh();
+        }
+      }
     } catch (e: any) {
       await query(
         `UPDATE sd_webhook_events SET status = 'FAILED', attempts = attempts + 1, error = $2
@@ -49,8 +67,35 @@ export class WebhookProcessor {
   private async apply(topic: string, payload: any, triggeredAt: Date | null): Promise<boolean> {
     const shop = await this.shops.get();
     if (topic.startsWith('customers/')) return this.applyCustomer(shop.id, payload);
+    if (topic === 'orders/delete') return this.applyOrderDeletion(payload);
     if (topic.startsWith('orders/')) return this.applyOrder(shop.id, payload, triggeredAt);
     if (topic === 'refunds/create') return this.applyRefund(payload);
+    return true;
+  }
+
+  /**
+   * An order removed in the Shopify admin.
+   *
+   * Soft, not hard. A deleted order still has to resolve to a name in the audit
+   * log and in any figure computed before it went, and the row is the only
+   * place that history lives -- Shopify will not serve it again. The read paths
+   * filter on `deleted_at IS NULL`, so it disappears from the dashboard while
+   * remaining answerable.
+   *
+   * The payload for this topic is a stub: an id and little else. That is all
+   * that is needed, and it is why this cannot go through `applyOrder`, which
+   * expects a whole order and would null out every column it did not find.
+   */
+  private async applyOrderDeletion(payload: any): Promise<boolean> {
+    const gid = payload?.admin_graphql_api_id ?? payload?.id;
+    if (!gid) return false;
+
+    const res = await query(
+      `UPDATE sd_orders SET deleted_at = now()
+        WHERE shopify_gid = $1 AND deleted_at IS NULL
+        RETURNING id`, [String(gid)]);
+
+    if (res.length) this.log.log(`order ${gid} deleted in Shopify — mirrored as removed`);
     return true;
   }
 

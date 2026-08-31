@@ -95,7 +95,12 @@ export class DashboardsController {
     const pageSize = Math.min(Math.max(parseInt(String(sizeRaw), 10) || 25, 1), 100);
     const showCustomer = can(p, PERMISSIONS.CUSTOMER_VIEW);
 
-    const where = `o.shop_id = $1 ${status ? 'AND o.financial_status = $2' : ''}`;
+    /* Deleted orders are excluded here rather than at each call site, so the
+       list and the totals below cannot drift apart -- they share this clause.
+       An order removed in the Shopify admin is soft-deleted in the mirror; the
+       row survives for history, it just stops being counted. */
+    const where =
+      `o.shop_id = $1 AND o.deleted_at IS NULL ${status ? 'AND o.financial_status = $2' : ''}`;
     const params: any[] = status ? [shop.id, status] : [shop.id];
 
     const rows = await query(

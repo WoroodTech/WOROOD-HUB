@@ -6,7 +6,7 @@
  * is the source of truth and the fifteen-minute cadence is the practical upper
  * bound on how long a missed webhook can go unnoticed.
  */
-import { Body, Controller, Get, Injectable, Logger, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Injectable, Logger, Post } from '@nestjs/common';
 import { config } from '../../../common/config';
 import { query, one } from '../../../common/db';
 import { Permissions } from '../../../common/auth';
@@ -15,6 +15,7 @@ import { ShopContext } from '../analytics/snapshot.service';
 import { SnapshotService } from '../analytics/snapshot.service';
 import { ShopifyService, redis } from '../shopify/shopify.service';
 import { WEBHOOK_TOPICS } from '../webhooks/webhooks';
+import { BackfillService } from './backfill.service';
 import { PERMISSIONS, SyncHealthResponse } from '../../../contract';
 
 const money = (v: any) => (v == null ? 0 : parseFloat(String(v)));
@@ -29,6 +30,7 @@ export class SyncService {
     private shopify: ShopifyService,
     private snapshots: SnapshotService,
     private notifications: NotificationsService,
+    private backfills: BackfillService,
   ) {}
 
   /** Upsert path shared by the backfill and by reconciliation, so an order
@@ -126,11 +128,227 @@ export class SyncService {
     return n;
   }
 
-  /** Initial load, and any large historical pull. In fixture mode this replays
-   *  the captured order slice; live, it runs a bulk operation. */
-  async backfill(): Promise<number> {
-    const orders = await this.shopify.source.orders();
-    return this.upsertOrders(orders);
+  /**
+   * Initial load, and any large historical pull.
+   *
+   * Fixture mode replays the captured order slice. Live, this starts a bulk
+   * operation and waits for it -- which used to be a lie: the live source threw
+   * "Live order paging runs through BackfillService, not here" and no such
+   * service existed, so the initial sync simply did not work outside fixtures.
+   */
+  async backfill(since?: string): Promise<number> {
+    if (this.shopify.source.kind !== 'live') {
+      const orders = await this.shopify.source.orders();
+      return this.upsertOrders(orders);
+    }
+
+    const { operationId, note } = await this.backfills.start(since);
+    if (note) this.log.warn(note);
+    const result = await this.backfills.waitAndIngest(
+      operationId, (orders) => this.upsertOrders(orders));
+    this.log.log(`backfill ingested ${result.orders} orders from ${result.objectCount} objects`);
+    return result.orders;
+  }
+
+  /**
+   * Register every webhook subscription this module needs.
+   *
+   * `verifyWebhooks` previously reported missing subscriptions and told
+   * `sales.sync.manage` holders they had been "Re-registered" -- while no code
+   * anywhere called `webhookSubscriptionCreate`. The notification was false and
+   * the fast path never worked: Shopify was never asked to deliver anything.
+   *
+   * A subscription is pinned to the API version in the URL used to create it
+   * and does not advance on its own, so the quarterly version bump has to
+   * re-run this.
+   */
+  async registerWebhooks(): Promise<{ created: string[]; existing: string[]; skipped?: string }> {
+    if (this.shopify.source.kind !== 'live') {
+      return { created: [], existing: [], skipped: 'fixture source' };
+    }
+    if (!config.shopify.webhookBaseUrl) {
+      /* Refusing is the right move. A subscription pointing at an unreachable
+         address fails eight times over about four hours and is then deleted by
+         Shopify automatically -- leaving a dashboard that looks healthy and
+         receives nothing, which is the exact failure the watchdog exists for. */
+      return { created: [], existing: [],
+               skipped: 'SHOPIFY_WEBHOOK_BASE_URL is not set — Shopify cannot reach localhost' };
+    }
+
+    const callbackUrl =
+      `${config.shopify.webhookBaseUrl.replace(/\/$/, '')}/api/v1/sales/webhooks/shopify`;
+
+    const current = await this.shopify.source.graphql<any>(
+      `{ webhookSubscriptions(first: 100) {
+           nodes { id topic endpoint { ... on WebhookHttpEndpoint { callbackUrl } } } } }`);
+    const nodes = current?.webhookSubscriptions?.nodes ?? [];
+    const already = new Set(
+      nodes
+        .filter((n: any) => n.endpoint?.callbackUrl === callbackUrl)
+        .map((n: any) => n.topic));
+
+    const created: string[] = [];
+    const existing: string[] = [];
+
+    for (const topic of WEBHOOK_TOPICS) {
+      // The GraphQL enum is not derivable from the topic string by any
+      // consistent rule -- note ORDERS_CREATE against ORDERS_UPDATED -- but
+      // upper-snake happens to hold for every topic this module uses.
+      const enumName = topic.toUpperCase().replace(/\//g, '_');
+      if (already.has(enumName)) { existing.push(enumName); continue; }
+
+      const res = await this.shopify.source.graphql<any>(
+        `mutation($topic: WebhookSubscriptionTopic!, $sub: WebhookSubscriptionInput!) {
+           webhookSubscriptionCreate(topic: $topic, webhookSubscription: $sub) {
+             webhookSubscription { id topic }
+             userErrors { field message }
+           }
+         }`,
+        { topic: enumName, sub: { callbackUrl, format: 'JSON' } });
+
+      const errs = res?.webhookSubscriptionCreate?.userErrors ?? [];
+      if (errs.length) {
+        this.log.warn(`${enumName}: ${errs.map((e: any) => e.message).join('; ')}`);
+        continue;
+      }
+      created.push(enumName);
+    }
+
+    this.log.log(`webhooks: ${created.length} created, ${existing.length} already present`);
+    await this.markSync('webhooks', created.length + existing.length);
+    return { created, existing };
+  }
+
+  /**
+   * Read the shop's own currency, timezone, name and plan from Shopify and
+   * store them.
+   *
+   * These used to come from the captured fixture, which was fine while the
+   * fixture and the store were the same shop. Point the app at a different
+   * store and the mirror inherits the old shop's settings: order rows carry
+   * their real currency while every total is labelled with the seeded one, so
+   * a page shows `USD 154` in the table and `EGP 1,269` in the summary above
+   * it. The number is a sum of dollars wearing a pound sign.
+   *
+   * Currency and timezone are settings, not constants -- Egypt observes
+   * daylight saving and a store can be re-denominated -- so this is a sync
+   * step rather than a one-time seed value.
+   */
+  async syncShopSettings(): Promise<{ currency: string; timezone: string; name: string }> {
+    if (this.shopify.source.kind !== 'live') {
+      const shop = await this.shops.get();
+      return { currency: shop.currency_code, timezone: shop.iana_timezone, name: shop.name };
+    }
+
+    const data = await this.shopify.source.graphql<any>(
+      `{ shop { name myshopifyDomain currencyCode ianaTimezone
+                plan { displayName } } }`);
+    const sh = data?.shop;
+    if (!sh) throw new Error('Shopify returned no shop record');
+
+    const shop = await this.shops.get();
+    await query(
+      `UPDATE sd_shops
+          SET name = $2, currency_code = $3, iana_timezone = $4, plan_name = $5,
+              myshopify_domain = $6
+        WHERE id = $1`,
+      [shop.id, sh.name, sh.currencyCode, sh.ianaTimezone,
+       sh.plan?.displayName ?? null, sh.myshopifyDomain]);
+
+    this.shops.invalidate();
+    this.log.log(`shop settings: ${sh.name}, ${sh.currencyCode}, ${sh.ianaTimezone}`);
+    return { currency: sh.currencyCode, timezone: sh.ianaTimezone, name: sh.name };
+  }
+
+  get sourceKind() { return this.shopify.source.kind; }
+  tokenStatus() { return this.shopify.tokens.status(); }
+  ping() { return this.shopify.source.ping(); }
+
+  /**
+   * Reconciliation: the source of truth.
+   *
+   * Webhooks make the dashboard feel live; this makes it correct. Shopify says
+   * plainly that delivery is not guaranteed, so every fifteen minutes this
+   * pulls whatever changed since the last successful run and pushes it through
+   * the same `upsertOrders` path a webhook would have taken. A missed delivery
+   * costs minutes of staleness rather than a permanently wrong figure.
+   *
+   * Two properties matter more than the query itself. The window is widened by
+   * five minutes behind the watermark, because an order updated in the same
+   * second the previous run read the clock would otherwise fall between two
+   * passes forever. And the watermark only advances on success -- a failed run
+   * re-covers the same ground next time instead of leaving a hole nobody can
+   * see.
+   */
+  async reconcile(): Promise<number> {
+    if (this.shopify.source.kind !== 'live') return 0;
+
+    const shop = await this.shops.get();
+    const state = await one(
+      `SELECT watermark FROM sd_sync_state WHERE shop_id = $1 AND resource = 'orders'`,
+      [shop.id]);
+
+    // First run has no watermark: take a day, not all of history. A full load
+    // is the backfill's job and it uses a bulk operation for a reason.
+    const since = new Date(
+      state?.watermark
+        ? new Date(state.watermark).getTime() - 5 * 60_000
+        : Date.now() - 24 * 60 * 60_000);
+
+    const filter = `updated_at:>=${since.toISOString()}`;
+    let cursor: string | null = null;
+    let seen = 0;
+    let written = 0;
+
+    /* Paged rather than bulk: this is a small delta and a bulk operation has a
+       start-up cost measured in seconds. The page size is 50 because each order
+       carries its line items, and a hundred of those is a large enough response
+       to be worth avoiding. */
+    for (let page = 0; page < 40; page++) {
+      const data: any = await this.shopify.source.graphql<any>(
+        `query($q: String!, $after: String) {
+           orders(first: 50, query: $q, after: $after, sortKey: UPDATED_AT) {
+             pageInfo { hasNextPage endCursor }
+             nodes {
+               id name createdAt processedAt updatedAt cancelledAt cancelReason test
+               displayFinancialStatus displayFulfillmentStatus sourceName tags
+               currencyCode presentmentCurrencyCode
+               totalPriceSet          { shopMoney { amount } presentmentMoney { amount } }
+               currentTotalPriceSet   { shopMoney { amount } }
+               subtotalPriceSet       { shopMoney { amount } }
+               currentSubtotalPriceSet{ shopMoney { amount } }
+               totalDiscountsSet      { shopMoney { amount } }
+               totalTaxSet            { shopMoney { amount } }
+               totalShippingPriceSet  { shopMoney { amount } }
+               totalRefundedSet       { shopMoney { amount } }
+               netPaymentSet          { shopMoney { amount } }
+               totalOutstandingSet    { shopMoney { amount } }
+               shippingAddress { city province country zip }
+               customer { id displayName email phone numberOfOrders createdAt }
+               lineItems(first: 100) { nodes {
+                 id title sku quantity currentQuantity
+                 product { id } variant { id title }
+                 originalTotalSet   { shopMoney { amount } }
+                 discountedTotalSet { shopMoney { amount } }
+               } }
+               refunds { id createdAt totalRefundedSet { shopMoney { amount } } }
+             }
+           }
+         }`, { q: filter, after: cursor });
+
+      const conn = data?.orders;
+      const nodes = conn?.nodes ?? [];
+      seen += nodes.length;
+      if (nodes.length) written += await this.upsertOrders(nodes);
+
+      if (!conn?.pageInfo?.hasNextPage) break;
+      cursor = conn.pageInfo.endCursor;
+    }
+
+    this.log.log(`reconcile: ${seen} orders changed since ${since.toISOString()}, ${written} written`);
+    // markSync advances the watermark, and it is only reached on success.
+    await this.markSync('orders', written);
+    return written;
   }
 
   /**
@@ -149,10 +367,20 @@ export class SyncService {
     const missing = expected.filter((t) => !subscribed.includes(t));
 
     if (missing.length && this.shopify.source.kind === 'live') {
+      /* Actually re-register, then say what happened. This used to send the
+         notification without calling anything, so an operator reading
+         "Re-registered" had been told a subscription was restored when nothing
+         had been. */
+      const result = await this.registerWebhooks().catch((e) => {
+        this.log.error(`re-registration failed: ${e.message}`);
+        return { created: [] as string[], existing: [] as string[], skipped: e.message };
+      });
+      const body = result.skipped
+        ? `Missing: ${missing.join(', ')}. Re-registration skipped — ${result.skipped}`
+        : `Missing: ${missing.join(', ')}. Re-registered: ${result.created.join(', ') || 'none'}`;
       await this.notifications.notifyPermissionHolders(
         PERMISSIONS.SYNC_MANAGE, 'sales-dashboard',
-        'Shopify webhook subscriptions missing',
-        `Re-registered: ${missing.join(', ')}`, 'WARNING');
+        'Shopify webhook subscriptions missing', body, 'WARNING');
     }
     await this.markSync('webhooks', subscribed.length);
     await redis().set('sales:webhooks:lastCheck', new Date().toISOString());
@@ -254,9 +482,96 @@ export class SyncController {
   @Permissions(PERMISSIONS.SYNC_MANAGE)
   health() { return this.sync.health(); }
 
+  /**
+   * The initial sync. `since` is an ISO date; without it Shopify serves the
+   * last sixty days unless the app holds `read_all_orders`, and does so
+   * silently rather than erroring.
+   *
+   * This runs a bulk operation and waits for it, so on a full history it can
+   * take minutes. It is a deliberate operator action, not something a page
+   * load triggers.
+   */
   @Post('backfill')
   @Permissions(PERMISSIONS.SYNC_MANAGE)
-  async backfill() { return { orders: await this.sync.backfill() }; }
+  async backfill(@Body() body: { since?: string } = {}) {
+    /* Shopify's own words, passed through. The global filter turns anything
+       uncaught into "Something went wrong", which for an operator-triggered
+       action is the least useful thing it could say -- the reason a bulk export
+       was refused is nearly always specific and actionable. */
+    try {
+      return { orders: await this.sync.backfill(body?.since) };
+    } catch (e: any) {
+      throw new BadRequestException(e?.message ?? 'Backfill failed');
+    }
+  }
+
+  /** Register the webhook subscriptions with Shopify. Needs a public HTTPS
+   *  address in SHOPIFY_WEBHOOK_BASE_URL; refuses politely without one. */
+  @Post('webhooks/register')
+  @Permissions(PERMISSIONS.SYNC_MANAGE)
+  register() { return this.sync.registerWebhooks(); }
+
+  /**
+   * What the server actually believes, as opposed to what the .env appears to
+   * say. Written after an afternoon spent guessing why a live-looking install
+   * returned 200 and no rows: the answer needed the process's own view of its
+   * configuration, and nothing exposed it.
+   *
+   * Reports no secrets -- the client id is truncated and the secret only ever
+   * appears as present or absent.
+   */
+  @Get('diagnostics')
+  @Permissions(PERMISSIONS.SYNC_MANAGE)
+  async diagnostics() {
+    const cfg = config.shopify;
+    const out: Record<string, unknown> = {
+      sourceKind: this.sync.sourceKind,
+      tokenStrategy: cfg.tokenStrategy,
+      shopDomain: cfg.shopDomain,
+      apiVersion: cfg.apiVersion,
+      clientIdSet: !!cfg.clientId,
+      clientIdPrefix: cfg.clientId ? `${cfg.clientId.slice(0, 6)}…` : null,
+      clientSecretSet: !!cfg.clientSecret && cfg.clientSecret !== 'dev-webhook-secret',
+      webhookBaseUrl: cfg.webhookBaseUrl || null,
+      scheduleEnabled: cfg.scheduleEnabled,
+    };
+
+    if (!cfg.clientId || !cfg.clientSecret || cfg.clientSecret === 'dev-webhook-secret') {
+      out.verdict = 'SHOPIFY_CLIENT_ID / SHOPIFY_CLIENT_SECRET are not set in the environment.';
+      return out;
+    }
+
+    /* Redis is checked first and separately. It is a dependency of the token
+       manager, so without it every Shopify verdict below would be a confusing
+       proxy for "Redis is down". */
+    try {
+      await redis().ping();
+      out.redis = 'reachable';
+    } catch (e: any) {
+      out.redis = `unreachable — ${e?.message ?? e}`;
+      out.verdict = 'Redis is not running. The sales module cannot fetch a token without it.';
+      return out;
+    }
+
+    try {
+      out.token = await this.sync.tokenStatus();
+      out.ping = await this.sync.ping();
+      out.verdict = 'Connected.';
+    } catch (e: any) {
+      out.verdict = `Shopify call failed: ${e?.message ?? e}`;
+    }
+    return out;
+  }
+
+  /** Pull the shop's currency, timezone, name and plan from Shopify. Worth
+   *  running after pointing the app at a different store. */
+  @Post('shop')
+  @Permissions(PERMISSIONS.SYNC_MANAGE)
+  shopSettings() { return this.sync.syncShopSettings(); }
+
+  @Post('reconcile')
+  @Permissions(PERMISSIONS.SYNC_MANAGE)
+  async reconcile() { return { orders: await this.sync.reconcile() }; }
 
   @Post('snapshots')
   @Permissions(PERMISSIONS.SYNC_MANAGE)
