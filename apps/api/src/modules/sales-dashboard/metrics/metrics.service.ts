@@ -136,6 +136,7 @@ export class MetricsService {
               COUNT(*)                           AS orders
          FROM sd_orders
         WHERE shop_id = $1 AND test = false AND cancelled_at IS NULL
+          AND deleted_at IS NULL
           AND shopify_created_at >= $2 AND shopify_created_at <= $3`,
       [shop.id, start, end],
     );
@@ -403,7 +404,7 @@ export class MetricsService {
           `SELECT o.name, o.shopify_created_at, o.financial_status, o.fulfillment_status,
                   o.total_price, o.net_payment, c.display_name, o.ship_city
              FROM sd_orders o LEFT JOIN sd_customers c ON c.id = o.customer_id
-            WHERE o.shop_id = $1 AND o.test = false
+            WHERE o.shop_id = $1 AND o.test = false AND o.deleted_at IS NULL
             ORDER BY o.shopify_created_at DESC LIMIT 15`, [shop.id]);
         const columns: TablePayload['columns'] = [
           { key: 'name', label: 'Order', format: 'text' },

@@ -43,6 +43,22 @@ export const config = {
     costRestoreRate: parseInt(process.env.SHOPIFY_COST_RESTORE_RATE || '200', 10),
     fixtureDir: process.env.SHOPIFY_FIXTURE_DIR ||
       require('node:path').join(__dirname, '../../../../fixtures/shopify'),
+
+    /**
+     * Where Shopify should deliver webhooks. It must be a public HTTPS address:
+     * Shopify calls in from its own network and cannot reach localhost, so on a
+     * development machine this is an ngrok or Cloudflare tunnel, or empty.
+     *
+     * Empty is a supported state rather than a misconfiguration. Registration
+     * refuses to run without it and says why, which is better than registering
+     * a subscription pointing at an address that will fail eight times and be
+     * deleted -- leaving a dashboard that looks fine and receives nothing.
+     */
+    webhookBaseUrl: process.env.SHOPIFY_WEBHOOK_BASE_URL || '',
+
+    /** Scheduled work. Off by default so a developer running the API locally
+     *  does not start hitting Shopify on a timer without meaning to. */
+    scheduleEnabled: process.env.SHOPIFY_SCHEDULE_ENABLED === 'true',
   },
 
   sync: {

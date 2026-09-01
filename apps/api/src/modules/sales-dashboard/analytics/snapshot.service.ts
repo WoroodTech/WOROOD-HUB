@@ -26,6 +26,15 @@ export interface Shop {
 export class ShopContext {
   private cached: Shop | null = null;
 
+  /** Drop the cached row so the next `get` re-reads it. Called after the shop's
+   *  currency or timezone is pulled from Shopify -- without it the process
+   *  keeps formatting money in whatever the row said at start-up, which is the
+   *  hardest kind of stale to notice because nothing is broken, only labelled
+   *  wrongly. */
+  invalidate(): void {
+    this.cached = null;
+  }
+
   /** One row per connected store. Created on first use so the module works on a
    *  fresh database; the seeder upserts on the same unique key. */
   async get(): Promise<Shop> {
@@ -73,10 +82,21 @@ export class SnapshotService {
   private readonly TZ = "WITH TIMEZONE 'Africa/Cairo'";
 
   salesQuery(grain: 'day' | 'hour', since: string) {
-    // sales_reversals is absent from this store's ShopifyQL sales schema -- the
-    // live capture had to drop it. Missing columns are treated as zero rather
-    // than crashing the capture; see upsert() below.
-    return `FROM sales SHOW orders, gross_sales, discounts, net_sales, ` +
+    /* `sales_reversals` is asked for again.
+     *
+     * It was dropped when the fixtures were captured, because the column was
+     * genuinely absent from the schema at the time and the query failed with
+     * it. It exists now: 2026-04 renamed the old `returns` family to
+     * `sales_reversals` -- same definition, clearer name, since the figure
+     * always covered refunds, cancellations and edits rather than only
+     * physical returns -- and 2026-07 removed the old names outright.
+     *
+     * With it, `net_sales = gross_sales − discounts − sales_reversals` closes
+     * on Shopify's own arithmetic instead of being derived. A missing column is
+     * still treated as zero rather than crashing the capture, so this is safe
+     * against an older store schema; see upsert() below.
+     */
+    return `FROM sales SHOW orders, gross_sales, discounts, sales_reversals, net_sales, ` +
       `shipping_charges, taxes, total_sales, average_order_value ` +
       `TIMESERIES ${grain} SINCE ${since} UNTIL today ${this.TZ}`;
   }
@@ -211,6 +231,81 @@ export class SnapshotService {
              status = 'OK', error = NULL, records = EXCLUDED.records`,
       [shopId, resource, records],
     );
+  }
+
+  /**
+   * Refresh only what a new order can have changed: the last few days.
+   *
+   * The dashboard reads snapshots, not the order mirror, so a webhook that
+   * updates `sd_orders` leaves every headline figure untouched until a capture
+   * runs. Before this existed the only things that ran one were the hourly
+   * scheduler and a human with Postman, which meant an order placed at 11:15
+   * was invisible on the dashboard until the top of the hour -- while sitting
+   * plainly in the orders table, which reads from the mirror.
+   *
+   * Seven days rather than thirteen months: an order changes today's bucket and
+   * possibly yesterday's, never last March. A full daily capture is roughly
+   * eight hundred rows and two ShopifyQL queries; this is a few dozen.
+   *
+   * `debounced` is what makes it safe to call from a webhook. A flash sale
+   * delivers a burst, and one ShopifyQL round trip per order would empty the
+   * rate-limit bucket for no benefit -- the second query would return the same
+   * answer as the fortieth.
+   */
+  async refreshRecent() {
+    const shop = await this.shops.get();
+    const sales = await this.shopify.source.shopifyql(this.salesQuery('day', '-7d'));
+    const sessions = await this.shopify.source.shopifyql(this.sessionsQuery('day', '-7d'));
+    const hourlySales = await this.shopify.source.shopifyql(this.salesQuery('hour', '-2d'));
+    const hourlySessions = await this.shopify.source.shopifyql(this.sessionsQuery('hour', '-2d'));
+
+    const n =
+      await this.upsertSeries(shop, 'sales', 'day', sales, 'day') +
+      await this.upsertSeries(shop, 'sessions', 'day', sessions, 'day') +
+      await this.upsertSeries(shop, 'sales', 'hour', hourlySales, 'hour') +
+      await this.upsertSeries(shop, 'sessions', 'hour', hourlySessions, 'hour');
+
+    await this.markSync(shop.id, 'sales_snapshot', n);
+    return n;
+  }
+
+  private refreshTimer: NodeJS.Timeout | null = null;
+  private refreshPending = false;
+
+  /**
+   * Ask for a refresh; get one shortly, once, however many times you ask.
+   *
+   * The delay is not only about batching. Shopify publishes no freshness
+   * guarantee for analytics, and an order does not appear in ShopifyQL the
+   * instant its webhook is delivered -- observation on this store puts the lag
+   * under a minute, but it is a measurement, not a commitment. Capturing
+   * immediately on delivery would reliably capture the figures from *before*
+   * the order, write them as current, and look exactly like a bug.
+   *
+   * So: wait, then capture. And capture once more a few minutes later, because
+   * a single miss would otherwise persist until the next scheduled run.
+   */
+  scheduleRefresh(delayMs = 45_000) {
+    if (this.refreshPending) return;
+    this.refreshPending = true;
+
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    this.refreshTimer = setTimeout(async () => {
+      this.refreshPending = false;
+      try {
+        const n = await this.refreshRecent();
+        this.log.log(`snapshot refresh after webhook: ${n} rows`);
+      } catch (e: any) {
+        this.log.error(`snapshot refresh failed: ${e?.message ?? e}`);
+      }
+
+      // The confirming pass. Cheap, and it is what stops a figure being wrong
+      // for an hour because ShopifyQL was a minute behind the first attempt.
+      setTimeout(() => {
+        this.refreshRecent().catch((e) =>
+          this.log.warn(`confirming snapshot refresh failed: ${e?.message ?? e}`));
+      }, 4 * 60_000);
+    }, delayMs);
   }
 
   async captureAll() {
