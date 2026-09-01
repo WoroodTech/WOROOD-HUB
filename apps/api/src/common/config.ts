@@ -56,9 +56,24 @@ export const config = {
      */
     webhookBaseUrl: process.env.SHOPIFY_WEBHOOK_BASE_URL || '',
 
-    /** Scheduled work. Off by default so a developer running the API locally
-     *  does not start hitting Shopify on a timer without meaning to. */
-    scheduleEnabled: process.env.SHOPIFY_SCHEDULE_ENABLED === 'true',
+    /**
+     * Scheduled work: reconciliation, snapshots, the subscription watchdog.
+     *
+     * On by default whenever the source is live. The original default was off,
+     * on the reasoning that a developer should not start calling Shopify on a
+     * timer without meaning to -- but the effect was that a developer who had
+     * gone to the trouble of configuring live credentials got a dashboard that
+     * never updated itself, and had to discover an undocumented environment
+     * variable to fix it. Nothing about that is safer; it is just quieter.
+     *
+     * The real guard is the token strategy. In fixture mode the scheduler does
+     * not start at all, so an unconfigured checkout still makes no outbound
+     * calls. Set this to `false` explicitly to opt out with live credentials --
+     * worth doing when two machines point at the same store, since both would
+     * otherwise reconcile and spend the rate-limit budget twice for one set of
+     * numbers.
+     */
+    scheduleEnabled: process.env.SHOPIFY_SCHEDULE_ENABLED !== 'false',
   },
 
   sync: {

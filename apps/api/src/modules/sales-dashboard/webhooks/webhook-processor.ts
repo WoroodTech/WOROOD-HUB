@@ -6,7 +6,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { query, one } from '../../../common/db';
 import { ShopContext, SnapshotService } from '../analytics/snapshot.service';
-import { redis } from '../shopify/shopify.service';
+import { redis, ShopifyService } from '../shopify/shopify.service';
+import { SyncService } from '../sync/sync.service';
 
 @Injectable()
 export class WebhookProcessor {
@@ -14,6 +15,8 @@ export class WebhookProcessor {
   constructor(
     private shops: ShopContext,
     private snapshots: SnapshotService,
+    private shopify: ShopifyService,
+    private sync: SyncService,
   ) {}
 
   /** In this build the queue is a Redis list; BullMQ slots in unchanged behind
@@ -49,6 +52,26 @@ export class WebhookProcessor {
            events move a figure; a customer's phone number changing does not. */
         if (ev.topic.startsWith('orders/') || ev.topic === 'refunds/create') {
           this.snapshots.scheduleRefresh();
+        }
+
+        /* Then fetch the order in full and apply that on top.
+         *
+         * A webhook payload is a snapshot of one moment, and for `orders/create`
+         * that moment is often before the order is finished being assembled:
+         * line items added in a second step, a customer attached after, payment
+         * captured later still. The row therefore appeared with no items, no
+         * customer and nothing collected, and filled in over the following
+         * minutes as `orders/updated` and `orders/paid` arrived. Correct, and it
+         * reads like a bug.
+         *
+         * One GraphQL read gives the whole order at once. It runs after the
+         * payload has already been applied, not instead of it, so a failed
+         * fetch -- a network blip, or the protected-customer-data denial that
+         * already affects the backfill -- costs richness rather than the record.
+         */
+        if (ev.topic === 'orders/create' || ev.topic === 'orders/updated') {
+          await this.hydrate(ev.payload).catch((e) =>
+            this.log.warn(`could not hydrate ${ev.topic}: ${e?.message ?? e}`));
         }
       }
     } catch (e: any) {
@@ -86,6 +109,54 @@ export class WebhookProcessor {
    * that is needed, and it is why this cannot go through `applyOrder`, which
    * expects a whole order and would null out every column it did not find.
    */
+  /**
+   * Re-read one order from Shopify and push it through the same path the
+   * backfill and reconciliation use, so an order written by a webhook and one
+   * written by a bulk export are the same row built the same way.
+   *
+   * Deliberately not selecting the protected customer fields here. The webhook
+   * payload already carried the customer and has been applied; asking for them
+   * again risks the whole read being denied and losing the line items with it.
+   */
+  private async hydrate(payload: any): Promise<void> {
+    if (this.shopify.source.kind !== 'live') return;
+    const gid = payload?.admin_graphql_api_id;
+    if (!gid) return;
+
+    const data = await this.shopify.source.graphql<any>(
+      `query($id: ID!) {
+         node(id: $id) {
+           ... on Order {
+             id name createdAt processedAt updatedAt cancelledAt cancelReason test
+             displayFinancialStatus displayFulfillmentStatus sourceName tags
+             currencyCode presentmentCurrencyCode
+             totalPriceSet          { shopMoney { amount } presentmentMoney { amount } }
+             currentTotalPriceSet   { shopMoney { amount } }
+             subtotalPriceSet       { shopMoney { amount } }
+             currentSubtotalPriceSet{ shopMoney { amount } }
+             totalDiscountsSet      { shopMoney { amount } }
+             totalTaxSet            { shopMoney { amount } }
+             totalShippingPriceSet  { shopMoney { amount } }
+             totalRefundedSet       { shopMoney { amount } }
+             netPaymentSet          { shopMoney { amount } }
+             totalOutstandingSet    { shopMoney { amount } }
+             lineItems(first: 100) { nodes {
+               id title sku quantity currentQuantity
+               product { id } variant { id title }
+               originalTotalSet   { shopMoney { amount } }
+               discountedTotalSet { shopMoney { amount } }
+             } }
+             refunds { id createdAt totalRefundedSet { shopMoney { amount } } }
+           }
+         }
+       }`, { id: String(gid) });
+
+    const node = data?.node;
+    if (!node?.id) return;
+    await this.sync.upsertOrders([node]);
+    await this.publish('order');
+  }
+
   private async applyOrderDeletion(payload: any): Promise<boolean> {
     const gid = payload?.admin_graphql_api_id ?? payload?.id;
     if (!gid) return false;
@@ -160,15 +231,36 @@ export class WebhookProcessor {
     return true;
   }
 
+  /**
+   * A refund recorded against an order.
+   *
+   * The payload describes the *refund*, not the order: amounts, transactions
+   * and an `order_id`, and no customer. It is written to `sd_refunds` and
+   * nothing else here -- deliberately, because applying a refund payload to an
+   * order row would null every order column it does not carry.
+   *
+   * The order's own money columns matter as much as the refund row, though:
+   * `net_payment` is what has actually been collected, and a refund reduces it.
+   * Shopify sends `orders/updated` alongside, but the two can arrive in either
+   * order and the update may be the one that loses the race. So the order is
+   * re-read after the refund is stored, which settles both the money and the
+   * financial status regardless of delivery order.
+   */
   private async applyRefund(r: any): Promise<boolean> {
     const order = await one(
-      `SELECT id FROM sd_orders WHERE shopify_gid LIKE '%' || $1`, [String(r.order_id)]);
+      `SELECT id, shopify_gid FROM sd_orders WHERE shopify_gid LIKE '%' || $1`,
+      [String(r.order_id)]);
     if (!order) return true;
+
     await query(
       `INSERT INTO sd_refunds (order_id, shopify_gid, total_refunded, shopify_created_at, note)
        VALUES ($1,$2,$3,$4,$5) ON CONFLICT (shopify_gid) DO NOTHING`,
       [order.id, String(r.admin_graphql_api_id ?? r.id),
        parseFloat(r.total_refunded ?? '0'), r.created_at ?? new Date(), r.note ?? null]);
+
+    await this.hydrate({ admin_graphql_api_id: order.shopify_gid }).catch((e) =>
+      this.log.warn(`could not re-read order after refund: ${e?.message ?? e}`));
+
     return true;
   }
 

@@ -14,7 +14,7 @@ import { NotificationsService } from '../../../core/core.module';
 import { ShopContext } from '../analytics/snapshot.service';
 import { SnapshotService } from '../analytics/snapshot.service';
 import { ShopifyService, redis } from '../shopify/shopify.service';
-import { WEBHOOK_TOPICS } from '../webhooks/webhooks';
+import { WEBHOOK_TOPICS } from '../webhooks/topics';
 import { BackfillService } from './backfill.service';
 import { PERMISSIONS, SyncHealthResponse } from '../../../contract';
 
@@ -78,7 +78,7 @@ export class SyncService {
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
                  $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
          ON CONFLICT (shopify_gid) DO UPDATE SET
-           customer_id = EXCLUDED.customer_id,
+           customer_id = COALESCE(EXCLUDED.customer_id, sd_orders.customer_id),
            cancelled_at = EXCLUDED.cancelled_at, cancel_reason = EXCLUDED.cancel_reason,
            shopify_updated_at = EXCLUDED.shopify_updated_at,
            financial_status = EXCLUDED.financial_status,

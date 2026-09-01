@@ -56,7 +56,7 @@ export class SalesScheduler implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit() {
     if (!config.shopify.scheduleEnabled) {
-      this.log.log('scheduled sync disabled (SHOPIFY_SCHEDULE_ENABLED is not true)');
+      this.log.log('scheduled sync disabled (SHOPIFY_SCHEDULE_ENABLED=false)');
       return;
     }
     if (this.shopify.source.kind !== 'live') {
@@ -64,10 +64,39 @@ export class SalesScheduler implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    this.every(15 * 60_000, 'reconciliation', () => this.sync.reconcile());
-    // Three days at hour grain: today and yesterday for the pulse strip, plus
-    // one day of slack so a restart cannot leave a gap.
-    this.every(60 * 60_000, 'hourly snapshot', () => this.snapshots.captureHourly(3));
+    /* Reconciliation refreshes the snapshots when it actually wrote something.
+       Without this, an order that arrived by reconciliation rather than by
+       webhook -- a missed delivery, a tunnel that was down, anything the
+       fifteen-minute sweep exists to catch -- lands in the mirror and leaves
+       every headline figure untouched until the top of the hour. The two lanes
+       have to be joined on both paths, not only the fast one. */
+    this.every(15 * 60_000, 'reconciliation', async () => {
+      const written = await this.sync.reconcile();
+      /* Ask for a capture, but let the debounce and the in-flight lock in
+         SnapshotService decide whether one actually runs. On a cold start this
+         and the hourly job fire seconds apart; both used to proceed, which was
+         four ShopifyQL queries at once and a throttled failure. */
+      if (written > 0) this.snapshots.scheduleRefresh(60_000);
+      return written;
+    }, { runAtStartup: true, startupDelayMs: 10_000 });
+
+    /* Day grain as well as hour grain, every hour.
+     *
+     * This used to capture hours only, on the reasoning that a day-grain row
+     * for last March cannot change. True, but the dashboard's freshness banner
+     * reports the age of the *oldest* figure on the page against a 180-minute
+     * budget -- and day rows refreshed only by the nightly job are up to
+     * twenty-four hours old. The banner was therefore guaranteed to appear
+     * every afternoon whether or not anything was actually wrong, which is the
+     * fastest way to teach people to ignore it.
+     *
+     * Two ShopifyQL queries and an upsert of a few hundred rows, hourly. The
+     * nightly job stays: it is the one that also refreshes breakdowns and
+     * corrects figures Shopify has since revised.
+     */
+    this.every(60 * 60_000, 'hourly snapshot',
+      () => this.snapshots.refreshRecent(),
+      { runAtStartup: true, startupDelayMs: 20_000 });
 
     /* The overnight jobs are checked every ten minutes rather than scheduled at
        an offset from start-up: a process restarted at 01:59 would otherwise
@@ -88,11 +117,15 @@ export class SalesScheduler implements OnModuleInit, OnModuleDestroy {
       }
     });
 
-    this.log.log('scheduled sync started');
+    this.log.log(
+      'scheduled sync started — reconcile 15m, snapshots hourly, ' +
+      'nightly 02:00 Cairo, watchdog 03:00 Cairo');
   }
 
   onModuleDestroy() {
-    for (const t of this.timers) clearInterval(t);
+    // Both kinds live in one list; clearing an id with the wrong function is a
+    // no-op in Node, so one pass with each is simpler than tracking types.
+    for (const t of this.timers) { clearInterval(t); clearTimeout(t); }
     this.timers = [];
   }
 
@@ -100,7 +133,12 @@ export class SalesScheduler implements OnModuleInit, OnModuleDestroy {
    * One job, run on an interval, never able to kill its own timer. The catch is
    * the whole point: a Shopify outage should cost one cycle, not the schedule.
    */
-  private every(ms: number, name: string, job: () => Promise<unknown>) {
+  private every(
+    ms: number,
+    name: string,
+    job: () => Promise<unknown>,
+    { runAtStartup = false, startupDelayMs = 0 } = {},
+  ) {
     let running = false;
     const tick = async () => {
       // Skip rather than overlap. A reconciliation that takes longer than its
@@ -117,5 +155,24 @@ export class SalesScheduler implements OnModuleInit, OnModuleDestroy {
       }
     };
     this.timers.push(setInterval(tick, ms));
+
+    /* `setInterval` fires after the first period, not at zero.
+     *
+     * That gap is why a freshly started server reported "the oldest figure was
+     * read 22 hours ago" and kept reporting it: nothing had run yet, and
+     * nothing would until a whole interval elapsed. On the overnight jobs it is
+     * worse -- a process restarted at 01:59 would wait until 02:59.
+     *
+     * The startup delay is not decoration. It keeps these off the critical path
+     * while the first requests are served, and it staggers the jobs so they do
+     * not all call Shopify in the same second.
+     */
+    if (runAtStartup) {
+      const t = setTimeout(() => {
+        this.log.log(`${name}: initial run`);
+        void tick();
+      }, startupDelayMs);
+      this.timers.push(t as unknown as NodeJS.Timeout);
+    }
   }
 }

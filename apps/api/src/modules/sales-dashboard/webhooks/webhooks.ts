@@ -19,17 +19,9 @@ import { query, one } from '../../../common/db';
 import { ShopContext } from '../analytics/snapshot.service';
 import { WebhookProcessor } from './webhook-processor';
 
-export const WEBHOOK_TOPICS = [
-  'orders/create', 'orders/updated', 'orders/paid', 'orders/cancelled',
-  /* Deletion has to be subscribed to explicitly, and it is the one change no
-     other mechanism can catch. Reconciliation asks Shopify for orders whose
-     `updated_at` moved; a deleted order simply stops appearing, and absence is
-     not an event a delta pull can see. Without this topic a deleted order stays
-     in the mirror forever. */
-  'orders/delete',
-  'refunds/create', 'customers/create', 'customers/update',
-  'bulk_operations/finish',
-];
+// Re-exported so existing imports keep working; the list itself lives in
+// topics.ts, which has no dependencies of its own.
+export { WEBHOOK_TOPICS } from './topics';
 
 /** GraphQL enum names are not derivable from the topic strings by any
  *  consistent rule -- note ORDERS_CREATE against ORDERS_UPDATED. */

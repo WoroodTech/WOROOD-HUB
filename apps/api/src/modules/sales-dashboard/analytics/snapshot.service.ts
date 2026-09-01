@@ -234,39 +234,71 @@ export class SnapshotService {
   }
 
   /**
-   * Refresh only what a new order can have changed: the last few days.
+   * The capture a new order should trigger.
    *
-   * The dashboard reads snapshots, not the order mirror, so a webhook that
-   * updates `sd_orders` leaves every headline figure untouched until a capture
-   * runs. Before this existed the only things that ran one were the hourly
-   * scheduler and a human with Postman, which meant an order placed at 11:15
-   * was invisible on the dashboard until the top of the hour -- while sitting
-   * plainly in the orders table, which reads from the mirror.
+   * This began as a narrow refresh -- seven days at day grain, forty-eight
+   * hours at hour grain -- on the reasoning that an order changes today's
+   * bucket and possibly yesterday's, never last March. The arithmetic was
+   * right and the conclusion was wrong, because of how freshness is measured.
    *
-   * Seven days rather than thirteen months: an order changes today's bucket and
-   * possibly yesterday's, never last March. A full daily capture is roughly
-   * eight hundred rows and two ShopifyQL queries; this is a few dozen.
+   * The dashboard banner reports the age of the *oldest* figure on the page,
+   * and every snapshot row carries its own `captured_at`. On a ninety-day view
+   * that means rows eight to ninety keep whatever timestamp they were last
+   * written with. Refreshing only the recent end left them untouched, so the
+   * oldest figure stayed old and the banner never cleared -- no matter how many
+   * times the recent end was refreshed.
    *
-   * `debounced` is what makes it safe to call from a webhook. A flash sale
-   * delivers a burst, and one ShopifyQL round trip per order would empty the
-   * rate-limit bucket for no benefit -- the second query would return the same
-   * answer as the fortieth.
+   * So this does what a manual capture does. It is more work than one order
+   * strictly justifies, but "strictly justifies" was the reasoning that
+   * produced a banner nobody could clear, and the cost is bounded: debounced to
+   * one run per burst, a few ShopifyQL queries, well inside the rate limit.
    */
-  async refreshRecent() {
-    const shop = await this.shops.get();
-    const sales = await this.shopify.source.shopifyql(this.salesQuery('day', '-7d'));
-    const sessions = await this.shopify.source.shopifyql(this.sessionsQuery('day', '-7d'));
-    const hourlySales = await this.shopify.source.shopifyql(this.salesQuery('hour', '-2d'));
-    const hourlySessions = await this.shopify.source.shopifyql(this.sessionsQuery('hour', '-2d'));
+  private inFlight: Promise<number> | null = null;
 
-    const n =
-      await this.upsertSeries(shop, 'sales', 'day', sales, 'day') +
-      await this.upsertSeries(shop, 'sessions', 'day', sessions, 'day') +
-      await this.upsertSeries(shop, 'sales', 'hour', hourlySales, 'hour') +
-      await this.upsertSeries(shop, 'sessions', 'hour', hourlySessions, 'hour');
+  async refreshRecent(): Promise<number> {
+    /* One capture at a time, process-wide.
+     *
+     * The guards on the scheduler are per-job, which is not the same thing.
+     * Two different jobs -- the hourly capture and the refresh a reconciliation
+     * asks for after it writes something -- both land here, and on a cold start
+     * they landed within a second of each other. That is four ShopifyQL queries
+     * over thirteen months at once, which emptied the cost bucket and produced
+     * five THROTTLED responses and a failed job.
+     *
+     * A second caller joins the run already in progress rather than starting
+     * another. It gets the same answer, which is correct: the two would have
+     * queried the same range and written the same rows.
+     */
+    if (this.inFlight) {
+      this.log.log('capture already running — joining it rather than starting a second');
+      return this.inFlight;
+    }
 
-    await this.markSync(shop.id, 'sales_snapshot', n);
-    return n;
+    this.inFlight = (async () => {
+      try {
+        const daily = await this.captureDaily();
+        const hourly = await this.captureHourly(3);
+        /* Breakdowns too, and leaving them out was the third time the same
+           mistake was made in one build.
+        
+           Top products, traffic sources, device and country are their own rows
+           in sd_metric_snapshots, and they feed real widgets. Refreshing only
+           the time series left them holding whatever timestamp they were last
+           written with -- and since the banner reports the age of the *oldest*
+           figure on the page, a stale breakdown row kept it showing "5 hours
+           ago" while eight hundred freshly captured rows sat beside it.
+        
+           The rule that keeps being relearned: a partial refresh cannot clear a
+           whole-page freshness check. If the page reads it, this has to write
+           it. */
+        const breakdowns = await this.captureBreakdowns();
+        return daily + hourly + breakdowns;
+      } finally {
+        this.inFlight = null;
+      }
+    })();
+
+    return this.inFlight;
   }
 
   private refreshTimer: NodeJS.Timeout | null = null;

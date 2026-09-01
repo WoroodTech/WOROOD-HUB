@@ -375,22 +375,49 @@ export class LiveShopifySource implements ShopifySource {
     const url = `https://${config.shopify.shopDomain}/admin/api/${config.shopify.apiVersion}/graphql.json`;
     let refreshedOnce = false;
 
-    for (let attempt = 0; attempt < 5; attempt++) {
+    /* Six attempts, not five. With the floored backoff above that is roughly a
+       minute of patience before giving up, which is the right trade for a
+       scheduled capture: finishing late is fine, failing is not. */
+    let lastNetworkError: any = null;
+    for (let attempt = 0; attempt < 6; attempt++) {
       await this.governor.acquire(10);
       /* An explicit timeout, because Node's fetch has none. Without it a
          Shopify call that never answers holds the request open indefinitely --
          the same class of failure as the Redis hang above, and just as opaque
          from the outside. Thirty seconds is generous for the Admin API; the
          bulk path does its waiting by polling, not by holding a socket. */
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Shopify-Access-Token': await this.tokens.getToken(),
-        },
-        body: JSON.stringify({ query: q, variables }),
-        signal: AbortSignal.timeout(30_000),
-      });
+      let res: Response;
+      try {
+        res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Shopify-Access-Token': await this.tokens.getToken(),
+          },
+          body: JSON.stringify({ query: q, variables }),
+          signal: AbortSignal.timeout(30_000),
+        });
+      } catch (e: any) {
+        /* A transport failure, not a Shopify answer: DNS, a dropped connection,
+         * a laptop's wifi, or the thirty-second timeout above.
+         *
+         * This used to escape the loop entirely. Six retries existed for
+         * Shopify's own errors and none for the network, so a momentary blip
+         * failed a scheduled capture outright -- observed twice as a bare
+         * "fetch failed" with no retry between them. A network that comes back
+         * in two seconds should cost two seconds, not a cycle.
+         *
+         * The last attempt rethrows, so a genuinely unreachable Shopify still
+         * surfaces rather than being swallowed into a generic message.
+         */
+        lastNetworkError = e;
+        if (attempt === 5) {
+          throw new Error(`Shopify unreachable after ${attempt + 1} attempts: ${e?.message ?? e}`);
+        }
+        this.log.warn(`network error talking to Shopify (attempt ${attempt + 1}): ${e?.message ?? e}`);
+        await this.backoff(attempt);
+        continue;
+      }
 
       if (res.status === 401 && !refreshedOnce) {
         refreshedOnce = true;
@@ -420,14 +447,31 @@ export class LiveShopifySource implements ShopifySource {
       }
       return body.data as T;
     }
-    throw new Error('Shopify request failed after retries');
+    throw new Error(
+      lastNetworkError
+        ? `Shopify request failed after retries (last network error: ${lastNetworkError?.message ?? lastNetworkError})`
+        : 'Shopify request failed after retries');
   }
 
   /** Backoff starts at one second, Shopify's documented recommendation, with
    *  full jitter so a fleet does not retry in lockstep. */
+  /**
+   * Exponential backoff with a floor.
+   *
+   * This was full jitter -- `Math.random() * ceiling` -- which allows a sleep
+   * of nearly zero at any attempt. Five retries could therefore finish in six
+   * seconds, and against a cost bucket that refills at 200 points a second that
+   * is not long enough for an expensive ShopifyQL query to become affordable.
+   * The observed failure was five throttles in six seconds and then a give-up.
+   *
+   * Half the window is fixed and half is jittered: each attempt is guaranteed
+   * to wait longer than the last, while the random half still spreads out
+   * callers that were throttled together.
+   */
   private backoff(attempt: number) {
     const ceiling = Math.min(1000 * 2 ** attempt, 16_000);
-    return new Promise((r) => setTimeout(r, Math.random() * ceiling));
+    const wait = ceiling / 2 + Math.random() * (ceiling / 2);
+    return new Promise((r) => setTimeout(r, wait));
   }
 
   async orders(): Promise<any[]> {
