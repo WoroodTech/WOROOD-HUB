@@ -164,11 +164,37 @@ export class BackfillService {
     if (!op?.id) throw new Error('bulkOperationRunQuery returned no operation');
 
     this.log.log(`bulk operation ${op.id} started (${op.status})`);
+
+    /* The sixty-day caveat, but only when it applies.
+     *
+     * This used to print unconditionally on any unbounded backfill, which was
+     * accurate against an app holding only `read_orders` and actively
+     * misleading against one that holds `read_all_orders` -- it warned that
+     * history was being truncated in the same minute the export pulled 92,438
+     * orders going back years. A caution that fires when it does not apply
+     * teaches people to skip reading it.
+     */
+    const scopes = await this.grantedScopes();
+    const truncated = scopes !== null && !scopes.includes('read_all_orders');
+
     return {
       operationId: op.id,
-      note: since ? undefined :
+      note: since || !truncated ? undefined :
         'Without read_all_orders Shopify serves the last 60 days only, and does so silently.',
     };
+  }
+
+  /** What the app is actually granted, or null if it cannot be determined --
+   *  in which case no claim is made either way. */
+  private async grantedScopes(): Promise<string[] | null> {
+    try {
+      const data = await this.shopify.source.graphql<any>(
+        `{ currentAppInstallation { accessScopes { handle } } }`);
+      const scopes = data?.currentAppInstallation?.accessScopes;
+      return Array.isArray(scopes) ? scopes.map((s: any) => s.handle) : null;
+    } catch {
+      return null;
+    }
   }
 
   /** Poll until the operation leaves RUNNING, then ingest. `bulkOperation(id:)`

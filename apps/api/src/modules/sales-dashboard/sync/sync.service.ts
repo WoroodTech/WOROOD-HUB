@@ -78,6 +78,20 @@ export class SyncService {
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
                  $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
          ON CONFLICT (shopify_gid) DO UPDATE SET
+           -- Never null an existing customer link.
+           --
+           -- Not every source of an order carries the customer. The webhook
+           -- payload does; the hydration read deliberately does not, because
+           -- asking for protected customer fields risks the whole query being
+           -- denied and losing the line items with it. Written as plain
+           -- EXCLUDED.customer_id, the hydration that runs seconds after a
+           -- webhook erased the name the webhook had just stored: a customer
+           -- that appeared and then turned into a dash, most often after a
+           -- refund, which triggers an extra orders/updated.
+           --
+           -- COALESCE makes the write additive. A source that knows the
+           -- customer sets it; a source that does not leaves it alone. The
+           -- link is only ever cleared deliberately, by the retention job.
            customer_id = COALESCE(EXCLUDED.customer_id, sd_orders.customer_id),
            cancelled_at = EXCLUDED.cancelled_at, cancel_reason = EXCLUDED.cancel_reason,
            shopify_updated_at = EXCLUDED.shopify_updated_at,
@@ -89,7 +103,7 @@ export class SyncService {
            net_payment = EXCLUDED.net_payment,
            total_outstanding = EXCLUDED.total_outstanding
          RETURNING id`,
-        [shop.id, o.id, o.name, parseInt(String(o.name).replace(/\D/g, ''), 10) || null,
+        [shop.id, o.id, o.name, orderNumber(o.name),
          customerId, new Date(o.createdAt), o.processedAt ?? null,
          o.cancelledAt ?? null, o.cancelReason ?? null, updatedAt,
          !!o.test, o.displayFinancialStatus ?? null, o.displayFulfillmentStatus ?? null,
@@ -584,4 +598,23 @@ export class SyncController {
   @Post('retention')
   @Permissions(PERMISSIONS.SYNC_MANAGE)
   retention() { return this.sync.runRetention(); }
+}
+
+/**
+ * The numeric part of a Shopify order name, or null.
+ *
+ * `#1001` gives 1001. So does `WOR-1001-A`, which is the point: the column
+ * exists for sorting and for the number people read out, and the name itself is
+ * kept verbatim alongside it.
+ *
+ * `Number.isSafeInteger` is the guard that was missing. The column is now
+ * bigint and handles ten digits comfortably, but a name with twenty digits in
+ * it would exceed what JavaScript can represent exactly, and a silently wrong
+ * number is worse than no number -- the name column still has the truth.
+ */
+function orderNumber(name: unknown): number | null {
+  const digits = String(name ?? '').replace(/\D/g, '');
+  if (!digits) return null;
+  const n = Number(digits);
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
