@@ -3,7 +3,7 @@
     "module": "commonjs", "target": "ES2022", "lib": ["ES2022"],
     "emitDecoratorMetadata": true, "experimentalDecorators": true,
     "esModuleInterop": true, "allowSyntheticDefaultImports": true,
-    "sourceMap": true, "outDir": "./dist", "baseUrl": "./",
+    "sourceMap": true, "outDir": "./dist",
     "skipLibCheck": true, "strictNullChecks": false, "noImplicitAny": false,
     "strictBindCallApply": false, "forceConsistentCasingInFileNames": false,
     "resolveJsonModule": true,
