@@ -184,6 +184,38 @@ export interface AvailabilityResponse {
   unavailable: RoomAvailability[];
 }
 
+export interface RoomCalendarEntry {
+  id: string; reference: string; title: string;
+  startsAt: string; endsAt: string;
+  status: 'PENDING' | 'CONFIRMED';
+  organiserName: string;
+  isMine: boolean;
+  canManage: boolean;
+}
+
+export type RoomCalendarBlock =
+  | {
+      type: 'BOOKING'; id: string; reference: string; title: string;
+      startsAt: string; endsAt: string; status: 'PENDING' | 'CONFIRMED';
+      organiserName: string; isMine: boolean; canManage: boolean;
+    }
+  | { type: 'BLACKOUT'; startsAt: string; endsAt: string; reason: string | null }
+  | { type: 'BUFFER'; startsAt: string; endsAt: string };
+
+/** A room's timeline for one day, in the room's own timezone. */
+export interface RoomCalendarResponse {
+  room: {
+    id: string;
+    name: string;
+    nameAr: string | null;
+    opensAt: string;
+    closesAt: string;
+    bufferMinutes: number;
+  };
+  date: string;
+  blocks: RoomCalendarBlock[];
+}
+
 export interface Reservation {
   id: string; reference: string; title: string; description: string | null;
   startsAt: string; endsAt: string;
