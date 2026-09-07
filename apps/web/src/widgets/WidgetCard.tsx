@@ -2,6 +2,7 @@ import type { WidgetEnvelope } from '../contract';
 import { Card, DataAge } from '../components/Card';
 import { ErrorState, PlaceholderState } from '../components/States';
 import { isTile, knowsKind, renderWidget } from './registry';
+import { Icon } from '../components/Icon';
 
 export function WidgetCard({ envelope, width, slot, currency, stale }: {
   envelope: WidgetEnvelope;
@@ -43,7 +44,19 @@ export function WidgetCard({ envelope, width, slot, currency, stale }: {
     <div className="grid__cell" style={{ ['--span' as string]: String(width) }}>
       <Card
         title={title}
-        actions={<DataAge seconds={dataAgeSeconds} generatedAt={generatedAt} stale={stale} />}
+        actions={
+          <span className="card__actionrow">
+            {/* Says where the number came from, because these two kinds of
+                figure cannot be checked the same way. Everything read from
+                ShopifyQL can be held against a Shopify admin report line for
+                line; a cohort retention percentage cannot, because Shopify does
+                not publish one. Marking it is the difference between a reader
+                who knows to expect a small divergence and one who finds it and
+                stops trusting the whole screen. */}
+       
+            <DataAge seconds={dataAgeSeconds} generatedAt={generatedAt} stale={stale} />
+          </span>
+        }
       >
         {body}
       </Card>

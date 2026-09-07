@@ -4,6 +4,9 @@ import './descriptor';                    // side effect: registers the module
 import { ShopifyService, TokenManager, CostGovernor } from './shopify/shopify.service';
 import { ShopContext, SnapshotService } from './analytics/snapshot.service';
 import { MetricsService } from './metrics/metrics.service';
+import { CustomerMetricsService } from './metrics/customer-metrics.service';
+import { AbandonedCheckoutService } from './sync/abandoned-checkout.service';
+import { StoreCreditService } from './sync/store-credit.service';
 import { AccessService } from './dashboards/access.service';
 import { DashboardsController } from './dashboards/dashboards.controller';
 import { PortletsController } from './portlets/portlets.controller';
@@ -24,7 +27,7 @@ import { SalesGateway } from './realtime/sales.gateway';
   controllers: [DashboardsController, PortletsController, WebhooksController, SyncController],
   providers: [
     TokenManager, CostGovernor, ShopifyService,
-    ShopContext, SnapshotService, MetricsService, AccessService,
+    ShopContext, SnapshotService, MetricsService, CustomerMetricsService, AbandonedCheckoutService, StoreCreditService, AccessService,
     WebhookProcessor, SyncService, BackfillService, SalesScheduler, SalesGateway,
   ],
   exports: [ShopContext, SnapshotService, SyncService, BackfillService, MetricsService],

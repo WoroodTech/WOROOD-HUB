@@ -13,6 +13,8 @@ node_modules/
 fixtures/shopify/
 
 Shopify integration report.md
+Customer care report.md
+Sales dashboard reference.md
 
 # Build
 dist/
@@ -42,6 +44,7 @@ temp/
 *.tar
 *.gz
 *.bundle
+*.dump
 
 # Runtime
 *.pid

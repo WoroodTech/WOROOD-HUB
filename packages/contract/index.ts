@@ -276,23 +276,33 @@ export interface DashboardDetail extends DashboardSummary {
   widgets: DashboardWidgetPlacement[];
 }
 
-export interface KpiPayload {
+/** Marks a figure computed inside WOROOD HUB rather than read from ShopifyQL.
+ *
+ *  Cohort retention, repeat-purchase rate and RFM segmentation have no
+ *  ShopifyQL metric to read, so they are derived from the order mirror. They
+ *  therefore cannot be checked against a Shopify admin report, and small
+ *  differences from Shopify's own customer reports are expected. A number that
+ *  cannot be reconciled must not look like one that can, so widgets carrying
+ *  this flag are labelled in the interface. */
+export interface LocallyComputed { computedLocally?: boolean }
+
+export interface KpiPayload extends LocallyComputed {
   kind: 'kpi'; label: string; value: number;
   format: 'money' | 'integer' | 'percent'; currency?: string;
   comparedTo?: number | null; comparisonLabel?: string;
   provisional?: boolean; sparkline?: number[];
 }
-export interface SeriesPayload {
+export interface SeriesPayload extends LocallyComputed {
   kind: 'line' | 'bar'; format: 'money' | 'integer' | 'percent';
   currency?: string; timezone: string; provisionalFrom?: string | null;
   series: Array<{ key: string; label: string; format?: 'money' | 'integer' | 'percent';
                   points: Array<{ t: string; v: number }> }>;
 }
-export interface CategoryPayload {
+export interface CategoryPayload extends LocallyComputed {
   kind: 'donut' | 'bar'; format: 'money' | 'integer' | 'percent'; currency?: string;
   items: Array<{ label: string; value: number; secondary?: number | null }>;
 }
-export interface TablePayload {
+export interface TablePayload extends LocallyComputed {
   kind: 'table';
   columns: Array<{ key: string; label: string;
                    format: 'text' | 'money' | 'integer' | 'percent' | 'datetime' | 'status';
@@ -301,7 +311,7 @@ export interface TablePayload {
   /** Set when columns were withheld because the caller lacks a permission. */
   redactedColumns?: string[];
 }
-export interface FunnelPayload { kind: 'funnel'; steps: Array<{ label: string; value: number }> }
+export interface FunnelPayload extends LocallyComputed { kind: 'funnel'; steps: Array<{ label: string; value: number }> }
 
 export type WidgetPayload = KpiPayload | SeriesPayload | CategoryPayload | TablePayload | FunnelPayload;
 

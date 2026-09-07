@@ -8,6 +8,7 @@ import { query, one } from '../../../common/db';
 import { ShopContext, SnapshotService } from '../analytics/snapshot.service';
 import { redis, ShopifyService } from '../shopify/shopify.service';
 import { SyncService } from '../sync/sync.service';
+import { StoreCreditService } from '../sync/store-credit.service';
 
 @Injectable()
 export class WebhookProcessor {
@@ -17,6 +18,7 @@ export class WebhookProcessor {
     private snapshots: SnapshotService,
     private shopify: ShopifyService,
     private sync: SyncService,
+    private credit: StoreCreditService,
   ) {}
 
   /** In this build the queue is a Redis list; BullMQ slots in unchanged behind
@@ -69,9 +71,18 @@ export class WebhookProcessor {
          * fetch -- a network blip, or the protected-customer-data denial that
          * already affects the backfill -- costs richness rather than the record.
          */
-        if (ev.topic === 'orders/create' || ev.topic === 'orders/updated') {
-          await this.hydrate(ev.payload).catch((e) =>
-            this.log.warn(`could not hydrate ${ev.topic}: ${e?.message ?? e}`));
+        /* Paid and cancelled are here too, and their absence was a real gap.
+         *
+         * Hydration re-reads the order and pushes it through `upsertOrders`,
+         * which is also what recomputes the customer's lifetime spend. Lifetime
+         * spend sums `net_payment` -- money actually collected -- and
+         * `orders/paid` is precisely the event where that changes. Without it,
+         * a payment moved the order row immediately and left the customer's
+         * spend, and every Customer Insights figure built on it, waiting for
+         * the fifteen-minute reconciliation to notice. */
+        if (ev.topic === 'orders/create' || ev.topic === 'orders/updated'
+            || ev.topic === 'orders/paid' || ev.topic === 'orders/cancelled') {
+          await this.hydrateWithRetry(ev.payload, ev.topic);
         }
       }
     } catch (e: any) {
@@ -89,7 +100,11 @@ export class WebhookProcessor {
    */
   private async apply(topic: string, payload: any, triggeredAt: Date | null): Promise<boolean> {
     const shop = await this.shops.get();
+    if (topic === 'shop/update') return this.applyShopUpdate();
+    if (topic === 'app/uninstalled') return this.applyUninstall();
+    if (topic === 'customers/delete') return this.applyCustomerDeletion(payload);
     if (topic.startsWith('customers/')) return this.applyCustomer(shop.id, payload);
+    if (topic.startsWith('checkouts/')) return this.applyCheckout(topic, payload);
     if (topic === 'orders/delete') return this.applyOrderDeletion(payload);
     if (topic.startsWith('orders/')) return this.applyOrder(shop.id, payload, triggeredAt);
     if (topic === 'refunds/create') return this.applyRefund(payload);
@@ -118,6 +133,41 @@ export class WebhookProcessor {
    * payload already carried the customer and has been applied; asking for them
    * again risks the whole read being denied and losing the line items with it.
    */
+  /**
+   * Hydration, retried, because more depends on it than was intended.
+   *
+   * Line items are written only by `upsertOrders` -- the webhook's own order
+   * write does not touch them -- so hydration is the sole path by which an
+   * order arriving through a webhook gets its contents. A single failure left
+   * the order in the mirror showing zero items until reconciliation happened to
+   * revisit it, which is the "ITEMS 0" seen on the orders page.
+   *
+   * Writing a second line-item path into the webhook handler would fix the
+   * symptom and create the real problem: two places writing one table, which is
+   * how orders_count and first_order_at went wrong. So the single path is made
+   * reliable instead.
+   *
+   * Three attempts over about fifteen seconds, then give up and leave it to
+   * reconciliation -- which is what the fifteen-minute sweep is for. The retry
+   * covers a blip; it is not a substitute for the safety net.
+   */
+  private async hydrateWithRetry(payload: any, topic: string): Promise<void> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await this.hydrate(payload);
+        return;
+      } catch (e: any) {
+        if (attempt === 2) {
+          this.log.warn(
+            `could not hydrate ${topic} after 3 attempts (${e?.message ?? e}) — ` +
+            `the order is mirrored but its line items are not; reconciliation will fill them in`);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 2_000 * (attempt + 1)));
+      }
+    }
+  }
+
   private async hydrate(payload: any): Promise<void> {
     if (this.shopify.source.kind !== 'live') return;
     const gid = payload?.admin_graphql_api_id;
@@ -157,6 +207,110 @@ export class WebhookProcessor {
     await this.publish('order');
   }
 
+  /**
+   * A customer removed in Shopify.
+   *
+   * Soft, like the order equivalent: their orders still have to resolve to
+   * somebody, and the row is the only place that name survives. What changes is
+   * that they stop being counted -- every customer figure is a ratio over the
+   * base, so leaving them in quietly skews all of them.
+   *
+   * The payload is a stub, which is why this cannot go through `applyCustomer`
+   * -- that expects a whole customer and would null every column it did not
+   * find.
+   */
+  /**
+   * The shop's own settings changed.
+   *
+   * The payload carries them, but they are re-read from Shopify instead: the
+   * webhook body arrives in the REST resource shape and the fields do not line
+   * up with the GraphQL ones the sync already knows how to write. One extra
+   * call, on an event that fires rarely, in exchange for one code path.
+   *
+   * This matters more than it looks. Timezone decides how every ShopifyQL query
+   * buckets a day, and currency labels every money figure on every dashboard.
+   */
+  private async applyShopUpdate(): Promise<boolean> {
+    const before = await this.shops.get();
+    const after = await this.sync.syncShopSettings();
+    if (after.timezone !== before.iana_timezone || after.currency !== before.currency_code) {
+      this.log.warn(
+        `shop settings changed: ${before.currency_code}/${before.iana_timezone} → ` +
+        `${after.currency}/${after.timezone}. Snapshots captured before now were ` +
+        `aggregated on the old timezone; a full re-capture is advisable.`);
+      // Recapture on the new settings rather than leaving mixed history.
+      this.snapshots.scheduleRefresh(5_000);
+    }
+    return true;
+  }
+
+  /**
+   * The app was removed from the store.
+   *
+   * Every subscription goes with it, so this is the last delivery that will
+   * ever arrive. Nothing can be done about it from here -- the point is to say
+   * so, loudly, while there is still a message to say it in. Otherwise the
+   * dashboards keep rendering the last figures they had and look healthy for
+   * as long as anyone cares to read them.
+   */
+  private async applyUninstall(): Promise<boolean> {
+    this.log.error(
+      'The Shopify app has been uninstalled. No further webhooks will arrive and ' +
+      'every sync will fail from now on. The dashboards will keep showing the ' +
+      'last data they received.');
+    await query(
+      `UPDATE sd_sync_state SET status = 'ERROR',
+              error = 'App uninstalled from Shopify'
+        WHERE shop_id = (SELECT id FROM sd_shops LIMIT 1)`);
+    return true;
+  }
+
+  private async applyCustomerDeletion(payload: any): Promise<boolean> {
+    const gid = payload?.admin_graphql_api_id ?? payload?.id;
+    if (!gid) return false;
+    const res = await query(
+      `UPDATE sd_customers SET deleted_at = now()
+        WHERE shopify_gid = $1 AND deleted_at IS NULL RETURNING id`, [String(gid)]);
+    if (res.length) this.log.log(`customer ${gid} deleted in Shopify — mirrored as removed`);
+    return true;
+  }
+
+  /**
+   * A checkout created, updated or deleted.
+   *
+   * Only abandoned ones are of interest, and Shopify's definition of abandoned
+   * -- contact details entered, purchase not completed -- is not something the
+   * payload states directly. So rather than reasoning about it here, the
+   * targeted pull is left to the thirty-minute sweep and this only handles the
+   * two things a webhook can settle on its own: a checkout that completed, and
+   * one that was deleted.
+   *
+   * Completion is the valuable half. It is what turns an abandonment into a
+   * recovery, and it is the figure the whole dashboard turns on -- waiting half
+   * an hour to learn that someone came back would make the recovery rate
+   * lag exactly when someone is watching it.
+   */
+  private async applyCheckout(topic: string, payload: any): Promise<boolean> {
+    const gid = payload?.admin_graphql_api_id;
+    if (!gid) return true;
+
+    if (topic === 'checkouts/delete') {
+      await query(`DELETE FROM sd_abandoned_checkouts WHERE shopify_gid = $1`, [String(gid)]);
+      return true;
+    }
+
+    // completed_at arriving means the customer came back and bought.
+    if (payload.completed_at) {
+      const res = await query(
+        `UPDATE sd_abandoned_checkouts
+            SET completed_at = COALESCE(completed_at, $2), shopify_updated_at = now()
+          WHERE shopify_gid = $1 RETURNING id`,
+        [String(gid), payload.completed_at]);
+      if (res.length) this.log.log(`checkout ${gid} recovered`);
+    }
+    return true;
+  }
+
   private async applyOrderDeletion(payload: any): Promise<boolean> {
     const gid = payload?.admin_graphql_api_id ?? payload?.id;
     if (!gid) return false;
@@ -166,7 +320,18 @@ export class WebhookProcessor {
         WHERE shopify_gid = $1 AND deleted_at IS NULL
         RETURNING id`, [String(gid)]);
 
-    if (res.length) this.log.log(`order ${gid} deleted in Shopify — mirrored as removed`);
+    if (res.length) {
+      this.log.log(`order ${gid} deleted in Shopify — mirrored as removed`);
+      /* The order is excluded from every figure now, and lifetime spend is a
+         stored sum rather than a live one -- so it has to be told. Otherwise a
+         deleted order keeps contributing to the customer's spend indefinitely,
+         which is the one place a soft delete can still be counted. */
+      const owner = await one(
+        `SELECT customer_id FROM sd_orders WHERE shopify_gid = $1`, [String(gid)]);
+      if (owner?.customer_id) {
+        await this.sync.refreshCustomerSpend([owner.customer_id]);
+      }
+    }
     return true;
   }
 
@@ -181,6 +346,30 @@ export class WebhookProcessor {
     }
 
     const money = (v: any) => (v == null ? 0 : parseFloat(String(v)));
+    const applied = await this.writeOrder(shopId, o, gid, updatedAt, money);
+
+    /* Refresh the customer's statistics here rather than leaving it to
+       hydration.
+    
+       Hydration is best-effort and catches its own errors, by design -- losing
+       richness is better than losing the record. But that made every customer
+       figure depend on an optional step succeeding: a failed hydrate left the
+       order updated and orders_count, first_order_at and total_spent frozen
+       until reconciliation happened to touch the same order again.
+    
+       This path writes the order, so this path owns the consequences. */
+    const owner = await one(
+      `SELECT customer_id FROM sd_orders WHERE shopify_gid = $1`, [String(gid)]);
+    if (owner?.customer_id) {
+      await this.sync.refreshCustomerSpend([owner.customer_id]).catch((e) =>
+        this.log.warn(`could not refresh customer stats: ${e?.message ?? e}`));
+    }
+    return applied;
+  }
+
+  private async writeOrder(
+    shopId: string, o: any, gid: any, updatedAt: Date, money: (v: any) => number,
+  ): Promise<boolean> {
     await query(
       `INSERT INTO sd_orders (shop_id, shopify_gid, name, order_number, shopify_created_at,
           processed_at, cancelled_at, cancel_reason, shopify_updated_at, test,
@@ -216,12 +405,21 @@ export class WebhookProcessor {
 
   private async applyCustomer(shopId: string, c: any): Promise<boolean> {
     const gid = c.admin_graphql_api_id ?? c.id;
+    /* Identity only. `orders_count` and `total_spent` are seeded on insert so a
+       brand-new customer is not zero for a moment, and are deliberately NOT
+       updated on conflict.
+    
+       Shopify counts on its own basis; every customer figure here excludes
+       test, cancelled and deleted orders. Letting this payload overwrite them
+       would undo whatever `refreshCustomerSpend` last computed, and the two
+       would take turns winning depending on which webhook arrived last -- a
+       repeat-purchase rate that changes when a customer edits their phone
+       number is the kind of wrong nobody thinks to look for. */
     await query(
       `INSERT INTO sd_customers (shop_id, shopify_gid, orders_count, total_spent,
           display_name, email, phone, shopify_created_at, shopify_updated_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
        ON CONFLICT (shopify_gid) DO UPDATE SET
-         orders_count = EXCLUDED.orders_count, total_spent = EXCLUDED.total_spent,
          display_name = EXCLUDED.display_name, email = EXCLUDED.email,
          phone = EXCLUDED.phone, shopify_updated_at = EXCLUDED.shopify_updated_at`,
       [shopId, String(gid), c.orders_count ?? 0, parseFloat(c.total_spent ?? '0'),
@@ -254,12 +452,29 @@ export class WebhookProcessor {
 
     await query(
       `INSERT INTO sd_refunds (order_id, shopify_gid, total_refunded, shopify_created_at, note)
-       VALUES ($1,$2,$3,$4,$5) ON CONFLICT (shopify_gid) DO NOTHING`,
+       -- Corrective: a refund amount can be adjusted after it is recorded, and
+       -- DO NOTHING would freeze whichever value arrived first.
+       VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (shopify_gid) DO UPDATE SET
+         total_refunded = EXCLUDED.total_refunded, note = EXCLUDED.note`,
       [order.id, String(r.admin_graphql_api_id ?? r.id),
        parseFloat(r.total_refunded ?? '0'), r.created_at ?? new Date(), r.note ?? null]);
 
     await this.hydrate({ admin_graphql_api_id: order.shopify_gid }).catch((e) =>
       this.log.warn(`could not re-read order after refund: ${e?.message ?? e}`));
+
+    /* A refund is the main way store credit comes into existence -- a return
+       taken as credit rather than cash. The full export runs nightly, which
+       would leave a credit issued this morning invisible until tomorrow, so the
+       one customer involved is refreshed now. Cheap: one customer, not 37,000. */
+    const owner = await one(
+      `SELECT c.shopify_gid FROM sd_orders o
+         JOIN sd_customers c ON c.id = o.customer_id
+        WHERE o.id = $1`, [order.id]);
+    if (owner?.shopify_gid) {
+      await this.credit.syncCustomer(owner.shopify_gid).catch((e) =>
+        this.log.warn(`could not refresh store credit after refund: ${e?.message ?? e}`));
+    }
 
     return true;
   }
