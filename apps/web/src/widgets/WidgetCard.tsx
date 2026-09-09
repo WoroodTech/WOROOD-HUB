@@ -53,7 +53,14 @@ export function WidgetCard({ envelope, width, slot, currency, stale }: {
                 not publish one. Marking it is the difference between a reader
                 who knows to expect a small divergence and one who finds it and
                 stops trusting the whole screen. */}
-       
+            {payload?.computedLocally ? (
+              <span
+                className="badge badge--neutral"
+                title="Worked out here from order history, not read from Shopify's reports. Shopify publishes no equivalent figure, so this one cannot be checked against the admin and small differences are expected."
+              >
+                <Icon name="info" size={12} /> computed here
+              </span>
+            ) : null}
             <DataAge seconds={dataAgeSeconds} generatedAt={generatedAt} stale={stale} />
           </span>
         }

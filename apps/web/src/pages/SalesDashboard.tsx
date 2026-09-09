@@ -19,15 +19,33 @@ const RANGES = [
   { key: '13m', label: '13 months' },
 ];
 
+/** Yesterday and the day before, in the shop's own clock -- the two dates the
+ *  comparison opens on, because comparing today with anything is comparing a
+ *  part-day with a whole one. */
+const cairoDay = (offset = 0): string => {
+  const d = new Date();
+  d.setDate(d.getDate() + offset);
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Africa/Cairo', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(d);
+};
+
 export function SalesDashboard() {
   const { key = '' } = useParams();
   const [params, setParams] = useSearchParams();
   const range = params.get('range') ?? '30d';
+  /* Held in the URL beside the range, so a comparison can be shared or
+     bookmarked the way a range already can. */
+  const primary = params.get('primary') ?? cairoDay(-1);
+  const against = params.get('against') ?? cairoDay(-2);
+  const comparing = range === 'compare';
   const { status: rtStatus } = useRealtime();
 
   const { data, isPending, error, refetch, isFetching } = useQuery({
-    queryKey: qk.dashboardData(key, range),
-    queryFn: () => api<DashboardDataResponse>(`/sales/dashboards/${key}/data?range=${encodeURIComponent(range)}`),
+    queryKey: qk.dashboardData(key, comparing ? `compare:${primary}:${against}` : range),
+    queryFn: () => api<DashboardDataResponse>(
+      `/sales/dashboards/${key}/data?range=${encodeURIComponent(range)}`
+      + (comparing ? `&primary=${primary}&against=${against}` : '')),
     placeholderData: (prev) => prev,
   });
 
@@ -91,8 +109,48 @@ export function SalesDashboard() {
               {r.label}
             </button>
           ))}
+          <button
+            type="button"
+            className={`ranges__btn${comparing ? ' is-active' : ''}`}
+            aria-pressed={comparing}
+            onClick={() => setParams(
+              comparing ? { range: '30d' } : { range: 'compare', primary, against },
+              { replace: true })}
+          >
+            Compare days
+          </button>
         </div>
       </header>
+
+      {/* The two dates. Shown only in comparison mode, directly under the range
+          buttons rather than in a dialog: the whole interaction is picking two
+          days and seeing what changed, and a dialog would put a lid on it. */}
+      {comparing ? (
+        <div className="comparedays">
+          <label className="comparedays__field">
+            <span className="comparedays__label">Day</span>
+            <input
+              className="input mono" type="date" value={primary} max={cairoDay()}
+              onChange={(e) => setParams(
+                { range: 'compare', primary: e.target.value, against }, { replace: true })}
+            />
+          </label>
+          <span className="comparedays__vs">compared with</span>
+          <label className="comparedays__field">
+            <span className="comparedays__label">Day</span>
+            <input
+              className="input mono" type="date" value={against} max={cairoDay()}
+              onChange={(e) => setParams(
+                { range: 'compare', primary, against: e.target.value }, { replace: true })}
+            />
+          </label>
+          {primary === against ? (
+            <span className="comparedays__warn">
+              Both dates are the same day — pick two to compare.
+            </span>
+          ) : null}
+        </div>
+      ) : null}
 
       {stale ? (
         <p className="banner banner--stale" role="status">

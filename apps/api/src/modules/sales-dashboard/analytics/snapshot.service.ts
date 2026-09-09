@@ -57,6 +57,12 @@ export class ShopContext {
 }
 
 /** ShopifyQL rows arrive as arrays of strings aligned to the columns. */
+/** One day of hourly buckets, read live rather than from the snapshot store. */
+export interface HourlyDay {
+  sales: Array<{ bucket: string; metrics: Record<string, number> }>;
+  capturedAt: Date;
+}
+
 function toRecords(res: ShopifyQlResult): Record<string, string>[] {
   const names = res.columns.map((c) => c.name);
   return res.rows.map((row) =>
@@ -140,7 +146,196 @@ export class SnapshotService {
 
   /** Hourly: current and previous day at hour grain, for the pulse strip and
    *  the intraday trend. */
-  async captureHourly(sinceDays = 3) {
+  /**
+   * Hourly figures for one specific day, read live from ShopifyQL.
+   *
+   * Not from `sd_metric_snapshots`, and that is the point. The hourly capture
+   * covers three days, so the stored hour buckets only reach back as far as the
+   * job has been running -- ask for a day beyond that and every figure is zero,
+   * which is what the day comparison did for any date more than a week or so
+   * old. ShopifyQL itself has no such limit: `TIMESERIES hour SINCE <day> UNTIL
+   * <day>` answers for any date in the store's history.
+   *
+   * Two queries per comparison, on a deliberate user action, in exchange for
+   * arbitrary history and figures whose age is zero rather than however long
+   * ago that day happened to be current. The rule against querying ShopifyQL
+   * per page view exists for widgets that load on every visit; this is not one.
+   */
+  private dayCache = new Map<string, { at: number; p: Promise<HourlyDay> }>();
+
+  async hourlyForDay(day: string, schema: 'sales' | 'sessions' = 'sales'): Promise<HourlyDay> {
+    /* One call per day per schema, however many widgets ask.
+     *
+     * A comparison dashboard has five widgets wanting the same two days, and
+     * each was making its own ShopifyQL round trip -- ten network calls for one
+     * page, spaced further apart by the cost governor. The request took long
+     * enough that the browser gave up before the server answered, so the data
+     * arrived at a page that had already shown "could not load this".
+     *
+     * Callers arriving while a fetch is in flight join it rather than starting
+     * another. Ten calls become two.
+     *
+     * The result is held for a minute afterwards, which is what makes a page
+     * refresh cheap without making the figures stale in any way anybody would
+     * notice: ShopifyQL's own analytics lag is longer than that.
+     */
+    const key = `${schema}:${day}`;
+    const hit = this.dayCache.get(key);
+    if (hit && Date.now() - hit.at < 60_000) return hit.p;
+
+    const p = this.fetchHourlyForDay(day, schema);
+    this.dayCache.set(key, { at: Date.now(), p });
+    // A failure must not be cached, or one blip poisons the next minute.
+    p.catch(() => this.dayCache.delete(key));
+
+    /* Bounded, because the keys are user-chosen dates: somebody clicking
+       through a month would otherwise grow the map forever. */
+    if (this.dayCache.size > 40) {
+      for (const [k, v] of this.dayCache) {
+        if (Date.now() - v.at > 60_000) this.dayCache.delete(k);
+      }
+    }
+    return p;
+  }
+
+  private async fetchHourlyForDay(
+    day: string, schema: 'sales' | 'sessions',
+  ): Promise<HourlyDay> {
+    const shop = await this.shops.get();
+
+    /* The store first. A day that has already been captured is answered from
+       PostgreSQL, which is both faster and -- more to the point -- still works
+       when Shopify does not. Reaching out to an external service while
+       rendering a screen means an outage there is a blank screen here.
+    
+       A day is only served from the store if it is *complete*: 24 buckets, or
+       the hours elapsed so far for today. A partial capture -- an hourly job
+       that ran at ten past two -- would otherwise be served as the whole day
+       and quietly under-report it. */
+    const stored = await this.storedHoursFor(shop, day, schema);
+    if (stored) return stored;
+
+    const fetched = await this.fetchFromShopify(shop, day, schema);
+
+    /* Written back, so the next reader gets it from the store. A day chosen
+       once from a calendar is usually chosen again -- by the same person
+       comparing a third day against it, or by somebody else the same week. */
+    if (fetched.sales.length) {
+      await this.persistHours(shop, day, schema, fetched).catch((e) =>
+        this.log.warn(`could not store hourly ${schema} for ${day}: ${e?.message ?? e}`));
+    }
+    return fetched;
+  }
+
+  /**
+   * Hourly buckets already in `sd_metric_snapshots`, or null if the day is not
+   * there in full.
+   *
+   * Completeness is the whole question. Returning what is stored regardless
+   * would mean a day captured half-way through reads as a quiet day rather than
+   * a partial one, which is the kind of wrong that looks like a business
+   * problem rather than a data problem.
+   */
+  private async storedHoursFor(
+    shop: Shop, day: string, schema: 'sales' | 'sessions',
+  ): Promise<HourlyDay | null> {
+    const start = DateTime.fromISO(day, { zone: shop.iana_timezone }).startOf('day');
+    if (!start.isValid) return null;
+    const end = start.endOf('day');
+
+    const rows = await query<any>(
+      `SELECT bucket_start, metrics, captured_at FROM sd_metric_snapshots
+        WHERE shop_id = $1 AND schema_name = $2 AND grain = 'hour'
+          AND dimensions = '{}'::jsonb
+          AND bucket_start >= $3 AND bucket_start <= $4
+        ORDER BY bucket_start`,
+      [shop.id, schema, start.toJSDate(), end.toJSDate()]);
+
+    if (!rows.length) return null;
+
+    /* How many hours this day should have. A past day has 24; today has as many
+       as have elapsed. Shopify emits no bucket for an hour with no activity, so
+       a quiet night legitimately produces fewer -- hence the tolerance rather
+       than an exact match. Two missing hours is a quiet shop; twelve is a
+       capture that did not finish. */
+    const now = DateTime.now().setZone(shop.iana_timezone);
+    const isToday = start.hasSame(now, 'day');
+    const expected = isToday ? now.hour + 1 : 24;
+    if (rows.length < Math.max(1, Math.floor(expected * 0.5))) return null;
+
+    // Today is never served from the store: the current hour is still moving.
+    if (isToday) return null;
+
+    return {
+      sales: rows.map((r) => ({
+        bucket: new Date(r.bucket_start).toISOString(),
+        metrics: r.metrics as Record<string, number>,
+      })),
+      capturedAt: new Date(
+        Math.max(...rows.map((r) => new Date(r.captured_at).getTime()))),
+    };
+  }
+
+  /** Write a fetched day into the snapshot store, so it is read from there next
+   *  time. Marked final, because a past day's hours do not move. */
+  private async persistHours(
+    shop: Shop, day: string, schema: 'sales' | 'sessions', data: HourlyDay,
+  ): Promise<void> {
+    const today = DateTime.now().setZone(shop.iana_timezone).toFormat('yyyy-MM-dd');
+    if (day >= today) return;   // still moving; let the hourly job own it
+
+    for (const row of data.sales) {
+      await this.upsert(
+        shop.id, schema, 'hour', new Date(row.bucket), {}, row.metrics, true);
+    }
+  }
+
+  private async fetchFromShopify(
+    shop: Shop, day: string, schema: 'sales' | 'sessions',
+  ): Promise<HourlyDay> {
+    const q = schema === 'sessions'
+      ? `FROM sessions SHOW sessions, online_store_visitors, sessions_with_cart_additions, ` +
+        `sessions_that_reached_checkout, sessions_that_completed_checkout, conversion_rate ` +
+        `TIMESERIES hour SINCE ${day} UNTIL ${day} ` +
+        `WHERE human_or_bot_session = 'human' ${this.tz(shop)}`
+      : `FROM sales SHOW orders, gross_sales, discounts, sales_reversals, net_sales, ` +
+        `shipping_charges, taxes, total_sales, average_order_value ` +
+        `TIMESERIES hour SINCE ${day} UNTIL ${day} ${this.tz(shop)}`;
+
+    const res = await this.shopify.source.shopifyql(q);
+
+    /* Parsed with the same `toRecords` and `num` the capture path uses, rather
+       than by column index.
+    
+       The first version read the timestamp by position and assumed it was
+       first, which threw `Invalid time value` on every widget that touched it.
+       ShopifyQL returns rows as arrays or as objects depending on the query,
+       and the column order is not promised -- `toRecords` already handles both
+       and has done since the capture was written. Reusing it is not only less
+       code; it is the difference between one parser and two that can disagree. */
+    const records = toRecords(res);
+
+    const rows = records.flatMap((rec) => {
+      const raw = rec.hour ?? rec[Object.keys(rec)[0]];
+      if (!raw) return [];
+
+      /* Hour-grain values come back as UTC instants even when the query asked
+         for a shop-timezone series. Normalised to an absolute instant here, so
+         no caller can mix a UTC hour with a Cairo day -- the mismatch the
+         design document puts at roughly a factor of two on a partial day. */
+      const dt = DateTime.fromISO(String(raw), { zone: 'utc' });
+      if (!dt.isValid) return [];
+
+      const metrics: Record<string, number> = {};
+      for (const [k, v] of Object.entries(rec)) if (k !== 'hour') metrics[k] = num(v);
+
+      return [{ bucket: dt.toJSDate().toISOString(), metrics }];
+    });
+
+    return { sales: rows, capturedAt: new Date() };
+  }
+
+  async captureHourly(sinceDays = 14) {
     const shop = await this.shops.get();
     const sales = await this.shopify.source.shopifyql(this.salesQuery('hour', `-${sinceDays}d`, shop));
     const sessions = await this.shopify.source.shopifyql(this.sessionsQuery('hour', `-${sinceDays}d`, shop));
@@ -290,7 +485,15 @@ export class SnapshotService {
     this.inFlight = (async () => {
       try {
         const daily = await this.captureDaily();
-        const hourly = await this.captureHourly(3);
+        /* Fourteen days at hour grain, not three.
+        
+           Three was sized for the pulse strip, which only ever looks at today
+           and yesterday. The day comparison reads hour grain for any date, and
+           at three days almost every comparison fell through to a live Shopify
+           call. Fourteen covers a fortnight of the comparisons people actually
+           make -- this week against last -- for about 670 extra rows, which is
+           nothing beside the 92,000-order mirror. */
+        const hourly = await this.captureHourly(14);
         /* Breakdowns too, and leaving them out was the third time the same
            mistake was made in one build.
         
@@ -351,6 +554,47 @@ export class SnapshotService {
           this.log.warn(`confirming snapshot refresh failed: ${e?.message ?? e}`));
       }, 4 * 60_000);
     }, delayMs);
+  }
+
+  /**
+   * Fill in hour-grain history, once.
+   *
+   * The routine capture keeps a fortnight. This exists for the day a comparison
+   * is wanted against something older -- a launch, last Ramadan, the same week
+   * last year -- so those days are already in the store rather than costing a
+   * live call the first time somebody looks.
+   *
+   * Run in monthly slices rather than as one query: a year of hourly buckets is
+   * roughly 8,700 rows per schema, and asking ShopifyQL for all of it in one
+   * request is exactly the shape of query that gets throttled.
+   */
+  async backfillHourly(months = 13): Promise<number> {
+    const shop = await this.shops.get();
+    const now = DateTime.now().setZone(shop.iana_timezone);
+    let written = 0;
+
+    for (let i = 0; i < months; i++) {
+      const monthStart = now.minus({ months: i + 1 }).startOf('month');
+      const monthEnd = monthStart.endOf('month');
+      const since = monthStart.toFormat('yyyy-MM-dd');
+      const until = monthEnd.toFormat('yyyy-MM-dd');
+
+      for (const schema of ['sales', 'sessions'] as const) {
+        const q = schema === 'sessions'
+          ? `FROM sessions SHOW sessions, online_store_visitors, sessions_with_cart_additions, ` +
+            `sessions_that_reached_checkout, sessions_that_completed_checkout, conversion_rate ` +
+            `TIMESERIES hour SINCE ${since} UNTIL ${until} ` +
+            `WHERE human_or_bot_session = 'human' ${this.tz(shop)}`
+          : `FROM sales SHOW orders, gross_sales, discounts, sales_reversals, net_sales, ` +
+            `shipping_charges, taxes, total_sales, average_order_value ` +
+            `TIMESERIES hour SINCE ${since} UNTIL ${until} ${this.tz(shop)}`;
+
+        const res = await this.shopify.source.shopifyql(q);
+        written += await this.upsertSeries(shop, schema, 'hour', res, 'hour');
+      }
+      this.log.log(`hourly backfill: ${since} done (${written} rows so far)`);
+    }
+    return written;
   }
 
   async captureAll() {

@@ -958,6 +958,14 @@ export class SyncController {
   @Permissions(PERMISSIONS.SYNC_MANAGE)
   async reconcile() { return { orders: await this.sync.reconcile() }; }
 
+  /** Fill hour-grain history so day comparisons read from the store rather than
+   *  calling Shopify. Run once; the nightly job keeps the recent fortnight. */
+  @Post('snapshots/hourly-backfill')
+  @Permissions(PERMISSIONS.SYNC_MANAGE)
+  async hourlyBackfill(@Body() body: { months?: number } = {}) {
+    return { rows: await this.snapshots.backfillHourly(body?.months ?? 13) };
+  }
+
   @Post('snapshots')
   @Permissions(PERMISSIONS.SYNC_MANAGE)
   async snapshot() { return this.snapshots.captureAll(); }

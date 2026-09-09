@@ -299,8 +299,14 @@ export interface KpiPayload extends LocallyComputed {
 export interface SeriesPayload extends LocallyComputed {
   kind: 'line' | 'bar'; format: 'money' | 'integer' | 'percent';
   currency?: string; timezone: string; provisionalFrom?: string | null;
-  series: Array<{ key: string; label: string; format?: 'money' | 'integer' | 'percent';
-                  points: Array<{ t: string; v: number }> }>;
+  series: Array<{
+    key: string; label: string; format?: 'money' | 'integer' | 'percent';
+    /** Draw this series dashed. Set on the comparison day so the two are
+     *  distinguishable without relying on colour alone -- which matters both
+     *  in print and for anyone who does not see the two hues apart. */
+    dashed?: boolean;
+    points: Array<{ t: string; v: number }>;
+  }>;
 }
 export interface CategoryPayload extends LocallyComputed {
   kind: 'donut' | 'bar'; format: 'money' | 'integer' | 'percent'; currency?: string;
