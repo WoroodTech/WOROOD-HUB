@@ -27,6 +27,9 @@ import {
   CategoryPayload, FunnelPayload, KpiPayload, SeriesPayload, TablePayload,
   WidgetEnvelope, WidgetPayload, PERMISSIONS,
 } from '../../../contract';
+import { CustomerMetricsService } from './customer-metrics.service';
+import { AbandonedCheckoutService } from '../sync/abandoned-checkout.service';
+import { StoreCreditService } from '../sync/store-credit.service';
 
 export type RangeKey = 'today' | '7d' | '30d' | '90d' | '13m';
 
@@ -72,7 +75,12 @@ type Totals = Record<string, number>;
 
 @Injectable()
 export class MetricsService {
-  constructor(private shops: ShopContext) {}
+  constructor(
+    private shops: ShopContext,
+    private customers: CustomerMetricsService,
+    private abandoned: AbandonedCheckoutService,
+    private credit: StoreCreditService,
+  ) {}
 
   /* ------------------------------------------------------- snapshot reads -- */
 
@@ -395,6 +403,311 @@ export class MetricsService {
             { label: 'Completed checkout', value: n.totals.sessions_that_completed_checkout ?? 0 },
           ],
         } as FunnelPayload };
+      }
+
+      /* ---- customer analytics, computed from the mirror ----
+       *
+       * These carry `computedLocally: true`. Unlike every figure above, they
+       * cannot be checked against a Shopify admin report, because Shopify's own
+       * customer reports do not expose cohort retention or RFM through
+       * ShopifyQL. A number that cannot be reconciled must not look like one
+       * that can, so the interface labels them. */
+      case 'kpi-new-vs-returning': {
+        const n = await this.customers.newVsReturning(shop, range.start, range.end);
+        const p = await this.customers.newVsReturning(shop, range.priorStart, range.priorEnd);
+        const total = n.newOrders + n.returningOrders;
+        const priorTotal = p.newOrders + p.returningOrders;
+        return { capturedAt: null, payload: {
+          ...this.kpi('Returning customer orders',
+            total ? (n.returningOrders / total) * 100 : 0, 'percent',
+            priorTotal ? (p.returningOrders / priorTotal) * 100 : null,
+            range.comparisonLabel),
+          computedLocally: true,
+        } as KpiPayload };
+      }
+
+      case 'kpi-repeat-rate': {
+        const n = await this.customers.repeatRate(shop, range.start, range.end);
+        const p = await this.customers.repeatRate(shop, range.priorStart, range.priorEnd);
+        return { capturedAt: null, payload: {
+          ...this.kpi('Repeat purchase rate', n.rate * 100, 'percent',
+            p.customers ? p.rate * 100 : null, range.comparisonLabel),
+          computedLocally: true,
+        } as KpiPayload };
+      }
+
+      case 'kpi-returning-revenue': {
+        const n = await this.customers.newVsReturning(shop, range.start, range.end);
+        const p = await this.customers.newVsReturning(shop, range.priorStart, range.priorEnd);
+        return { capturedAt: null, payload: {
+          ...this.kpi('Revenue from returning customers', n.returningRevenue, 'money',
+            p.returningRevenue, range.comparisonLabel, cur),
+          computedLocally: true,
+        } as KpiPayload };
+      }
+
+      case 'kpi-time-to-second-order': {
+        const l = await this.customers.lifecycle(shop);
+        return { capturedAt: null, payload: {
+          ...this.kpi('Median days to second order', l.medianDaysToSecond, 'integer',
+            null, 'all time'),
+          computedLocally: true,
+        } as KpiPayload };
+      }
+
+      case 'donut-new-vs-returning': {
+        const n = await this.customers.newVsReturning(shop, range.start, range.end);
+        return { capturedAt: null, payload: {
+          kind: 'donut', format: 'integer', computedLocally: true,
+          items: [
+            { label: 'First-time', value: n.newOrders },
+            { label: 'Returning', value: n.returningOrders },
+          ],
+        } as CategoryPayload };
+      }
+
+      case 'donut-customer-segments': {
+        const segs = await this.customers.segments(shop);
+        return { capturedAt: null, payload: {
+          kind: 'donut', format: 'integer', computedLocally: true,
+          items: segs.map((s) => ({ label: s.segment, value: s.customers })),
+        } as CategoryPayload };
+      }
+
+      case 'bar-order-frequency': {
+        const l = await this.customers.lifecycle(shop);
+        return { capturedAt: null, payload: {
+          kind: 'donut', format: 'integer', computedLocally: true,
+          items: l.buckets,
+        } as CategoryPayload };
+      }
+
+      case 'chart-acquisition': {
+        const rows = await this.customers.acquisitionSeries(shop, range);
+        return { capturedAt: null, payload: {
+          kind: 'line', format: 'integer', timezone: shop.iana_timezone,
+          computedLocally: true,
+          series: [
+            { key: 'new_customers', label: 'New customers', format: 'integer',
+              points: rows.map((r) => ({
+                t: new Date(r.bucket).toISOString(), v: Number(r.new_customers) })) },
+            { key: 'returning_orders', label: 'Returning orders', format: 'integer',
+              points: rows.map((r) => ({
+                t: new Date(r.bucket).toISOString(), v: Number(r.returning_orders) })) },
+          ],
+        } as SeriesPayload };
+      }
+
+      case 'table-cohort-retention': {
+        const rows = await this.customers.cohorts(shop, 12);
+        return { capturedAt: null, payload: {
+          kind: 'table', computedLocally: true,
+          columns: [
+            { key: 'cohort', label: 'First bought', format: 'text' },
+            { key: 'customers', label: 'Customers', format: 'integer', align: 'end' },
+            { key: 'm1', label: '≤1 month', format: 'percent', align: 'end' },
+            { key: 'm3', label: '≤3 months', format: 'percent', align: 'end' },
+            { key: 'm6', label: '≤6 months', format: 'percent', align: 'end' },
+            { key: 'm12', label: '≤12 months', format: 'percent', align: 'end' },
+          ],
+          // Nulls are rendered as a dash: the window has not elapsed for that
+          // cohort, which is not the same as nobody having returned.
+          rows: rows.map((r) => ({
+            cohort: r.cohort, customers: r.customers,
+            m1: r.m1 === null ? null : r.m1 * 100,
+            m3: r.m3 === null ? null : r.m3 * 100,
+            m6: r.m6 === null ? null : r.m6 * 100,
+            m12: r.m12 === null ? null : r.m12 * 100,
+          })),
+        } as TablePayload };
+      }
+
+      case 'table-top-customers': {
+        const showIdentity = can(principal, PERMISSIONS.CUSTOMER_VIEW);
+        const rows = await this.customers.topCustomers(shop, showIdentity);
+        return { capturedAt: null, payload: {
+          kind: 'table', computedLocally: true,
+          columns: [
+            { key: 'rank', label: '#', format: 'integer' },
+            ...(showIdentity ? [
+              { key: 'customer', label: 'Customer', format: 'text' as const },
+              { key: 'city', label: 'City', format: 'text' as const },
+            ] : []),
+            { key: 'orders', label: 'Orders', format: 'integer', align: 'end' },
+            { key: 'spent', label: 'Lifetime spend', format: 'money', align: 'end' },
+            { key: 'lastOrder', label: 'Last order', format: 'datetime' },
+          ],
+          rows,
+        } as TablePayload };
+      }
+
+      /* ---- abandoned checkouts ----
+       *
+       * Read from the mirror like the customer widgets, and marked the same
+       * way. Shopify's admin has its own abandonment report; these figures are
+       * ours, over our own retention window, and will not match it line for
+       * line. */
+      case 'kpi-abandoned': {
+        const n = await this.abandoned.totals(shop, range.start, range.end);
+        const p = await this.abandoned.totals(shop, range.priorStart, range.priorEnd);
+        return { capturedAt: null, payload: {
+          ...this.kpi('Abandoned checkouts', n.abandoned, 'integer',
+            p.abandoned, range.comparisonLabel),
+          computedLocally: true,
+        } as KpiPayload };
+      }
+
+      case 'kpi-abandoned-value': {
+        const n = await this.abandoned.totals(shop, range.start, range.end);
+        const p = await this.abandoned.totals(shop, range.priorStart, range.priorEnd);
+        return { capturedAt: null, payload: {
+          ...this.kpi('Value left in checkouts', n.openValue, 'money',
+            p.openValue, range.comparisonLabel, cur),
+          computedLocally: true,
+        } as KpiPayload };
+      }
+
+      case 'kpi-recovery-rate': {
+        const n = await this.abandoned.totals(shop, range.start, range.end);
+        const p = await this.abandoned.totals(shop, range.priorStart, range.priorEnd);
+        return { capturedAt: null, payload: {
+          ...this.kpi('Checkout recovery rate', n.recoveryRate * 100, 'percent',
+            p.abandoned ? p.recoveryRate * 100 : null, range.comparisonLabel),
+          computedLocally: true,
+        } as KpiPayload };
+      }
+
+      case 'kpi-recovered-value': {
+        const n = await this.abandoned.totals(shop, range.start, range.end);
+        const p = await this.abandoned.totals(shop, range.priorStart, range.priorEnd);
+        return { capturedAt: null, payload: {
+          ...this.kpi('Recovered revenue', n.recoveredValue, 'money',
+            p.recoveredValue, range.comparisonLabel, cur),
+          computedLocally: true,
+        } as KpiPayload };
+      }
+
+      case 'chart-abandonment': {
+        const rows = await this.abandoned.series(shop, range.start, range.end, range.grain);
+        return { capturedAt: null, payload: {
+          kind: 'line', format: 'integer', timezone: shop.iana_timezone,
+          computedLocally: true,
+          series: [
+            { key: 'abandoned', label: 'Abandoned', format: 'integer',
+              points: rows.map((r) => ({
+                t: new Date(r.bucket).toISOString(), v: Number(r.abandoned) })) },
+            { key: 'recovered', label: 'Recovered', format: 'integer',
+              points: rows.map((r) => ({
+                t: new Date(r.bucket).toISOString(), v: Number(r.recovered) })) },
+          ],
+        } as SeriesPayload };
+      }
+
+      case 'donut-abandoned-age': {
+        const buckets = await this.abandoned.ageBuckets(shop);
+        return { capturedAt: null, payload: {
+          kind: 'donut', format: 'integer', computedLocally: true,
+          items: buckets.map((b) => ({ label: b.label, value: b.value })),
+        } as CategoryPayload };
+      }
+
+      case 'table-open-checkouts': {
+        const showContact = can(principal, PERMISSIONS.CUSTOMER_VIEW);
+        const rows = await this.abandoned.openList(shop, showContact);
+        return { capturedAt: null, payload: {
+          kind: 'table', computedLocally: true,
+          columns: [
+            { key: 'abandonedAt', label: 'Abandoned', format: 'datetime' },
+            ...(showContact ? [
+              { key: 'customer', label: 'Customer', format: 'text' as const },
+              { key: 'phone', label: 'Phone', format: 'text' as const },
+              { key: 'city', label: 'City', format: 'text' as const },
+            ] : []),
+            { key: 'items', label: 'Items', format: 'integer', align: 'end' },
+            { key: 'value', label: 'Value', format: 'money', align: 'end' },
+          ],
+          rows,
+        } as TablePayload };
+      }
+
+      /* ---- store credit ---- */
+      case 'kpi-credit-issued': {
+        const n = await this.credit.totals(shop, range.start, range.end);
+        const p = await this.credit.totals(shop, range.priorStart, range.priorEnd);
+        return { capturedAt: null, payload: {
+          ...this.kpi('Store credit issued', n.issued, 'money', p.issued,
+            range.comparisonLabel, cur),
+          computedLocally: true,
+        } as KpiPayload };
+      }
+
+      case 'kpi-credit-spent': {
+        const n = await this.credit.totals(shop, range.start, range.end);
+        const p = await this.credit.totals(shop, range.priorStart, range.priorEnd);
+        return { capturedAt: null, payload: {
+          ...this.kpi('Store credit spent', n.spent, 'money', p.spent,
+            range.comparisonLabel, cur),
+          computedLocally: true,
+        } as KpiPayload };
+      }
+
+      case 'kpi-credit-outstanding': {
+        const n = await this.credit.totals(shop, range.start, range.end);
+        return { capturedAt: null, payload: {
+          ...this.kpi('Credit outstanding', n.outstanding, 'money', null,
+            `held by ${n.holders} customers`, cur),
+          computedLocally: true,
+        } as KpiPayload };
+      }
+
+      case 'kpi-credit-redemption': {
+        const n = await this.credit.totals(shop, range.start, range.end);
+        const p = await this.credit.totals(shop, range.priorStart, range.priorEnd);
+        return { capturedAt: null, payload: {
+          ...this.kpi('Credit redemption rate', n.redemptionRate * 100, 'percent',
+            p.issued ? p.redemptionRate * 100 : null, range.comparisonLabel),
+          computedLocally: true,
+        } as KpiPayload };
+      }
+
+      case 'chart-credit': {
+        const rows = await this.credit.series(shop, range.start, range.end, range.grain);
+        return { capturedAt: null, payload: {
+          kind: 'line', format: 'money', currency: cur, timezone: shop.iana_timezone,
+          computedLocally: true,
+          series: [
+            { key: 'issued', label: 'Issued', format: 'money',
+              points: rows.map((r) => ({
+                t: new Date(r.bucket).toISOString(), v: Number(r.issued) })) },
+            { key: 'spent', label: 'Spent', format: 'money',
+              points: rows.map((r) => ({
+                t: new Date(r.bucket).toISOString(), v: Number(r.spent) })) },
+          ],
+        } as SeriesPayload };
+      }
+
+      case 'donut-credit-events': {
+        const items = await this.credit.byEvent(shop, range.start, range.end);
+        return { capturedAt: null, payload: {
+          kind: 'donut', format: 'money', computedLocally: true, items,
+        } as CategoryPayload };
+      }
+
+      case 'table-credit-holders': {
+        const showIdentity = can(principal, PERMISSIONS.CUSTOMER_VIEW);
+        const rows = await this.credit.holders(shop, showIdentity);
+        return { capturedAt: null, payload: {
+          kind: 'table', computedLocally: true,
+          columns: [
+            { key: 'rank', label: '#', format: 'integer' },
+            ...(showIdentity
+              ? [{ key: 'customer', label: 'Customer', format: 'text' as const }] : []),
+            { key: 'balance', label: 'Credit held', format: 'money', align: 'end' },
+            { key: 'orders', label: 'Orders', format: 'integer', align: 'end' },
+            { key: 'lastOrder', label: 'Last order', format: 'datetime' },
+          ],
+          rows,
+        } as TablePayload };
       }
 
       /* ---- from the mirror ---- */

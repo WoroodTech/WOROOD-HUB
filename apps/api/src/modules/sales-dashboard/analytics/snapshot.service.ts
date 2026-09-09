@@ -79,9 +79,22 @@ export class SnapshotService {
   // time while hour-grain timestamps come back in UTC, so mixing the two without
   // normalising silently shifts totals -- for Cairo, by three hours, which on a
   // partial current day can look like a factor of two.
-  private readonly TZ = "WITH TIMEZONE 'Africa/Cairo'";
+  /* Read from the shop row, not written here.
+   *
+   * This was the literal string "WITH TIMEZONE 'Africa/Cairo'", which was
+   * correct and was still a trap: `sd_shops.iana_timezone` is synced from
+   * Shopify and is what every other part of the module reasons in, so a store
+   * whose timezone changed would have had its snapshots aggregated on the old
+   * one while its order queries used the new. Silent, and the design document
+   * puts the size of a timezone mismatch on a partial day at roughly a factor
+   * of two.
+   *
+   * The fallback exists only for a shop row that has not synced yet. */
+  private tz(shop: Shop): string {
+    return `WITH TIMEZONE '${shop.iana_timezone || 'Africa/Cairo'}'`;
+  }
 
-  salesQuery(grain: 'day' | 'hour', since: string) {
+  salesQuery(grain: 'day' | 'hour', since: string, shop: Shop) {
     /* `sales_reversals` is asked for again.
      *
      * It was dropped when the fixtures were captured, because the column was
@@ -98,10 +111,10 @@ export class SnapshotService {
      */
     return `FROM sales SHOW orders, gross_sales, discounts, sales_reversals, net_sales, ` +
       `shipping_charges, taxes, total_sales, average_order_value ` +
-      `TIMESERIES ${grain} SINCE ${since} UNTIL today ${this.TZ}`;
+      `TIMESERIES ${grain} SINCE ${since} UNTIL today ${this.tz(shop)}`;
   }
 
-  sessionsQuery(grain: 'day' | 'hour', since: string) {
+  sessionsQuery(grain: 'day' | 'hour', since: string, shop: Shop) {
     // Bot filtering is not automatic. Omitting this clause inflates sessions and
     // depresses conversion rate, and the convention must match how Worood reads
     // the Shopify admin or the two will disagree.
@@ -109,15 +122,15 @@ export class SnapshotService {
       `sessions_with_cart_additions, sessions_that_reached_checkout, ` +
       `sessions_that_completed_checkout, conversion_rate ` +
       `TIMESERIES ${grain} SINCE ${since} UNTIL today ` +
-      `WHERE human_or_bot_session = 'human' ${this.TZ}`;
+      `WHERE human_or_bot_session = 'human' ${this.tz(shop)}`;
   }
 
   /** Nightly: day grain over the trailing 13 months, refreshing any figure
    *  Shopify has since adjusted and keeping year-on-year honest. */
   async captureDaily(sinceDays = 395) {
     const shop = await this.shops.get();
-    const sales = await this.shopify.source.shopifyql(this.salesQuery('day', `-${sinceDays}d`));
-    const sessions = await this.shopify.source.shopifyql(this.sessionsQuery('day', `-${sinceDays}d`));
+    const sales = await this.shopify.source.shopifyql(this.salesQuery('day', `-${sinceDays}d`, shop));
+    const sessions = await this.shopify.source.shopifyql(this.sessionsQuery('day', `-${sinceDays}d`, shop));
     const a = await this.upsertSeries(shop, 'sales', 'day', sales, 'day');
     const b = await this.upsertSeries(shop, 'sessions', 'day', sessions, 'day');
     await this.markSync(shop.id, 'sales_snapshot', a + b);
@@ -129,8 +142,8 @@ export class SnapshotService {
    *  the intraday trend. */
   async captureHourly(sinceDays = 3) {
     const shop = await this.shops.get();
-    const sales = await this.shopify.source.shopifyql(this.salesQuery('hour', `-${sinceDays}d`));
-    const sessions = await this.shopify.source.shopifyql(this.sessionsQuery('hour', `-${sinceDays}d`));
+    const sales = await this.shopify.source.shopifyql(this.salesQuery('hour', `-${sinceDays}d`, shop));
+    const sessions = await this.shopify.source.shopifyql(this.sessionsQuery('hour', `-${sinceDays}d`, shop));
     const a = await this.upsertSeries(shop, 'sales', 'hour', sales, 'hour');
     const b = await this.upsertSeries(shop, 'sessions', 'hour', sessions, 'hour');
     return a + b;
@@ -142,7 +155,7 @@ export class SnapshotService {
     const shop = await this.shops.get();
     const jobs: Array<[string, string, string]> = [
       ['sales', 'product_title',
-       `FROM sales SHOW gross_sales, net_sales, total_sales, orders GROUP BY product_title ORDER BY total_sales DESC LIMIT 50 SINCE -90d UNTIL today ${this.TZ}`],
+       `FROM sales SHOW gross_sales, net_sales, total_sales, orders GROUP BY product_title ORDER BY total_sales DESC LIMIT 50 SINCE -90d UNTIL today ${this.tz(shop)}`],
       ['traffic', 'referrer_source',
        `FROM sessions SHOW sessions GROUP BY referrer_source ORDER BY sessions DESC SINCE -30d UNTIL today`],
       ['sessions', 'session_device_type',

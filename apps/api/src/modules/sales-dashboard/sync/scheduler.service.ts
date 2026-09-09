@@ -33,6 +33,8 @@ import { config } from '../../../common/config';
 import { ShopifyService } from '../shopify/shopify.service';
 import { SnapshotService } from '../analytics/snapshot.service';
 import { SyncService } from './sync.service';
+import { AbandonedCheckoutService } from './abandoned-checkout.service';
+import { StoreCreditService } from './store-credit.service';
 
 /** Cairo wall-clock hour right now, for the two jobs that should run overnight
  *  in Worood's own time rather than the server's. */
@@ -47,11 +49,14 @@ export class SalesScheduler implements OnModuleInit, OnModuleDestroy {
   private timers: NodeJS.Timeout[] = [];
   private lastNightly = '';
   private lastWatchdog = '';
+  private creditRunToday = '';
 
   constructor(
     private sync: SyncService,
     private snapshots: SnapshotService,
     private shopify: ShopifyService,
+    private abandoned: AbandonedCheckoutService,
+    private credit: StoreCreditService,
   ) {}
 
   onModuleInit() {
@@ -94,6 +99,16 @@ export class SalesScheduler implements OnModuleInit, OnModuleDestroy {
      * nightly job stays: it is the one that also refreshes breakdowns and
      * corrects figures Shopify has since revised.
      */
+    /* Abandoned checkouts on their own half-hour, and on their own watermark.
+       A checkout abandoned this morning is a call worth making this afternoon,
+       so fifteen minutes would be over-eager and an hour too slow. Staggered
+       past the other two so a cold start does not fire three Shopify jobs into
+       the same second -- the mistake that produced five THROTTLED responses the
+       first time the scheduler ran. */
+    this.every(30 * 60_000, 'abandoned checkouts',
+      () => this.abandoned.sync(),
+      { runAtStartup: true, startupDelayMs: 45_000 });
+
     this.every(60 * 60_000, 'hourly snapshot',
       () => this.snapshots.refreshRecent(),
       { runAtStartup: true, startupDelayMs: 20_000 });
@@ -109,6 +124,15 @@ export class SalesScheduler implements OnModuleInit, OnModuleDestroy {
         this.log.log('nightly snapshot: thirteen months at day grain');
         await this.snapshots.captureDaily();
         await this.snapshots.captureBreakdowns();
+      }
+      /* Store credit rides the nightly slot rather than a cadence of its own.
+         It is a bulk export over every customer -- cheap in rate limit terms
+         and slow in wall-clock, and the underlying events move in days. Running
+         it hourly would be pure waste. */
+      if (cairoHour() === 2 && this.lastNightly === today && !this.creditRunToday) {
+        this.creditRunToday = today;
+        await this.credit.sync().catch((e) =>
+          this.log.error(`store credit sync failed: ${e?.message ?? e}`));
       }
       if (cairoHour() === 3 && this.lastWatchdog !== today) {
         this.lastWatchdog = today;

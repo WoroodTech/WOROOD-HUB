@@ -6,8 +6,9 @@
  * is the source of truth and the fifteen-minute cadence is the practical upper
  * bound on how long a missed webhook can go unnoticed.
  */
-import { BadRequestException, Body, Controller, Get, Injectable, Logger, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Injectable, Logger, Param, Post, Query } from '@nestjs/common';
 import { config } from '../../../common/config';
+import { DateTime } from 'luxon';
 import { query, one } from '../../../common/db';
 import { Permissions } from '../../../common/auth';
 import { NotificationsService } from '../../../core/core.module';
@@ -16,6 +17,8 @@ import { SnapshotService } from '../analytics/snapshot.service';
 import { ShopifyService, redis } from '../shopify/shopify.service';
 import { WEBHOOK_TOPICS } from '../webhooks/topics';
 import { BackfillService } from './backfill.service';
+import { AbandonedCheckoutService } from './abandoned-checkout.service';
+import { StoreCreditService } from './store-credit.service';
 import { PERMISSIONS, SyncHealthResponse } from '../../../contract';
 
 const money = (v: any) => (v == null ? 0 : parseFloat(String(v)));
@@ -38,6 +41,10 @@ export class SyncService {
   async upsertOrders(orders: any[]): Promise<number> {
     const shop = await this.shops.get();
     let n = 0;
+    /* Collected as we go and recomputed once at the end. Lifetime spend depends
+       on the orders written in this batch, so it cannot be part of the customer
+       upsert above -- the orders do not exist yet at that point. */
+    const touchedCustomers = new Set<string>();
 
     for (const o of orders) {
       const updatedAt = new Date(o.updatedAt ?? o.createdAt);
@@ -53,10 +60,17 @@ export class SyncService {
               email, phone, address_city, address_province, address_country,
               shopify_created_at, shopify_updated_at, last_order_at)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now(),$11)
+           -- Identity only on conflict. orders_count is seeded on insert so a
+           -- new customer is not zero for an instant, and is never updated from
+           -- Shopify afterwards: it counts on Shopify's basis, while every
+           -- figure here excludes test, cancelled and deleted orders. Two
+           -- sources for one column means whichever wrote last wins, and on a
+           -- cancellation that is the wrong one. refreshCustomerSpend recomputes
+           -- it, first_order_at and last_order_at from our own orders at the end
+           -- of the batch.
            ON CONFLICT (shopify_gid) DO UPDATE SET
-             orders_count = EXCLUDED.orders_count, display_name = EXCLUDED.display_name,
-             email = EXCLUDED.email, phone = EXCLUDED.phone,
-             last_order_at = GREATEST(sd_customers.last_order_at, EXCLUDED.last_order_at)
+             display_name = EXCLUDED.display_name,
+             email = EXCLUDED.email, phone = EXCLUDED.phone
            RETURNING id`,
           [shop.id, o.customer.id, o.customer.numberOfOrders ?? 0,
            o.customer.displayName ?? null, o.customer.email ?? null, o.customer.phone ?? null,
@@ -64,6 +78,7 @@ export class SyncService {
            o.shippingAddress?.country ?? null, o.customer.createdAt ?? null,
            new Date(o.createdAt)]);
         customerId = c.id;
+        touchedCustomers.add(c.id);
       }
 
       const row = await one(
@@ -102,7 +117,7 @@ export class SyncService {
            total_refunded = EXCLUDED.total_refunded,
            net_payment = EXCLUDED.net_payment,
            total_outstanding = EXCLUDED.total_outstanding
-         RETURNING id`,
+         RETURNING id, customer_id`,
         [shop.id, o.id, o.name, orderNumber(o.name),
          customerId, new Date(o.createdAt), o.processedAt ?? null,
          o.cancelledAt ?? null, o.cancelReason ?? null, updatedAt,
@@ -118,26 +133,73 @@ export class SyncService {
          o.shippingAddress?.city ?? null, o.shippingAddress?.province ?? null,
          o.shippingAddress?.country ?? null]);
 
-      for (const li of o.lineItems?.nodes ?? []) {
+      /* The order's customer, whether or not this payload carried one.
+       *
+       * `hydrate` deliberately omits the customer fields to avoid the
+       * protected-data denial that already affects the backfill, so `o.customer`
+       * is undefined on the webhook path and the block above never ran. The set
+       * stayed empty, `refreshCustomerSpend` did nothing, and every customer
+       * statistic waited for the fifteen-minute reconciliation -- or forever, if
+       * hydration had failed, since it is best-effort by design.
+       *
+       * Reading the link back off the row covers both cases: a payload that
+       * brought the customer, and one that merely updated an order already
+       * attached to one. */
+      if (row?.customer_id) touchedCustomers.add(row.customer_id);
+
+      /* Line items are corrected and pruned, not merely inserted.
+       *
+       * `ON CONFLICT DO NOTHING` was wrong twice over. An order edited in
+       * Shopify -- a quantity changed, a line discounted -- kept its original
+       * figures here forever, because the conflicting insert did nothing. And a
+       * line *removed* from an order stayed in the mirror indefinitely, since
+       * nothing ever deleted. Order edits are ordinary on a florist's orders,
+       * where a customer rings to change an arrangement.
+       *
+       * Only touched when the payload actually carries line items. The webhook
+       * path and the hydration read both include them, but a payload that
+       * happened not to would otherwise delete every line on the order. */
+      if (o.lineItems?.nodes?.length) {
+        const seen: string[] = [];
+        for (const li of o.lineItems.nodes) {
+          seen.push(li.id);
+          await query(
+            `INSERT INTO sd_order_line_items (order_id, shopify_gid, product_gid, variant_gid,
+                title, variant_title, sku, quantity, current_quantity, original_total, discounted_total)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+             ON CONFLICT (shopify_gid) DO UPDATE SET
+               quantity = EXCLUDED.quantity,
+               current_quantity = EXCLUDED.current_quantity,
+               original_total = EXCLUDED.original_total,
+               discounted_total = EXCLUDED.discounted_total,
+               title = EXCLUDED.title, variant_title = EXCLUDED.variant_title`,
+            [row.id, li.id, li.product?.id ?? null, li.variant?.id ?? null,
+             li.title, li.variant?.title ?? null, li.sku ?? null,
+             li.quantity ?? 0, li.currentQuantity ?? li.quantity ?? 0,
+             shopMoney(li.originalTotalSet), shopMoney(li.discountedTotalSet)]);
+        }
+        // Anything on the order here that Shopify no longer lists was removed.
         await query(
-          `INSERT INTO sd_order_line_items (order_id, shopify_gid, product_gid, variant_gid,
-              title, variant_title, sku, quantity, current_quantity, original_total, discounted_total)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-           ON CONFLICT (shopify_gid) DO NOTHING`,
-          [row.id, li.id, li.product?.id ?? null, li.variant?.id ?? null,
-           li.title, li.variant?.title ?? null, li.sku ?? null,
-           li.quantity ?? 0, li.currentQuantity ?? li.quantity ?? 0,
-           shopMoney(li.originalTotalSet), shopMoney(li.discountedTotalSet)]);
+          `DELETE FROM sd_order_line_items
+            WHERE order_id = $1 AND NOT (shopify_gid = ANY($2))`, [row.id, seen]);
       }
+
+      /* Refunds likewise: an amount can be adjusted after the fact, and
+         DO NOTHING froze whatever arrived first. Not pruned, though -- a refund
+         is not un-issued, and `refunds/create` may deliver one the order query
+         has not caught up with yet, so absence here does not mean removal. */
       for (const rf of o.refunds ?? []) {
         await query(
           `INSERT INTO sd_refunds (order_id, shopify_gid, total_refunded, shopify_created_at)
-           VALUES ($1,$2,$3,$4) ON CONFLICT (shopify_gid) DO NOTHING`,
+           VALUES ($1,$2,$3,$4)
+           ON CONFLICT (shopify_gid) DO UPDATE SET
+             total_refunded = EXCLUDED.total_refunded`,
           [row.id, rf.id, shopMoney(rf.totalRefundedSet), rf.createdAt]);
       }
       n++;
     }
 
+    await this.refreshCustomerSpend([...touchedCustomers]);
     await this.markSync('orders', n);
     return n;
   }
@@ -274,9 +336,251 @@ export class SyncService {
     return { currency: sh.currencyCode, timezone: sh.ianaTimezone, name: sh.name };
   }
 
+  /** Fields and enum values of one GraphQL type, straight from Shopify. */
+  async describeType(typeName: string) {
+    const data = await this.shopify.source.graphql<any>(
+      `query($n: String!) {
+         __type(name: $n) {
+           name kind
+           enumValues { name }
+           fields {
+             name
+             type { name kind ofType { name kind ofType { name } } }
+           }
+         }
+       }`, { n: typeName });
+
+    const t = data?.__type;
+    if (!t) return { type: typeName, found: false };
+
+    /* GraphQL wraps types in NON_NULL and LIST shells, so the real name can be
+       two or three levels down and every shell has a null `name`. The obvious
+       recursion -- `ty?.name ?? unwrap(ty?.ofType)` -- never terminates on a
+       null: `undefined?.name` is undefined, so it recurses on undefined
+       forever and the `?? 'unknown'` fallback is never reached. A null check
+       first, and a depth bound because the introspection query only asks three
+       levels deep and anything deeper would return null anyway. */
+    const unwrap = (ty: any, depth = 0): string => {
+      if (!ty || depth > 5) return 'unknown';
+      return ty.name ?? unwrap(ty.ofType, depth + 1);
+    };
+
+    return {
+      type: t.name, kind: t.kind, found: true,
+      enumValues: t.enumValues?.map((e: any) => e.name) ?? null,
+      fields: t.fields?.map((f: any) => ({ name: f.name, type: unwrap(f.type) })) ?? null,
+      /* The connection's own arguments, which is where a sortKey enum name
+         actually lives -- knowing the field exists is not the same as knowing
+         what it will accept. */
+    };
+  }
+
+  /**
+   * Do our numbers agree with Shopify's?
+   *
+   * Every dashboard puts a ShopifyQL figure next to a mirror figure -- total
+   * sales beside collected, orders beside outstanding -- and nothing has ever
+   * checked that the two are describing the same set of orders. They can drift
+   * without either looking wrong: a backfill that stopped part-way leaves the
+   * mirror short while ShopifyQL stays complete, and the screen carries on
+   * rendering both.
+   *
+   * Three independent counts for one day:
+   *   - Shopify's own order count, asked directly
+   *   - ShopifyQL's aggregate, the source of every headline figure
+   *   - our mirror, the source of every order-level figure
+   *
+   * They will not be identical and are not expected to be. ShopifyQL excludes
+   * what Shopify decides to exclude; the mirror excludes test, cancelled and
+   * deleted orders explicitly. The point is the *size* of the gap: a few orders
+   * on a cancellation is ordinary, and a hundred is a mirror that never
+   * finished loading.
+   *
+   * This is the acceptance test the design document calls the one that decides
+   * whether the dashboard is finished. It was written down and never run,
+   * because running it by hand means three queries in two places.
+   */
+  async reconcileCheck(date: string) {
+    const shop = await this.shops.get();
+    const tz = shop.iana_timezone || 'Africa/Cairo';
+    const day = DateTime.fromISO(date, { zone: tz });
+    if (!day.isValid) throw new BadRequestException(`${date} is not a real date`);
+
+    const start = day.startOf('day').toJSDate();
+    const end = day.endOf('day').toJSDate();
+
+    const [mirror] = await query<any>(
+      `SELECT COUNT(*)                                   AS orders,
+              COALESCE(SUM(total_price), 0)              AS total_price,
+              COALESCE(SUM(net_payment), 0)              AS collected,
+              COALESCE(SUM(total_refunded), 0)           AS refunded,
+              COUNT(*) FILTER (WHERE cancelled_at IS NOT NULL) AS cancelled,
+              COUNT(*) FILTER (WHERE test)                     AS test_orders
+         FROM sd_orders
+        WHERE shop_id = $1 AND deleted_at IS NULL
+          AND shopify_created_at >= $2 AND shopify_created_at <= $3`,
+      [shop.id, start, end]);
+
+    const [snapshot] = await query<any>(
+      `SELECT metrics, is_final, captured_at FROM sd_metric_snapshots
+        WHERE shop_id = $1 AND schema_name = 'sales' AND grain = 'day'
+          AND dimensions = '{}'::jsonb
+          AND bucket_start >= $2 AND bucket_start <= $3
+        LIMIT 1`, [shop.id, start, end]);
+
+    /* Shopify's own count, as a third opinion.
+     *
+     * Terms are joined by a space. Shopify's search syntax treats whitespace as
+     * AND and a literal `AND` as a search term, so writing it out opened the
+     * window to two days and returned 231 against a true 113 -- almost exactly
+     * double, which is the signature the design document warns about for range
+     * mistakes and which nearly sent a correct mirror back for a re-backfill.
+     */
+    let shopifyOrders: number | null = null;
+    if (this.shopify.source.kind === 'live') {
+      const d = await this.shopify.source.graphql<any>(
+        `query($q: String!) { ordersCount(query: $q) { count } }`,
+        { q: `created_at:>='${start.toISOString()}' created_at:<='${end.toISOString()}'` },
+      ).catch(() => null);
+      shopifyOrders = d?.ordersCount?.count ?? null;
+    }
+
+    const m = snapshot?.metrics ?? {};
+    const liveMirrorOrders =
+      Number(mirror?.orders ?? 0) - Number(mirror?.cancelled ?? 0) - Number(mirror?.test_orders ?? 0);
+
+    /* The verdict rests on ShopifyQL against the mirror, not on Shopify's raw
+       count.
+    
+       Those two are what the dashboards actually read -- every headline figure
+       from one, every order-level figure from the other -- so their agreement
+       is the thing that decides whether the screen is trustworthy. Shopify's
+       own count is a useful third opinion but counts on its own terms, and it
+       should never be the number that condemns a mirror. */
+    const mirrorOrders = Number(mirror?.orders ?? 0);
+    const qlOrders = m.orders == null ? null : Number(m.orders);
+    const coreGap = qlOrders === null ? null : qlOrders - mirrorOrders;
+    const gap = shopifyOrders === null ? null : shopifyOrders - mirrorOrders;
+
+    return {
+      date, timezone: tz,
+      shopify: { orders: shopifyOrders },
+      shopifyql: {
+        orders: m.orders ?? null,
+        grossSales: m.gross_sales ?? null,
+        discounts: m.discounts ?? null,
+        salesReversals: m.sales_reversals ?? null,
+        netSales: m.net_sales ?? null,
+        totalSales: m.total_sales ?? null,
+        averageOrderValue: m.average_order_value ?? null,
+        provisional: snapshot ? !snapshot.is_final : null,
+        capturedAt: snapshot?.captured_at ?? null,
+      },
+      mirror: {
+        orders: Number(mirror?.orders ?? 0),
+        ordersExcludingCancelledAndTest: liveMirrorOrders,
+        totalPrice: Number(mirror?.total_price ?? 0),
+        collected: Number(mirror?.collected ?? 0),
+        refunded: Number(mirror?.refunded ?? 0),
+        cancelled: Number(mirror?.cancelled ?? 0),
+        testOrders: Number(mirror?.test_orders ?? 0),
+      },
+      /* A verdict rather than a table to interpret. The thresholds are
+         deliberately loose: this is meant to catch a mirror that is missing
+         hundreds of orders, not to argue about one. */
+      verdict:
+        !snapshot ? 'No snapshot for this day — run the snapshot capture first.'
+        : coreGap === null ? 'The snapshot has no order count for this day.'
+        : coreGap === 0
+          ? 'ShopifyQL and the mirror agree exactly. The two sources behind every figure on the dashboards are describing the same orders.'
+        : Math.abs(coreGap) <= 3
+          ? `ShopifyQL and the mirror differ by ${coreGap} order(s) — within what a cancellation or a late webhook explains.`
+        : `ShopifyQL and the mirror differ by ${coreGap} orders. The mirror is incomplete for this day; re-run the backfill for it.`,
+
+      /* Reported, never used to judge. Shopify's search counts drafts, tests
+         and orders the other two exclude, so a difference here is information
+         rather than a fault. */
+      note: gap === null || gap === 0 ? undefined
+        : `Shopify's own order count for this day is ${shopifyOrders}, ${Math.abs(gap)} ` +
+          `${gap > 0 ? 'more' : 'fewer'} than the mirror. Shopify counts on its own terms ` +
+          `— drafts and tests among them — so this is expected to differ and is not a fault on its own.`,
+    };
+  }
+
   get sourceKind() { return this.shopify.source.kind; }
   tokenStatus() { return this.shopify.tokens.status(); }
   ping() { return this.shopify.source.ping(); }
+
+  /**
+   * Recompute lifetime spend for a set of customers.
+   *
+   * Kept out of the customer upsert because it is a property of the orders, not
+   * of the customer record Shopify sends. Shopify's `amountSpent` exists, but
+   * reading it would mean trusting Shopify's definition of spend on a
+   * cash-on-delivery store -- where an order placed and refused at the door
+   * counts as neither collected nor cancelled. Summing `net_payment` from the
+   * mirror is money that actually arrived, which is what "lifetime spend"
+   * should mean here.
+   *
+   * Run after each batch rather than per order: a backfill writing 92,000
+   * orders would otherwise recompute the same customer dozens of times.
+   */
+  async refreshCustomerSpend(customerIds: string[]): Promise<void> {
+    if (!customerIds.length) return;
+
+    /* Three derived columns, all recomputed from our own orders rather than
+       taken from Shopify or accumulated as we go. Two of them used to be, and
+       both were wrong in ways that only showed up on a cancellation.
+    
+       `orders_count` was Shopify's `numberOfOrders`, written whenever a webhook
+       payload happened to carry the customer object. It counts on Shopify's
+       basis, not ours -- and every customer figure here excludes test,
+       cancelled and deleted orders, so the repeat-purchase rate was dividing
+       one basis by another. Worse, cancelling an order does not send a customer
+       update, so the count simply never came down.
+    
+       `first_order_at` was a running LEAST of every order date seen. If the
+       earliest order was later cancelled or deleted, the column kept pointing
+       at it -- and new-versus-returning compares each order against exactly
+       that date, so one cancellation could reclassify a customer's whole
+       history.
+    
+       Recomputing all three from the same filtered set makes them agree with
+       each other and self-heal on cancel, delete and refund. It costs one
+       grouped scan over the orders of the customers touched by a batch. */
+    await query(
+      `UPDATE sd_customers c
+          SET total_spent    = agg.spent,
+              orders_count   = agg.orders,
+              first_order_at = agg.first_at,
+              last_order_at  = agg.last_at
+         FROM (
+           SELECT o.customer_id,
+                  COALESCE(SUM(o.net_payment), 0)  AS spent,
+                  COUNT(*)                          AS orders,
+                  MIN(o.shopify_created_at)         AS first_at,
+                  MAX(o.shopify_created_at)         AS last_at
+             FROM sd_orders o
+            WHERE o.customer_id = ANY($1)
+              AND o.test = false AND o.cancelled_at IS NULL AND o.deleted_at IS NULL
+            GROUP BY o.customer_id
+         ) agg
+        WHERE c.id = agg.customer_id`, [customerIds]);
+
+    /* A customer whose every order was cancelled or deleted drops out of the
+       group above entirely, so the UPDATE never reaches them and they keep
+       whatever they last had. Zeroed explicitly -- otherwise the one case where
+       the count should certainly be nought is the one case it never changes. */
+    await query(
+      `UPDATE sd_customers c
+          SET total_spent = 0, orders_count = 0, first_order_at = NULL
+        WHERE c.id = ANY($1)
+          AND NOT EXISTS (
+            SELECT 1 FROM sd_orders o
+             WHERE o.customer_id = c.id
+               AND o.test = false AND o.cancelled_at IS NULL AND o.deleted_at IS NULL)`,
+      [customerIds]);
+  }
 
   /**
    * Reconciliation: the source of truth.
@@ -490,7 +794,12 @@ export class SyncService {
 
 @Controller('sales/admin/sync')
 export class SyncController {
-  constructor(private sync: SyncService, private snapshots: SnapshotService) {}
+  constructor(
+    private sync: SyncService,
+    private snapshots: SnapshotService,
+    private abandonedCheckouts: AbandonedCheckoutService,
+    private credit: StoreCreditService,
+  ) {}
 
   @Get()
   @Permissions(PERMISSIONS.SYNC_MANAGE)
@@ -534,6 +843,21 @@ export class SyncController {
    * Reports no secrets -- the client id is truncated and the secret only ever
    * appears as present or absent.
    */
+  /**
+   * Compare one day across Shopify, ShopifyQL and the mirror.
+   *
+   *   GET /sales/admin/sync/reconcile-check?date=2026-09-01
+   *
+   * Run it for a normal day, a day with refunds, and a day with a cancellation.
+   * Until it passes, the figures on the dashboards are unverified.
+   */
+  @Get('reconcile-check')
+  @Permissions(PERMISSIONS.SYNC_MANAGE)
+  reconcileCheck(@Query('date') date?: string) {
+    if (!date) throw new BadRequestException('Pass ?date=YYYY-MM-DD');
+    return this.sync.reconcileCheck(date);
+  }
+
   @Get('diagnostics')
   @Permissions(PERMISSIONS.SYNC_MANAGE)
   async diagnostics() {
@@ -582,6 +906,53 @@ export class SyncController {
   @Post('shop')
   @Permissions(PERMISSIONS.SYNC_MANAGE)
   shopSettings() { return this.sync.syncShopSettings(); }
+
+  /** Pull abandoned checkouts on demand. Runs every thirty minutes on the
+   *  schedule; this is for the first load and for impatience. */
+  /**
+   * Ask Shopify what a type actually looks like.
+   *
+   * Written after an abandoned-checkout query was assembled from the
+   * documentation and rejected for two separate reasons at once -- an invalid
+   * sort key and a field that does not exist on the type. GraphQL reports all
+   * of them together and the message gets truncated in logs, so guessing one
+   * field at a time is the slowest possible way to converge.
+   *
+   * Read-only, needs sales.sync.manage, and uses the token the server already
+   * holds -- which is the point: it works without anyone copying credentials
+   * into a REST client and getting the shop domain wrong on the way.
+   */
+  @Get('schema/:typeName')
+  @Permissions(PERMISSIONS.SYNC_MANAGE)
+  async schema(@Param('typeName') typeName: string) {
+    return this.sync.describeType(typeName);
+  }
+
+  /**
+   * Several types at once, for the questions that need more than one answer.
+   *
+   * `GET /schema/AbandonedCheckout` told us the field list but not what the
+   * sort key would accept, and finding that out took a second request. Asking
+   * for a set is one round trip and one answer.
+   *
+   *   ?types=StoreCreditAccount,StoreCreditAccountTransaction
+   */
+  @Get('schema')
+  @Permissions(PERMISSIONS.SYNC_MANAGE)
+  async schemas(@Query('types') types = '') {
+    const names = types.split(',').map((t) => t.trim()).filter(Boolean);
+    if (!names.length) throw new BadRequestException('Pass ?types=Type1,Type2');
+    return Promise.all(names.map((n) => this.sync.describeType(n)));
+  }
+
+  /** Export store credit on demand. Runs nightly otherwise. */
+  @Post('store-credit')
+  @Permissions(PERMISSIONS.SYNC_MANAGE)
+  async storeCredit() { return { transactions: await this.credit.sync() }; }
+
+  @Post('abandoned')
+  @Permissions(PERMISSIONS.SYNC_MANAGE)
+  async abandoned() { return { checkouts: await this.abandonedCheckouts.sync() }; }
 
   @Post('reconcile')
   @Permissions(PERMISSIONS.SYNC_MANAGE)

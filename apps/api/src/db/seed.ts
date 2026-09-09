@@ -92,13 +92,21 @@ const ROLES: Record<string, { name: string; nameAr: string; perms: string[] }> =
 
   'customer-care': {
     name: 'Customer Care', nameAr: 'خدمة العملاء',
-    // Orders and customer identity, because answering the
-    // phone means knowing who is on it -- and *no* dashboard
-    // permission at all. Company-wide figures are not needed
-    // to resolve a complaint, and this account is the one that
-    // makes the permission gate visibly true: the sales
-    // portlets do not appear on her home screen at all.
-    perms: ['sales.order.view', 'sales.customer.view']
+    /* Orders and customer identity, because answering the phone means knowing
+       who is on it. Plus dashboard access, added once Customer Insights and
+       Checkout Recovery existed and gave the role something worth opening.
+    
+       This used to hold no dashboard permission at all, deliberately: it was
+       the account that made the permission gate visibly true. Worood granted it
+       from the console, and this line is what stops the next `npm run seed`
+       taking it away again -- the seeder deletes and rewrites every role's
+       permissions on each run, so a console grant that is not also here is
+       temporary without anyone being told.
+    
+       The demonstration the old comment described has not been lost. Marketing
+       still holds dashboard.view without order.view, and the gate is just as
+       visible from that side. */
+    perms: ['sales.order.view', 'sales.customer.view', 'sales.dashboard.view']
   },
 
   'admin': {
@@ -204,6 +212,162 @@ const WIDGETS: Array<{
       key: 'funnel-conversion', name: 'Conversion funnel', nameAr: 'مسار التحويل', kind: 'funnel', dataSource: 'sessions.snapshot', width: 4,
       description: 'Sessions through cart, checkout and purchase.'
     },
+
+    /* --------------------------------------------------- customer analytics --
+     *
+     * Computed from the order mirror rather than read from ShopifyQL, because
+     * Shopify does not expose cohort retention, repeat-purchase rate or RFM
+     * through shopifyqlQuery -- its own customer reports calculate them
+     * internally. Every one of these carries `computedLocally` on the wire and
+     * is labelled in the interface, because a figure that cannot be checked
+     * against the Shopify admin must not look like one that can.
+     *
+     * Only `table-top-customers` names anyone. The rest are counts and ratios,
+     * so they need `sales.dashboard.view` and nothing more.
+     */
+    {
+      key: 'kpi-new-vs-returning', name: 'Returning customer orders', nameAr: 'طلبات العملاء العائدين',
+      kind: 'kpi', dataSource: 'customers.mirror', width: 3,
+      description: 'Share of orders placed by someone who had bought before — measured against each order’s own date, not today’s.'
+    },
+    {
+      key: 'kpi-repeat-rate', name: 'Repeat purchase rate', nameAr: 'معدل تكرار الشراء',
+      kind: 'kpi', dataSource: 'customers.mirror', width: 3,
+      description: 'Of the customers who bought in this range, the share who have ever bought more than once.'
+    },
+    {
+      key: 'kpi-returning-revenue', name: 'Revenue from returning customers', nameAr: 'إيرادات العملاء العائدين',
+      kind: 'kpi', dataSource: 'customers.mirror', width: 3,
+      description: 'What repeat business is actually worth, separated from first-time orders.'
+    },
+    {
+      key: 'kpi-time-to-second-order', name: 'Median days to second order', nameAr: 'وسيط الأيام حتى الطلب الثاني',
+      kind: 'kpi', dataSource: 'customers.mirror', width: 3,
+      description: 'How long a customer typically takes to come back. The median, not the mean — a handful of two-year gaps would drag an average anywhere.'
+    },
+    {
+      key: 'donut-new-vs-returning', name: 'First-time vs returning', nameAr: 'جديد مقابل عائد',
+      kind: 'donut', dataSource: 'customers.mirror', width: 4,
+      description: 'Order split between first-time and returning buyers.'
+    },
+    {
+      key: 'donut-customer-segments', name: 'Customer segments', nameAr: 'شرائح العملاء',
+      kind: 'donut', dataSource: 'customers.mirror', width: 4,
+      description: 'Champions, Growing, New, Cooling, At risk and Lapsed — by recency and order count.'
+    },
+    {
+      key: 'bar-order-frequency', name: 'Orders per customer', nameAr: 'الطلبات لكل عميل',
+      kind: 'donut', dataSource: 'customers.mirror', width: 4,
+      description: 'How many customers buy once, twice, or many times over.'
+    },
+    {
+      key: 'chart-acquisition', name: 'Acquisition and retention', nameAr: 'الاكتساب والاحتفاظ',
+      kind: 'line', dataSource: 'customers.mirror', width: 8,
+      description: 'New customers against orders from customers acquired earlier, on one timeline.'
+    },
+    {
+      key: 'table-cohort-retention', name: 'Cohort retention', nameAr: 'الاحتفاظ حسب الفوج',
+      kind: 'table', dataSource: 'customers.mirror', width: 8,
+      description: 'Customers grouped by the month they first bought, and how many came back. A cohort too young for a column shows a dash rather than zero.'
+    },
+    {
+      key: 'table-top-customers', name: 'Top customers', nameAr: 'أفضل العملاء',
+      kind: 'table', dataSource: 'customers.mirror', width: 6,
+      description: 'Highest lifetime spend. Names and cities require sales.customer.view; without it the ranking still shows, the identities do not.',
+      permission: 'sales.dashboard.view'
+    },
+
+    /* ------------------------------------------------- abandoned checkouts --
+     *
+     * The only dataset in the module customer care can act on rather than read:
+     * a checkout is "abandoned" in Shopify's sense only once contact details
+     * were entered, so every row is somebody reachable, and Shopify supplies a
+     * recovery URL with each one.
+     */
+    {
+      key: 'kpi-abandoned', name: 'Abandoned checkouts', nameAr: 'عربات متروكة',
+      kind: 'kpi', dataSource: 'abandoned.mirror', width: 3,
+      description: 'Checkouts started with contact details entered and never completed.'
+    },
+    {
+      key: 'kpi-abandoned-value', name: 'Value left in checkouts', nameAr: 'قيمة العربات المتروكة',
+      kind: 'kpi', dataSource: 'abandoned.mirror', width: 3,
+      description: 'What is still sitting uncollected — abandoned value less anything since recovered.'
+    },
+    {
+      key: 'kpi-recovery-rate', name: 'Checkout recovery rate', nameAr: 'معدل استرداد العربات',
+      kind: 'kpi', dataSource: 'abandoned.mirror', width: 3,
+      description: 'Share of abandoned checkouts that were later completed. Includes people who came back on their own — Shopify does not say who was contacted.'
+    },
+    {
+      key: 'kpi-recovered-value', name: 'Recovered revenue', nameAr: 'إيرادات مستردة',
+      kind: 'kpi', dataSource: 'abandoned.mirror', width: 3,
+      description: 'Value of checkouts that were abandoned and then completed.'
+    },
+    {
+      key: 'chart-abandonment', name: 'Abandoned and recovered', nameAr: 'المتروك والمسترد',
+      kind: 'line', dataSource: 'abandoned.mirror', width: 8,
+      description: 'Both lines together: how many are lost, and how many come back.'
+    },
+    {
+      key: 'donut-abandoned-age', name: 'How long they have been sitting', nameAr: 'عمر العربات المتروكة',
+      kind: 'donut', dataSource: 'abandoned.mirror', width: 4,
+      description: 'Age of the still-open checkouts. A checkout abandoned an hour ago is a different conversation from one abandoned last week.'
+    },
+    {
+      key: 'table-open-checkouts', name: 'Open checkouts to follow up', nameAr: 'عربات تحتاج متابعة',
+      kind: 'table', dataSource: 'abandoned.mirror', width: 12,
+      description: 'The working list, newest first. Contact details require sales.customer.view; without it the value and age still show.',
+      permission: 'sales.dashboard.view'
+    },
+
+    /* ------------------------------------------------------- store credit --
+     *
+     * Shopify keeps a ledger, not just a balance: every credit and debit with
+     * its own timestamp, event and running total. That is what makes a usage
+     * report possible rather than a balance readout.
+     *
+     * Exported nightly by bulk operation, because store credit transactions
+     * hang off the customer and there is no way to ask Shopify for "customers
+     * with store credit" -- so the choice is exporting everyone once cheaply or
+     * asking about 37,000 customers expensively.
+     */
+    {
+      key: 'kpi-credit-issued', name: 'Store credit issued', nameAr: 'رصيد ممنوح',
+      kind: 'kpi', dataSource: 'credit.mirror', width: 3,
+      description: 'Credit added to customer accounts in this period — refunds taken as credit, goodwill, adjustments.'
+    },
+    {
+      key: 'kpi-credit-spent', name: 'Store credit spent', nameAr: 'رصيد مستخدم',
+      kind: 'kpi', dataSource: 'credit.mirror', width: 3,
+      description: 'Credit actually used against orders.'
+    },
+    {
+      key: 'kpi-credit-outstanding', name: 'Credit outstanding', nameAr: 'رصيد قائم',
+      kind: 'kpi', dataSource: 'credit.mirror', width: 3,
+      description: 'Total balance still sitting on customer accounts — a liability, and a reason for them to come back.'
+    },
+    {
+      key: 'kpi-credit-redemption', name: 'Credit redemption rate', nameAr: 'معدل استخدام الرصيد',
+      kind: 'kpi', dataSource: 'credit.mirror', width: 3,
+      description: 'Spent against issued in the same window. Credit issued in one month and spent the next counts as spend in the second, so this is a ratio rather than a cohort figure.'
+    },
+    {
+      key: 'chart-credit', name: 'Credit issued and spent', nameAr: 'الرصيد الممنوح والمستخدم',
+      kind: 'line', dataSource: 'credit.mirror', width: 8,
+      description: 'Both lines together: how much goes out, and how much comes back as orders.'
+    },
+    {
+      key: 'donut-credit-events', name: 'Why credit was issued', nameAr: 'أسباب منح الرصيد',
+      kind: 'donut', dataSource: 'credit.mirror', width: 4,
+      description: 'Shopify’s own classification of each transaction.'
+    },
+    {
+      key: 'table-credit-holders', name: 'Who holds credit', nameAr: 'أصحاب الأرصدة',
+      kind: 'table', dataSource: 'credit.mirror', width: 12,
+      description: 'Largest balances first. Names require sales.customer.view.',
+      permission: 'sales.dashboard.view'
+    },
   ];
 
 const DASHBOARDS: Array<{
@@ -238,6 +402,31 @@ const DASHBOARDS: Array<{
     },
     // Required no special-casing. A "combined" dashboard is just another row
     // reusing widgets from two areas -- which is the whole point of the model.
+    {
+      key: 'customer-insights', name: 'Customer Insights', nameAr: 'تحليلات العملاء', system: true,
+      description: 'Who buys, who comes back, and how long they take — computed from order history rather than read from Shopify.',
+      widgets: [['kpi-new-vs-returning', 3], ['kpi-repeat-rate', 3],
+      ['kpi-returning-revenue', 3], ['kpi-time-to-second-order', 3],
+      ['chart-acquisition', 8], ['donut-new-vs-returning', 4],
+      ['donut-customer-segments', 4], ['bar-order-frequency', 4],
+      ['table-cohort-retention', 8], ['table-top-customers', 12]]
+    },
+    {
+      key: 'checkout-recovery', name: 'Checkout Recovery', nameAr: 'استرداد العربات المتروكة', system: true,
+      description: 'Checkouts started and not finished, and what came back. A working list rather than a report.',
+      widgets: [['kpi-abandoned', 3], ['kpi-abandoned-value', 3],
+      ['kpi-recovery-rate', 3], ['kpi-recovered-value', 3],
+      ['chart-abandonment', 8], ['donut-abandoned-age', 4],
+      ['table-open-checkouts', 12]]
+    },
+    {
+      key: 'store-credit', name: 'Store Credit', nameAr: 'رصيد المتجر', system: true,
+      description: 'Credit issued, credit spent, and what is still owed to customers.',
+      widgets: [['kpi-credit-issued', 3], ['kpi-credit-spent', 3],
+      ['kpi-credit-outstanding', 3], ['kpi-credit-redemption', 3],
+      ['chart-credit', 8], ['donut-credit-events', 4],
+      ['table-credit-holders', 12]]
+    },
     {
       key: 'combined-sales-marketing', name: 'Combined Sales and Marketing', nameAr: 'المبيعات والتسويق معاً', system: false,
       description: 'A hybrid view built by picking existing widgets from two areas — no new code.',
@@ -573,6 +762,42 @@ async function main() {
   await grantRole('marketing', 'combined-sales-marketing');
 
   await grantRole('operations', 'sales-operations');
+
+  /* Customer Insights goes to the roles that already hold sales.dashboard.view
+     and would actually use it: Marketing owns acquisition and retention,
+     Executive sees everything, Finance cares what repeat business is worth.
+  
+     Customer Care is the interesting omission, and it is left as it stands
+     rather than quietly changed. That role holds sales.order.view and
+     sales.customer.view but *no* dashboard permission at all -- deliberately,
+     as the account that makes the permission gate visibly true. Granting a
+     dashboard to a role that cannot open one would produce an access row that
+     looks like access and is not.
+  
+     If Customer Care should see this dashboard, the fix is one tick in
+     Administration -> Roles adding sales.dashboard.view. That is a data change
+     that binds on the next request, and it is a decision about what Customer
+     Care is for -- not something a seeder should make on Worood's behalf. */
+  /* Checkout Recovery is Customer Care's list before it is anyone else's:
+     1,495 open checkouts, each with a name, an email and a recovery link. It is
+     the only dataset in the module that can be acted on rather than read. */
+  /* Store credit is a finance question first -- outstanding credit is a
+     liability on the books -- and a customer-care question second, because the
+     person on the phone needs to know what the caller is holding. */
+  await grantRole('finance', 'store-credit');
+  await grantRole('customer-care', 'store-credit');
+  await grantRole('executive', 'store-credit');
+
+  await grantRole('customer-care', 'checkout-recovery');
+  await grantRole('customer-care', 'customer-insights');
+
+  await grantRole('marketing', 'checkout-recovery');
+  await grantRole('operations', 'checkout-recovery');
+  await grantRole('executive', 'checkout-recovery');
+
+  await grantRole('marketing', 'customer-insights');
+  await grantRole('executive', 'customer-insights');
+  await grantRole('finance', 'customer-insights');
 
   /* One dashboard beyond what her role carries. Deliberately *not* given to
      Customer Care: that role holds no dashboard permission at all, so a grant
