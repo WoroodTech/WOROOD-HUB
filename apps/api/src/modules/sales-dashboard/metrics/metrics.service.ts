@@ -17,12 +17,12 @@
  * snapshots) and collected (received, from the mirror). The gap between them is
  * money in transit with the couriers.
  */
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { DateTime } from 'luxon';
 import { query } from '../../../common/db';
 import { Principal, can } from '../../../common/auth';
 import { config } from '../../../common/config';
-import { ShopContext, Shop } from '../analytics/snapshot.service';
+import { ShopContext, Shop, SnapshotService } from '../analytics/snapshot.service';
 import {
   CategoryPayload, FunnelPayload, KpiPayload, SeriesPayload, TablePayload,
   WidgetEnvelope, WidgetPayload, PERMISSIONS,
@@ -31,17 +31,50 @@ import { CustomerMetricsService } from './customer-metrics.service';
 import { AbandonedCheckoutService } from '../sync/abandoned-checkout.service';
 import { StoreCreditService } from '../sync/store-credit.service';
 
-export type RangeKey = 'today' | '7d' | '30d' | '90d' | '13m';
+export type RangeKey = 'today' | '7d' | '30d' | '90d' | '13m' | 'compare';
+
+/** Two specific days, chosen from a calendar, held against each other.
+ *
+ *  Deliberately days rather than ranges. Two single days are the same length by
+ *  construction, so the hours line up one to one and the comparison needs no
+ *  explanation. Arbitrary ranges would need a rule for what happens when three
+ *  days are held against seven, and every rule available there is a compromise
+ *  someone has to be told about. */
+export interface CompareDays { primary: string; against: string }
 
 export interface ResolvedRange {
   key: RangeKey; grain: 'hour' | 'day';
   start: Date; end: Date;
   priorStart: Date; priorEnd: Date;
   label: string; comparisonLabel: string;
+  /** True when the caller picked two days rather than a rolling window. Widgets
+   *  read it to label themselves honestly: "vs 4 Sep" rather than "vs
+   *  yesterday", and a trend chart draws the second day as its own line. */
+  isComparison?: boolean;
 }
 
 /** All range arithmetic happens in the shop's timezone, never in UTC. */
-export function resolveRange(key: RangeKey, tz: string, now = DateTime.now()): ResolvedRange {
+export function resolveRange(
+  key: RangeKey, tz: string, now = DateTime.now(), compare?: CompareDays,
+): ResolvedRange {
+  /* Two chosen days. Hour grain, because a day against a day is only
+     interesting hour by hour -- at day grain it is two bars, which is a number
+     and a number, not a comparison. */
+  if (key === 'compare' && compare?.primary && compare?.against) {
+    const a = DateTime.fromISO(compare.primary, { zone: tz });
+    const b = DateTime.fromISO(compare.against, { zone: tz });
+    if (!a.isValid || !b.isValid) {
+      throw new BadRequestException('compare dates must be YYYY-MM-DD');
+    }
+    const fmt = (d: DateTime) => d.toFormat('d LLL yyyy');
+    return {
+      key, grain: 'hour', isComparison: true,
+      start: a.startOf('day').toJSDate(), end: a.endOf('day').toJSDate(),
+      priorStart: b.startOf('day').toJSDate(), priorEnd: b.endOf('day').toJSDate(),
+      label: fmt(a), comparisonLabel: `vs ${fmt(b)}`,
+    };
+  }
+
   const nowTz = now.setZone(tz);
   const endOfToday = nowTz.endOf('day');
   const mk = (days: number, grain: 'hour' | 'day', label: string, cmp: string): ResolvedRange => {
@@ -77,6 +110,7 @@ type Totals = Record<string, number>;
 export class MetricsService {
   constructor(
     private shops: ShopContext,
+    private snapshots: SnapshotService,
     private customers: CustomerMetricsService,
     private abandoned: AbandonedCheckoutService,
     private credit: StoreCreditService,
@@ -104,6 +138,87 @@ export class MetricsService {
       }
     }
     return { totals, capturedAt, provisional };
+  }
+
+  /**
+   * One day's totals, summed from a live ShopifyQL hourly series.
+   *
+   * Same return shape as `totals` so every KPI reads it without knowing the
+   * difference. `capturedAt` is now, because it was: the figure was fetched for
+   * this request, which is why the comparison view does not carry the staleness
+   * banner the stored snapshots would have given it.
+   */
+  /**
+   * Two chosen days, one metric, overlaid on a single 24-hour axis.
+   *
+   * Both days come from ShopifyQL directly for the same reason the KPIs do: the
+   * stored hourly buckets only go back three days, so a day picked from a
+   * calendar is usually not in them.
+   *
+   * The comparison day's hours are re-stamped onto the primary day's date
+   * before they are sent. Without that the two lines run consecutively on a
+   * 48-hour axis instead of sitting on top of each other, and the comparison --
+   * the entire point -- is invisible. The real date travels in the series
+   * label, so nothing is hidden, only aligned.
+   */
+  private async compareSeries(
+    shop: Shop, range: ResolvedRange, metric: string,
+    kind: 'line' | 'bar', format: 'money' | 'integer', currency?: string,
+  ): Promise<{ capturedAt: Date | null; payload: SeriesPayload }> {
+    const dayOf = (d: Date) =>
+      DateTime.fromJSDate(d).setZone(shop.iana_timezone).toFormat('yyyy-MM-dd');
+
+    const [a, b] = await Promise.all([
+      this.snapshots.hourlyForDay(dayOf(range.start)),
+      this.snapshots.hourlyForDay(dayOf(range.priorStart)),
+    ]);
+
+    const shift = range.start.getTime() - range.priorStart.getTime();
+    return {
+      capturedAt: a.capturedAt,
+      payload: {
+        kind, format, currency, timezone: shop.iana_timezone,
+        series: [
+          { key: metric, label: range.label, format,
+            points: a.sales.map((r) => ({ t: r.bucket, v: Number(r.metrics[metric] ?? 0) })) },
+          { key: `${metric}_compare`,
+            label: range.comparisonLabel.replace(/^vs /, ''),
+            format, dashed: true,
+            points: b.sales.map((r) => ({
+              t: new Date(new Date(r.bucket).getTime() + shift).toISOString(),
+              v: Number(r.metrics[metric] ?? 0) })) },
+        ],
+      } as SeriesPayload,
+    };
+  }
+
+  private async totalsForDay(day: Date, shop: Shop, schema: 'sales' | 'sessions' = 'sales') {
+    const iso = DateTime.fromJSDate(day).setZone(shop.iana_timezone).toFormat('yyyy-MM-dd');
+    const { sales, capturedAt } = await this.snapshots.hourlyForDay(iso, schema);
+
+    const totals: Record<string, number> = {};
+    for (const row of sales) {
+      for (const [k, v] of Object.entries(row.metrics)) {
+        totals[k] = (totals[k] ?? 0) + Number(v ?? 0);
+      }
+    }
+    /* Average order value is a ratio, so summing the hourly values would give
+       the sum of averages -- a number that means nothing. Recomputed on
+       Shopify's own definition instead, which excludes reversals. */
+    /* Ratios cannot be summed. Adding twenty-four hourly averages gives the sum
+       of averages, which is not a number that means anything -- both of these
+       are recomputed from their components on Shopify's own definitions. */
+    if (schema === 'sales') {
+      totals.average_order_value = totals.orders
+        ? ((totals.gross_sales ?? 0) - Math.abs(totals.discounts ?? 0)) / totals.orders
+        : 0;
+    } else {
+      totals.conversion_rate = totals.sessions
+        ? (totals.sessions_that_completed_checkout ?? 0) / totals.sessions
+        : 0;
+    }
+
+    return { totals: totals as any, capturedAt, provisional: false };
   }
 
   private async series(shop: Shop, schema: string, grain: 'hour' | 'day',
@@ -171,9 +286,9 @@ export class MetricsService {
 
   /* ----------------------------------------------------------- widgets -- */
 
-  async widget(widgetKey: string, rangeKey: RangeKey, principal: Principal): Promise<WidgetEnvelope> {
+  async widget(widgetKey: string, rangeKey: RangeKey, principal: Principal, compare?: CompareDays): Promise<WidgetEnvelope> {
     const shop = await this.shops.get();
-    const range = resolveRange(rangeKey, shop.iana_timezone);
+    const range = resolveRange(rangeKey, shop.iana_timezone, undefined, compare);
     const generatedAt = new Date().toISOString();
     try {
       const { payload, capturedAt } = await this.build(widgetKey, shop, range, principal);
@@ -194,10 +309,28 @@ export class MetricsService {
       Promise<{ payload: WidgetPayload | null; capturedAt: Date | null }> {
     const cur = shop.currency_code;
 
-    const salesNow  = () => this.totals(shop, 'sales', range.grain, range.start, range.end);
-    const salesPrev = () => this.totals(shop, 'sales', range.grain, range.priorStart, range.priorEnd);
-    const sessNow   = () => this.totals(shop, 'sessions', range.grain, range.start, range.end);
-    const sessPrev  = () => this.totals(shop, 'sessions', range.grain, range.priorStart, range.priorEnd);
+    /* In comparison mode both sides come from ShopifyQL directly, not from the
+       stored snapshots.
+    
+       The hourly capture covers three days, so the stored hour buckets reach
+       back only as far as the job has been running. Reading them for a day
+       chosen from a calendar gave zero for anything older -- and worse, gave a
+       plausible-looking zero beside a correct day-grain headline, so the
+       percentage moved while the number above it did not. Asking ShopifyQL for
+       the two specific days removes the limit and makes both halves of the
+       comparison come from one source with one age. */
+    const salesNow = () => range.isComparison
+      ? this.totalsForDay(range.start, shop)
+      : this.totals(shop, 'sales', range.grain, range.start, range.end);
+    const salesPrev = () => range.isComparison
+      ? this.totalsForDay(range.priorStart, shop)
+      : this.totals(shop, 'sales', range.grain, range.priorStart, range.priorEnd);
+    const sessNow = () => range.isComparison
+      ? this.totalsForDay(range.start, shop, 'sessions')
+      : this.totals(shop, 'sessions', range.grain, range.start, range.end);
+    const sessPrev = () => range.isComparison
+      ? this.totalsForDay(range.priorStart, shop, 'sessions')
+      : this.totals(shop, 'sessions', range.grain, range.priorStart, range.priorEnd);
 
     switch (key) {
       /* ---- KPIs from the sales snapshots ---- */
@@ -303,6 +436,18 @@ export class MetricsService {
       /* ---- series ---- */
       case 'chart-sales-trend': {
         const rows = await this.series(shop, 'sales', range.grain, range.start, range.end);
+
+        /* Two chosen days: one line each, the second dashed.
+         *
+         * The second day's points are re-stamped onto the first day's clock
+         * before they are sent. Without that the two lines sit side by side on
+         * a 48-hour axis instead of on top of each other, and the comparison --
+         * which is the entire point -- is invisible. The real date travels in
+         * the series label, so nothing is being hidden, only aligned. */
+        if (range.isComparison) {
+          return this.compareSeries(shop, range, 'total_sales', 'line', 'money', cur);
+        }
+
         return { capturedAt: this.latest(rows), payload: {
           kind: 'line', format: 'money', currency: cur, timezone: shop.iana_timezone,
           provisionalFrom: this.firstProvisional(rows),
@@ -316,6 +461,13 @@ export class MetricsService {
       }
       case 'chart-orders-trend': {
         const rows = await this.series(shop, 'sales', range.grain, range.start, range.end);
+
+        // Same treatment as the sales trend: the comparison day re-stamped onto
+        // the primary day's clock so the two overlay rather than run on.
+        if (range.isComparison) {
+          return this.compareSeries(shop, range, 'orders', 'bar', 'integer');
+        }
+
         return { capturedAt: this.latest(rows), payload: {
           kind: 'bar', format: 'integer', timezone: shop.iana_timezone,
           provisionalFrom: this.firstProvisional(rows),

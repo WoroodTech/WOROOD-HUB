@@ -166,12 +166,22 @@ function OneAxisChart({ payload, height, slotOffset }: {
             />
           ) : null}
           {series.map((s, i) => (
-            hidden.has(s.key) ? null : isBar ? (
+            /* A dashed series is a comparison period, and it is drawn as a line
+               even on a bar chart. Two overlapping bar sets for the same hour
+               either hide each other or halve in width; a line over bars keeps
+               both readable and says plainly which one is the past. Dashes
+               rather than a lighter colour, because the distinction has to
+               survive being printed and being looked at by someone who does not
+               see the two hues apart. */
+            hidden.has(s.key) ? null : (isBar && !s.dashed) ? (
               <Bar key={s.key} dataKey={s.key} name={s.label} fill={seriesColor(i + slotOffset)}
                    radius={[4, 4, 0, 0]} maxBarSize={26} isAnimationActive={false} />
             ) : (
               <Line key={s.key} type="monotone" dataKey={s.key} name={s.label}
-                    stroke={seriesColor(i + slotOffset)} strokeWidth={2} dot={false} connectNulls isAnimationActive={false}
+                    stroke={seriesColor(i + slotOffset)}
+                    strokeWidth={s.dashed ? 1.75 : 2}
+                    strokeDasharray={s.dashed ? '5 4' : undefined}
+                    dot={false} connectNulls isAnimationActive={false}
                     activeDot={{ r: 4, strokeWidth: 2, stroke: c.surface }} />
             )
           ))}

@@ -5,7 +5,7 @@ import { CurrentUser, Permissions, Principal, can } from '../../../common/auth';
 import { query, one, tx } from '../../../common/db';
 import { AuditService } from '../../../core/core.module';
 import { AccessService } from './access.service';
-import { MetricsService, RangeKey } from '../metrics/metrics.service';
+import { MetricsService, RangeKey, CompareDays } from '../metrics/metrics.service';
 import { ShopContext } from '../analytics/snapshot.service';
 import { PERMISSIONS, DashboardDataResponse, OrderListResponse } from '../../../contract';
 
@@ -39,13 +39,20 @@ export class DashboardsController {
   @Get('dashboards/:key/data')
   @Permissions(PERMISSIONS.DASHBOARD_VIEW, PERMISSIONS.DASHBOARD_MANAGE)
   async dashboardData(@CurrentUser() p: Principal, @Param('key') key: string,
-                      @Query('range') range: RangeKey = '30d'): Promise<DashboardDataResponse> {
+                      @Query('range') range: RangeKey = '30d',
+                      /* Two dates, used only when range=compare. Passed through
+                         rather than folded into the key so the existing rolling
+                         windows are untouched -- this is an extra mode beside
+                         them, not a replacement for how they work. */
+                      @Query('primary') primary?: string,
+                      @Query('against') against?: string): Promise<DashboardDataResponse> {
     const dashboard = await this.access.detail(p, key);
     if (!dashboard) throw new NotFoundException('Dashboard not found or not assigned to you');
     const shop = await this.shops.get();
 
     const settled = await Promise.allSettled(
-      dashboard.widgets.map((w) => this.metrics.widget(w.widgetKey, range, p)));
+      dashboard.widgets.map((w) =>
+        this.metrics.widget(w.widgetKey, range, p, { primary, against } as CompareDays)));
 
     const widgets = settled.map((s, i) => {
       const w = dashboard.widgets[i];
@@ -65,8 +72,10 @@ export class DashboardsController {
   @Get('widgets/:key/data')
   @Permissions(PERMISSIONS.DASHBOARD_VIEW, PERMISSIONS.DASHBOARD_MANAGE)
   widgetData(@CurrentUser() p: Principal, @Param('key') key: string,
-             @Query('range') range: RangeKey = '30d') {
-    return this.metrics.widget(key, range, p);
+             @Query('range') range: RangeKey = '30d',
+             @Query('primary') primary?: string,
+             @Query('against') against?: string) {
+    return this.metrics.widget(key, range, p, { primary, against } as CompareDays);
   }
 
   @Get('widgets')
