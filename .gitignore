@@ -12,9 +12,7 @@ node_modules/
 # Real Shopify fixtures / business data
 fixtures/shopify/
 
-Shopify integration report.md
-Customer care report.md
-Sales dashboard reference.md
+
 
 # Build
 dist/
