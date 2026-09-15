@@ -69,6 +69,8 @@ CREATE INDEX IF NOT EXISTS sd_abandoned_open_idx
   ON sd_abandoned_checkouts (shop_id, shopify_created_at DESC)
   WHERE completed_at IS NULL;
 
+DROP TRIGGER IF EXISTS sd_abandoned_updated ON sd_abandoned_checkouts;
+
 CREATE TRIGGER sd_abandoned_updated
   BEFORE UPDATE ON sd_abandoned_checkouts
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();

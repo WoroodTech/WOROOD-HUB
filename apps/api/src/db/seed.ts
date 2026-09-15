@@ -458,9 +458,19 @@ async function main() {
   /* departments, permissions, roles */
   const deptIds: Record<string, string> = {};
   for (const name of DEPARTMENTS) {
+    /* The conflict target is named, which it was not before.
+    
+       `ON CONFLICT DO NOTHING` without one checks only the constraints that
+       exist -- the primary key on a generated uuid, never violated -- so
+       nothing ever conflicted and every seed run inserted another copy of every
+       department. Migration 0015 adds the unique index this now relies on.
+    
+       `DO UPDATE` rather than `DO NOTHING` so the row is returned either way;
+       otherwise a repeat run gets no row back and falls to the SELECT below. */
     const r = await one(
       `INSERT INTO core_departments (name) VALUES ($1)
-       ON CONFLICT DO NOTHING RETURNING id`, [name])
+       ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+       RETURNING id`, [name])
       ?? await one(`SELECT id FROM core_departments WHERE name = $1`, [name]);
     deptIds[name] = r.id;
   }
