@@ -8,6 +8,9 @@ import { BookRoom } from './pages/BookRoom';
 import { MyReservations } from './pages/MyReservations';
 import { ManageRooms } from './pages/ManageRooms';
 import { People } from './pages/People';
+import { Departments } from './pages/Departments';
+import { AllTasks, TaskQueue, Tasks } from './pages/Tasks';
+import { TaskDetailPage } from './pages/TaskDetail';
 import { Roles } from './pages/Roles';
 import { SalesIndex } from './pages/SalesIndex';
 import { SalesDashboard } from './pages/SalesDashboard';
@@ -51,7 +54,13 @@ export function App() {
         {/* The administration console. The links are permission-gated in the
             descriptor; the routes are open to anyone who guesses the URL, and
             the API refuses them -- which is the boundary that matters. */}
+        <Route path="/tasks" element={<Tasks />} />
+        <Route path="/tasks/queue" element={<TaskQueue />} />
+        <Route path="/tasks/all" element={<AllTasks />} />
+        <Route path="/tasks/:id" element={<TaskDetailPage />} />
+
         <Route path="/admin/people" element={<People />} />
+        <Route path="/admin/departments" element={<Departments />} />
         <Route path="/admin/roles" element={<Roles />} />
 
         <Route path="/sales" element={<SalesIndex />} />

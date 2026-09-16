@@ -1837,3 +1837,157 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .brandlogo svg { display: block; }
 
 .booting__mark { color: var(--brand-gold); }
+/* ==================================================================== *
+   Module 3 — tasks & tickets.
+
+   Written in logical properties like the rest of the sheet, so the whole
+   module mirrors under dir="rtl" without a second stylesheet. References
+   and clock times are pinned LTR: "TK-1042" read right-to-left is a
+   different string, and a due date is meaningless backwards.
+ * ==================================================================== */
+
+.tasksearch {
+  display: flex; align-items: center; gap: 8px;
+  margin-block-end: var(--gap); color: var(--muted);
+}
+.tasksearch .input { flex: 1; }
+
+.switch__count {
+  display: inline-grid; place-items: center;
+  min-inline-size: 18px; margin-inline-start: 6px; padding-inline: 5px;
+  border-radius: var(--radius-pill); background: var(--accent-soft);
+  color: var(--accent); font-size: 11px; font-weight: 600;
+}
+.switch__btn.is-on .switch__count { background: var(--surface); color: var(--ink); }
+
+/* ------------------------------------------------------------- the list -- */
+
+.tasklist { display: flex; flex-direction: column; }
+.taskrow {
+  display: grid; align-items: center; gap: 12px;
+  grid-template-columns: auto 1fr auto auto;
+  padding-block: 11px; padding-inline: 4px;
+  border-block-end: 1px solid var(--line);
+  color: inherit; text-decoration: none;
+  transition: background var(--t-fast) var(--ease);
+}
+.taskrow:last-child { border-block-end: 0; }
+.taskrow:hover { background: var(--surface-2); }
+.taskrow > svg:last-child { color: var(--muted); }
+
+/* A late ticket is marked on its leading edge rather than by tinting the
+   whole row: the row still has to be readable, and a wash of red over
+   forty of them says nothing about which one to open first. */
+.taskrow--late { box-shadow: inset 3px 0 0 var(--critical); }
+[dir="rtl"] .taskrow--late { box-shadow: inset -3px 0 0 var(--critical); }
+
+.taskrow__ref, .tasklet__ref, .deplist__ref, .taskref {
+  font-family: var(--mono); font-size: 11.5px; color: var(--muted);
+  direction: ltr; unicode-bidi: isolate;
+}
+.taskrow__main { display: flex; flex-direction: column; gap: 3px; min-inline-size: 0; }
+.taskrow__title {
+  font-weight: 550; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.taskrow__meta { font-size: 12px; color: var(--muted); }
+.taskrow__side { display: flex; flex-wrap: wrap; gap: 5px; justify-content: flex-end; }
+
+/* ---------------------------------------------------------- the ticket -- */
+
+.taskcols { display: grid; gap: var(--gap); grid-template-columns: minmax(0, 1fr) 320px; align-items: start; }
+.taskcols__main, .taskcols__side { display: flex; flex-direction: column; gap: var(--gap); }
+@media (max-width: 900px) { .taskcols { grid-template-columns: 1fr; } }
+
+.taskbadges { display: flex; flex-wrap: wrap; gap: 6px; margin-block-start: 10px; }
+.taskdesc { white-space: pre-wrap; line-height: 1.6; color: var(--ink-2); }
+
+.taskactions { display: flex; flex-direction: column; gap: 8px; }
+
+.peoplelist, .deplist { display: flex; flex-direction: column; gap: 2px; }
+.peoplelist__row, .deplist__row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding-block: 8px; border-block-end: 1px solid var(--line);
+}
+.peoplelist__row:last-child, .deplist__row:last-child { border-block-end: 0; }
+.peoplelist__name { font-weight: 550; }
+.peoplelist__meta, .deplist__meta { font-size: 12px; color: var(--muted); }
+.peoplelist__row .badge { margin-inline-start: auto; }
+.deplist__main { display: flex; flex-direction: column; gap: 2px; flex: 1; min-inline-size: 0; }
+
+/* -------------------------------------------------------------- timeline -- */
+
+.timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.timeline__row {
+  position: relative; display: flex; gap: 12px;
+  padding-block: 10px; padding-inline-start: 18px;
+}
+/* The rail is drawn by the rows rather than by a container, so the first
+   and last entries do not have a stub of line hanging off them. */
+.timeline__row::before {
+  content: ''; position: absolute; inset-block: 0; inset-inline-start: 4px;
+  inline-size: 1px; background: var(--line);
+}
+.timeline__row:first-child::before { inset-block-start: 16px; }
+.timeline__row:last-child::before { inset-block-end: calc(100% - 16px); }
+.timeline__dot {
+  position: absolute; inset-block-start: 14px; inset-inline-start: 0;
+  inline-size: 9px; block-size: 9px; border-radius: 50%;
+  background: var(--surface); border: 1.5px solid var(--line-strong);
+}
+.timeline__row--comment .timeline__dot { background: var(--accent); border-color: var(--accent); }
+.timeline__body { flex: 1; min-inline-size: 0; }
+.timeline__who { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; font-size: 12.5px; }
+.timeline__when { font-size: 11.5px; color: var(--muted); direction: ltr; unicode-bidi: isolate; }
+.timeline__text { margin-block-start: 3px; color: var(--ink-2); line-height: 1.55; }
+.timeline__row--event .timeline__text { color: var(--muted); font-size: 12.5px; }
+.timeline__row--comment .timeline__text { white-space: pre-wrap; }
+
+.commentbox {
+  display: flex; flex-direction: column; gap: 8px; align-items: flex-end;
+  margin-block-start: 14px; padding-block-start: 14px; border-block-start: 1px solid var(--line);
+}
+.commentbox .input { inline-size: 100%; }
+
+/* --------------------------------------------------------------- picker -- */
+
+.pickerlist {
+  display: flex; flex-direction: column;
+  border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden;
+  max-block-size: 260px; overflow-y: auto;
+}
+.pickerlist__row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding-block: 9px; padding-inline: 11px; border: 0; background: none;
+  text-align: start; cursor: pointer; border-block-end: 1px solid var(--line);
+  transition: background var(--t-fast) var(--ease);
+}
+.pickerlist__row:last-child { border-block-end: 0; }
+.pickerlist__row:hover { background: var(--surface-2); }
+.pickerlist__row.is-on { background: var(--accent-soft); }
+.pickerlist__name { font-weight: 550; }
+.pickerlist__meta { font-size: 12px; color: var(--muted); }
+.pickerlist__row .badge { margin-inline-start: auto; }
+
+/* ------------------------------------------------------------- portlets -- */
+
+.tasklet { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.tasklet__row {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 4px 10px;
+  align-items: center; padding-block: 9px;
+  border-block-end: 1px solid var(--line); color: inherit; text-decoration: none;
+}
+.tasklet li:last-child .tasklet__row { border-block-end: 0; }
+.tasklet__row:hover .tasklet__title { color: var(--accent); }
+.tasklet__title {
+  font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tasklet__meta { grid-column: 2 / -1; font-size: 11.5px; color: var(--muted); }
+
+/* Departments: cards rather than a table, because the unit people reason
+   about is "this department and who runs it", not a grid of cells. */
+.deptgrid {
+  display: grid; gap: var(--gap);
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  align-items: start;
+}

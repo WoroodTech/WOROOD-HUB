@@ -44,6 +44,15 @@ const PERMISSIONS: [string, string, string][] = [
   ['sales.order.view', 'sales-dashboard', 'Browse individual orders (no customer identity)'],
   ['sales.customer.view', 'sales-dashboard', 'See customer name, e-mail, phone and address'],
   ['sales.sync.manage', 'sales-dashboard', 'Trigger backfills, inspect sync health, re-register webhooks'],
+  ['tasks.item.view-any', 'tasks', 'Read every ticket in the company'],
+  ['tasks.item.manage-any', 'tasks', 'Act on any ticket regardless of department'],
+  ['tasks.report.view', 'tasks', 'Ticket reporting by department and ageing'],
+  /* tasks.item.assign is deliberately absent. It is derived in loadPrincipal
+     from core_department_managers, because authority over a department is a
+     position rather than a role -- granting it here would make it
+     company-wide and let the Marketing manager assign work inside Customer
+     Care. The permission row itself is registered from the module descriptor
+     so the Roles screen can explain it; it is simply never granted. */
   ['meeting-rooms.room.manage', 'meeting-rooms', 'Create, edit and retire rooms'],
   ['meeting-rooms.reservation.manage-any', 'meeting-rooms', 'Modify or cancel any reservation'],
   ['core.user.manage', 'core', 'Create employee accounts, change their details and password, assign roles and dashboards'],
@@ -62,11 +71,17 @@ const PERMISSIONS: [string, string, string][] = [
  * the administrator can open the administration console.
  */
 const ROLES: Record<string, { name: string; nameAr: string; perms: string[] }> = {
+  /* Nothing from the tasks module: raising a ticket and reading your own are
+     not privileges, so they carry no key at all. The bare employee can use the
+     module fully, which is the point. */
   'employee': { name: 'Employee', nameAr: 'موظف', perms: [] },
 
+  /* view-any, not manage-any. The widest reading permission still does not
+     imply an operational one -- the same line this cast already draws with
+     Data & Sync and the administration console. */
   'executive': {
     name: 'Executive', nameAr: 'الإدارة التنفيذية',
-    perms: ['sales.dashboard.view', 'sales.order.view', 'sales.customer.view']
+    perms: ['tasks.item.view-any', 'sales.dashboard.view', 'sales.order.view', 'sales.customer.view']
   },
 
   'finance': {
@@ -123,6 +138,56 @@ const USERS: [string, string, string, string, string, string][] = [
   ['omnia.osama@worood.co', 'Omnia Osama', 'أمنية أسامة', 'Customer Care', 'Customer Care', 'customer-care'],
   ['nadia@worood.co', 'Nadia', 'نادية', 'Marketing Director', 'Marketing', 'marketing'],
   ['Yousry@worood.co', 'Mohamed Yousry', 'محمد يسري', 'Financial Manager', 'Finance', 'finance'],
+];
+
+/**
+ * The teams underneath them.
+ *
+ * Module 3 addresses work to a DEPARTMENT and has the manager hand it out, so
+ * a cast of six people in six departments of one could not demonstrate a
+ * single assignment: there was nobody to assign to. These are the colleagues.
+ *
+ * Customer Care deliberately has two managers. One department, two people able
+ * to assign, is how cover during leave works without handing anybody a
+ * company-wide role -- and it is the case that needs seeing, because two
+ * managers can reach for the same ticket in the same moment and only one of
+ * them can win.
+ */
+const TEAM: [string, string, string, string, string][] = [
+  // email, name, name_ar, job title, department
+  ['mariam.adel@worood.co', 'Mariam Adel', 'مريم عادل', 'Customer Care Team Lead', 'Customer Care'],
+  ['youssef.samir@worood.co', 'Youssef Samir', 'يوسف سمير', 'Customer Care Agent', 'Customer Care'],
+  ['salma.nabil@worood.co', 'Salma Nabil', 'سلمى نبيل', 'Customer Care Agent', 'Customer Care'],
+  ['karim.fouad@worood.co', 'Karim Fouad', 'كريم فؤاد', 'Content & Social', 'Marketing'],
+  ['dina.ashraf@worood.co', 'Dina Ashraf', 'دينا أشرف', 'Graphic Designer', 'Marketing'],
+  ['ahmed.sabry@worood.co', 'Ahmed Sabry', 'أحمد صبري', 'Accountant', 'Finance'],
+  ['mostafa.gamal@worood.co', 'Mostafa Gamal', 'مصطفى جمال', 'Fulfilment Supervisor', 'Operations'],
+  ['rania.hosny@worood.co', 'Rania Hosny', 'رانيا حسني', 'Dispatch Coordinator', 'Operations'],
+  ['amr.tarek@worood.co', 'Amr Tarek', 'عمرو طارق', 'Systems Engineer', 'Technology'],
+  ['sherif.adham@worood.co', 'Sherif Adham', 'شريف أدهم', 'Sales Manager', 'Sales'],
+  ['nourhan.wael@worood.co', 'Nourhan Wael', 'نورهان وائل', 'Branch Sales', 'Sales'],
+  ['tarek.mahmoud@worood.co', 'Tarek Mahmoud', 'طارق محمود', 'Facilities Manager', 'Facilities'],
+  ['hassan.ali@worood.co', 'Hassan Ali', 'حسن علي', 'Maintenance Technician', 'Facilities'],
+];
+
+/**
+ * Who runs each department. A position in the org chart, stored in
+ * core_department_managers -- not a role, because a role would be company-wide
+ * and Nadia would be able to assign work inside Customer Care.
+ *
+ * Every department has one. A department without a manager is a black hole:
+ * tickets land in it and nobody in the system can move them, which is why the
+ * module refuses to offer one as a destination.
+ */
+const DEPARTMENT_MANAGERS: [string, string[]][] = [
+  ['Executive', ['Kandil@worood.co']],
+  ['Technology', ['Admin@worood.co']],
+  ['Operations', ['heba.fayed@worood.co']],
+  ['Customer Care', ['omnia.osama@worood.co', 'mariam.adel@worood.co']],
+  ['Marketing', ['nadia@worood.co']],
+  ['Finance', ['Yousry@worood.co']],
+  ['Sales', ['sherif.adham@worood.co']],
+  ['Facilities', ['tarek.mahmoud@worood.co']],
 ];
 
 /* --------------------------------------------------------------- widgets -- */
@@ -451,7 +516,9 @@ async function main() {
                           mr_equipment, mr_locations,
                           core_notifications, core_audit_logs, core_refresh_tokens,
                           core_user_roles, core_role_permissions, core_users,
-                          core_roles, core_permissions, core_departments CASCADE`);
+                          core_roles, core_permissions, core_department_managers,
+                          tk_events, tk_links, tk_comments, tk_participants, tk_items,
+                          core_departments CASCADE`);
     console.log('  reset: all seeded tables truncated');
   }
 
@@ -517,6 +584,36 @@ async function main() {
     await query(`DELETE FROM core_user_roles WHERE user_id = $1`, [u.id]);
     await query(`INSERT INTO core_user_roles (user_id, role_id) VALUES ($1,$2)
                  ON CONFLICT DO NOTHING`, [u.id, roleIds[role]]);
+  }
+
+  /* The teams underneath them, all on the bare `employee` role: raising a
+     ticket and reading your own are not privileges. */
+  for (const [email, name, nameAr, title, dept] of TEAM) {
+    const u = await one(
+      `INSERT INTO core_users (email, password_hash, full_name, full_name_ar, job_title, department_id, timezone)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (email) DO UPDATE SET full_name = EXCLUDED.full_name,
+         full_name_ar = EXCLUDED.full_name_ar, job_title = EXCLUDED.job_title,
+         department_id = EXCLUDED.department_id
+       RETURNING id`,
+      [email, digest, name, nameAr, title, deptIds[dept], TZ]);
+    userIds[email] = u.id;
+    await query(`DELETE FROM core_user_roles WHERE user_id = $1`, [u.id]);
+    await query(`INSERT INTO core_user_roles (user_id, role_id) VALUES ($1,$2)
+                 ON CONFLICT DO NOTHING`, [u.id, roleIds['employee']]);
+  }
+
+  /* Who runs what. Rewritten on every run rather than merged, so a department
+     whose manager changed here does not keep the old one as well -- the same
+     reason role assignment above deletes before it inserts. */
+  for (const [dept, emails] of DEPARTMENT_MANAGERS) {
+    await query(`DELETE FROM core_department_managers WHERE department_id = $1`, [deptIds[dept]]);
+    for (const email of emails) {
+      if (!userIds[email]) continue;
+      await query(
+        `INSERT INTO core_department_managers (department_id, user_id) VALUES ($1,$2)
+         ON CONFLICT DO NOTHING`, [deptIds[dept], userIds[email]]);
+    }
   }
 
   /* meeting rooms */

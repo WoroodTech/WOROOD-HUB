@@ -10,6 +10,13 @@
 export interface Principal {
   id: string; email: string; fullName: string; fullNameAr?: string | null;
   jobTitle?: string | null; department?: string | null;
+  /** The department identifier, alongside the display name. Module 3 addresses
+   *  work to a department rather than to a person, so the name is not enough. */
+  departmentId?: string | null;
+  /** Departments this person may act on: the ones they manage, plus everything
+   *  below them in the tree. Authority over a department is a position in the
+   *  org chart, not a role -- a role would be company-wide. */
+  managedDepartmentIds: string[];
   timezone: string; locale: string; roles: string[]; permissions: string[];
 }
 
@@ -98,6 +105,10 @@ export interface AdminUserSummary {
   roles: AdminRoleRef[];
   /** Whether this account can reach the administration console. */
   isAdministrator: boolean;
+  /** Departments this person RUNS — a different question from the one they
+   *  belong to. Authority over a department is a position in the org chart,
+   *  not a role, because a role would be company-wide. */
+  managedDepartments: Array<{ id: string; name: string }>;
 }
 
 export interface AdminUserDetail extends AdminUserSummary {
@@ -183,6 +194,7 @@ export interface AvailabilityResponse {
    *  answered before it is asked. */
   unavailable: RoomAvailability[];
 }
+
 export interface RoomCalendarEntry {
   id: string; reference: string; title: string;
   startsAt: string; endsAt: string;
@@ -191,7 +203,6 @@ export interface RoomCalendarEntry {
   isMine: boolean;
   canManage: boolean;
 }
-
 
 export type RoomCalendarBlock =
   | {
@@ -202,23 +213,19 @@ export type RoomCalendarBlock =
   | { type: 'BLACKOUT'; startsAt: string; endsAt: string; reason: string | null }
   | { type: 'BUFFER'; startsAt: string; endsAt: string };
 
-/** A room's timeline for one day, in the room's own timezone -- same
- *  transparency rule as viewing a single reservation directly: anyone in the
- *  company may see that a room is taken, when, and who booked it. Attendee
- *  identities are not part of this view.
- *
- * Only what blocks the room is sent -- BOOKING, BLACKOUT, BUFFER. Anything
- * not covered by a block is implicitly available; the client does not need,
- * and is not sent, a list of free slots to render this. That list already
- * exists at a different address (`/availability`) for a different question:
- * "what can I book right now" versus this endpoint's "what's happening, and
- * why is it blocked". */
+/** A room's timeline for one day, in the room's own timezone. */
 export interface RoomCalendarResponse {
-  room: { id: string; name: string; nameAr: string | null; opensAt: string; closesAt: string; bufferMinutes: number };
+  room: {
+    id: string;
+    name: string;
+    nameAr: string | null;
+    opensAt: string;
+    closesAt: string;
+    bufferMinutes: number;
+  };
   date: string;
   blocks: RoomCalendarBlock[];
 }
-
 
 export interface Reservation {
   id: string; reference: string; title: string; description: string | null;
@@ -414,3 +421,110 @@ export const PERMISSIONS = {
   ROLE_MANAGE: 'core.role.manage',
   AUDIT_VIEW: 'core.audit.view',
 } as const;
+
+/* ======================================================= tasks & tickets == */
+
+export type TaskStatus =
+  | 'NEW' | 'ASSIGNED' | 'IN_PROGRESS' | 'BLOCKED'
+  | 'RESOLVED' | 'CLOSED' | 'REJECTED' | 'CANCELLED';
+
+export type TaskPriority = 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
+
+/** Lateness is a condition, not a status: a ticket can be IN_PROGRESS and
+ *  OVERDUE at once, and that pair is the fact worth knowing. */
+export type TaskSlaState = 'ON_TIME' | 'DUE_SOON' | 'OVERDUE';
+
+export type TaskParticipantRole =
+  | 'REQUESTER' | 'ASSIGNEE' | 'CONTRIBUTOR' | 'PAST_ASSIGNEE' | 'OBSERVER';
+
+export interface TaskSummary {
+  id: string; reference: string; title: string; description?: string | null;
+  priority: TaskPriority; status: TaskStatus; statusReason?: string | null;
+  statusChangedAt: string;
+  departmentId: string; department: string; departmentAr?: string | null;
+  /** The department the work was asked BY, snapshotted when the ticket was
+   *  raised so it does not follow somebody who later transfers. Its managers
+   *  can read and comment; authority stays with the department asked. */
+  requesterDepartmentId?: string | null; requesterDepartment?: string | null;
+  requesterId: string; requesterName: string; requesterTitle?: string | null;
+  assigneeId?: string | null; assigneeName?: string | null; assigneeTitle?: string | null;
+  dueAt?: string | null; slaState: TaskSlaState; overdueSince?: string | null;
+  assignedAt?: string | null; resolvedAt?: string | null; closedAt?: string | null;
+  reopenedCount: number; createdAt: string; updatedAt: string;
+  commentCount: number; openBlockerCount: number;
+}
+
+/** What the server says this person may do. The portal renders buttons from
+ *  these rather than re-deriving the rule and getting it wrong. */
+export interface TaskAccessFlags {
+  roles: TaskParticipantRole[];
+  managesDepartment: boolean; managesRequestingDepartment: boolean;
+  isRequester: boolean; isAssignee: boolean;
+  canEditRequest: boolean; canCancel: boolean;
+  canAssign: boolean; canTransfer: boolean; canReject: boolean;
+  canManageContributors: boolean;
+  canWork: boolean; canAddDependency: boolean; canResolve: boolean;
+  canConfirmResolution: boolean; canReopen: boolean; canComment: boolean;
+}
+
+export interface TaskParticipant {
+  userId: string; name: string; jobTitle?: string | null;
+  department?: string | null; role: TaskParticipantRole; addedAt: string;
+}
+
+export interface TaskComment {
+  id: string; body: string; createdAt: string; editedAt?: string | null;
+  authorId: string; authorName: string; authorTitle?: string | null;
+}
+
+export interface TaskEvent {
+  id: string; type: string; payload: Record<string, unknown>;
+  createdAt: string; actorName?: string | null;
+}
+
+/**
+ * A dependency seen from the other side of a department wall.
+ *
+ * `title` is ABSENT rather than blanked when the reader may not see the
+ * blocking ticket: a field that is present and empty invites the reader to
+ * wonder what was removed. The department, the status and the dates are always
+ * there, because the person waiting is entitled to know on whom and since when.
+ */
+export interface TaskDependency {
+  linkId: string; itemId: string; reference: string;
+  department: string; status: TaskStatus;
+  dueAt?: string | null; raisedAt: string; releasedAt?: string | null;
+  title?: string; readable: boolean;
+}
+
+export interface TaskDetail extends TaskSummary {
+  access: TaskAccessFlags;
+  participants: TaskParticipant[];
+  comments: TaskComment[];
+  events: TaskEvent[];
+  blockedBy: TaskDependency[];
+  blocking: TaskDependency[];
+}
+
+export interface TaskCounts {
+  assigned: number; requested: number; awaitingMe: number;
+  queue: number; overdue: number;
+}
+
+export interface TaskListResponse {
+  items: TaskSummary[]; page: number; pageSize: number; total: number;
+  counts: TaskCounts;
+}
+
+export interface TaskDepartmentOption {
+  id: string; name: string; nameAr?: string | null;
+  iManage: boolean; isMine: boolean;
+}
+
+export interface TaskPerson {
+  id: string; name: string; jobTitle?: string | null; isManager: boolean;
+}
+
+export interface TasksPortlet {
+  items: TaskSummary[]; total: number; counts: TaskCounts;
+}
