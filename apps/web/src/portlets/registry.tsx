@@ -14,7 +14,7 @@ import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   FreeNowPortlet, MyAlertsPortlet, MyDashboardsPortlet, MyInvitationsPortlet,
-  NextMeetingPortlet, StorePulsePortlet, UpcomingReservationsPortlet,
+  NextMeetingPortlet, StorePulsePortlet, TasksPortlet, UpcomingReservationsPortlet,
 } from '../contract';
 import { api } from '../lib/api';
 import { qk } from '../lib/keys';
@@ -33,6 +33,7 @@ import {
 const PORTLET_ROUTES: Record<string, (key: string) => string> = {
   'meeting-rooms': (key) => `/meeting-rooms/portlets/${key}`,
   'sales-dashboard': (key) => `/sales/portlets/${key}`,
+  'tasks': (key) => `/tasks/portlets/${key}`,
 };
 
 export const portletPath = (moduleKey: string, key: string): string | null =>
@@ -416,6 +417,96 @@ function ComingSoon({ title }: PortletProps) {
   );
 }
 
+/* --------------------------------------------------------------- tasks -- */
+
+/**
+ * Three questions, three cards, all personal.
+ *
+ * "Awaiting assignment" is deliberately the loudest of the three and sits
+ * highest in the grid: a ticket with nobody on it is the only kind the person
+ * who raised it cannot chase, because as far as they can see it is simply
+ * "with Customer Care".
+ */
+function TaskCardList({ data, empty, emptyHint }: {
+  data: TasksPortlet | undefined; empty: string; emptyHint?: string;
+}) {
+  if (!data || data.items.length === 0) {
+    return <EmptyState icon="check" title={empty} hint={emptyHint} />;
+  }
+  return (
+    <ul className="tasklet">
+      {data.items.map((t) => (
+        <li key={t.id}>
+          <Link className="tasklet__row" to={`/tasks/${t.id}`}>
+            <span className="tasklet__ref">{t.reference}</span>
+            <span className="tasklet__title">{t.title}</span>
+            <span className="tasklet__meta">
+              {t.department}
+              {t.assigneeName ? ` · ${t.assigneeName}` : ''}
+              {t.dueAt ? ` · due ${formatDate(t.dueAt)}` : ''}
+            </span>
+            {t.slaState === 'OVERDUE'
+              ? <Badge tone="critical" icon="warning">Late</Badge>
+              : t.status === 'RESOLVED'
+                ? <Badge tone="good">Needs your nod</Badge>
+                : null}
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function AwaitingAssignment({ moduleKey, portletKey, title }: PortletProps) {
+  const { data, isPending, error, refetch } = usePortlet<TasksPortlet>(moduleKey, portletKey);
+  return (
+    <Card
+      title={title}
+      subtitle={data?.total ? `${data.total} waiting on you to pick somebody` : undefined}
+      actions={<Link className="btn btn--ghost btn--sm" to="/tasks/queue">Open queue</Link>}
+    >
+      {isPending ? <LoadingState lines={3} /> : null}
+      {error ? <ErrorState error={error} onRetry={() => void refetch()} compact /> : null}
+      {data ? <TaskCardList data={data} empty="Nothing waiting"
+        emptyHint="Every ticket raised to your department has somebody on it." /> : null}
+    </Card>
+  );
+}
+
+function AssignedToMe({ moduleKey, portletKey, title }: PortletProps) {
+  const { data, isPending, error, refetch } = usePortlet<TasksPortlet>(moduleKey, portletKey);
+  return (
+    <Card
+      title={title}
+      subtitle={data?.counts.overdue ? `${data.counts.overdue} past its date` : undefined}
+      actions={<Link className="btn btn--ghost btn--sm" to="/tasks">All mine</Link>}
+    >
+      {isPending ? <LoadingState lines={3} /> : null}
+      {error ? <ErrorState error={error} onRetry={() => void refetch()} compact /> : null}
+      {data ? <TaskCardList data={data} empty="Nothing on you"
+        emptyHint="Work assigned to you appears here." /> : null}
+    </Card>
+  );
+}
+
+function MyRequests({ moduleKey, portletKey, title }: PortletProps) {
+  const { data, isPending, error, refetch } = usePortlet<TasksPortlet>(moduleKey, portletKey);
+  return (
+    <Card
+      title={title}
+      subtitle={data?.counts.awaitingMe
+        ? `${data.counts.awaitingMe} resolved and waiting for your answer`
+        : undefined}
+      actions={<Link className="btn btn--ghost btn--sm" to="/tasks">Raise one</Link>}
+    >
+      {isPending ? <LoadingState lines={3} /> : null}
+      {error ? <ErrorState error={error} onRetry={() => void refetch()} compact /> : null}
+      {data ? <TaskCardList data={data} empty="You have not asked for anything"
+        emptyHint="Tickets you raise stay here until they are closed." /> : null}
+    </Card>
+  );
+}
+
 /** Seeds for the portlets the hub contributes itself, in first-visit order. */
 export const LOCAL_PORTLETS: ReadonlyArray<{ key: string; title: string; width: number }> = [
   { key: 'quick-actions', title: 'Quick actions', width: 4 },
@@ -432,6 +523,9 @@ export const PORTLET_REGISTRY: Record<string, ComponentType<PortletProps>> = {
   'my-dashboards': MyDashboards,
   'store-pulse': StorePulse,
   'my-alerts': MyAlerts,
+  'awaiting-assignment': AwaitingAssignment,
+  'assigned-to-me': AssignedToMe,
+  'my-requests': MyRequests,
   'quick-actions': QuickActions,
   'coming-soon': ComingSoon,
 };
