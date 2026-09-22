@@ -8,24 +8,16 @@
  * store by the sync service. What is seeded is the shop row itself, plus the
  * dashboards, widgets and access rules, which Shopify does not own.
  *
- * The shop row still reads its display fields from the captured fixture when
- * one is present, because domain, timezone and currency are cheap to have
- * right before the first sync runs. Historically all Shopify data came from
- * fixtures captured read-only from the real Worood
+ * The shop row is seeded with placeholders and corrected by the first sync,
+ * which reads the real name, currency, timezone and plan from Shopify. Nothing
+ * here reads captured data any more: what used to come from fixtures captured
+ * read-only from the real Worood
  * store, so the aggregates on every dashboard are genuine figures.
  */
-import { readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
 import * as bcrypt from 'bcryptjs';
-import { DateTime } from 'luxon';
 import { pool, query, one } from '../common/db';
 import { config } from '../common/config';
 
-const FIX = config.shopify.fixtureDir;
-const readFix = (n: string) => {
-  const p = join(FIX, n);
-  return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null;
-};
 const TZ = 'Africa/Cairo';
 const num = (v: unknown) => {
   const n = typeof v === 'number' ? v : parseFloat(String(v ?? '0'));
@@ -693,23 +685,34 @@ async function main() {
  
  
 
-  /* shop */
-  const shopFix = readFix('shop.json') ?? {};
+  /* shop
+   *
+   * Placeholder values, overwritten by the first sync.
+   *
+   * These used to come from a captured `shop.json`, which was reasonable while
+   * the fixture and the store were the same shop and there was no way to ask.
+   * There is now: `POST /sales/admin/sync/shop` reads the name, currency,
+   * timezone and plan from Shopify, and the bootstrap runs it on first boot.
+   *
+   * Only the domain is taken from configuration, because it is the one field
+   * that identifies which store to ask. Everything else is a guess that exists
+   * so the row is not null before the first sync -- and `ON CONFLICT` leaves
+   * them alone afterwards, so a real value read from Shopify is never
+   * overwritten by a re-seed. */
   const shop = await one(
     `INSERT INTO sd_shops (myshopify_domain, name, primary_domain, iana_timezone,
         currency_code, money_format, plan_name, api_version, cost_restore_rate)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
      ON CONFLICT (myshopify_domain) DO UPDATE SET
-       name = EXCLUDED.name, primary_domain = EXCLUDED.primary_domain,
-       currency_code = EXCLUDED.currency_code, money_format = EXCLUDED.money_format,
-       plan_name = EXCLUDED.plan_name, cost_restore_rate = EXCLUDED.cost_restore_rate
+       -- Not name, currency, timezone or plan: those are Shopify's to tell us,
+       -- and a re-seed must not undo what the shop sync last read.
+       api_version = EXCLUDED.api_version,
+       cost_restore_rate = EXCLUDED.cost_restore_rate
      RETURNING id`,
-    [shopFix.myshopifyDomain ?? config.shopify.shopDomain, shopFix.name ?? 'WOROOD',
-    shopFix.domain ?? null, shopFix.ianaTimezone ?? TZ, shopFix.currencyCode ?? 'EGP',
-    shopFix.currencyFormats?.moneyFormat ?? 'EGP {{amount_no_decimals}}',
-    shopFix.planName ?? 'Advanced', config.shopify.apiVersion,
-    // Advanced plan restores 200 points per second.
-    config.shopify.costRestoreRate]);
+    [config.shopify.shopDomain, 'WOROOD', null, TZ, 'EGP',
+     'EGP {{amount_no_decimals}}', 'Advanced', config.shopify.apiVersion,
+     // Advanced plan restores 200 points per second.
+     config.shopify.costRestoreRate]);
 
   /* widgets */
   for (const w of WIDGETS) {

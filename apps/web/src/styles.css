@@ -521,6 +521,22 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .banner span { flex: 1; }
 .banner--stale { background: var(--warning-soft); color: var(--warning-ink); }
+/* An outage reads differently from staleness, so it looks different. Stale is a
+   caution -- the figures are real, just behind. Offline is a statement of fact
+   about the connection, and there is no action the reader can take, which is why
+   it carries no Refetch button. */
+.banner--offline {
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--line));
+  color: var(--ink);
+}
+.banner--offline .icon { color: var(--danger); }
+/* The underlying error, for whoever is fixing it. Small and secondary: the
+   sentence above is for everyone else. */
+.banner__detail {
+  display: block; margin-block-start: 4px;
+  font-size: 12px; color: var(--muted); font-family: var(--font-mono);
+}
 .banner--ok { background: var(--good-soft); color: var(--good-ink); }
 .banner--quiet { background: var(--surface-2); color: var(--ink-2); border-color: var(--line); }
 
@@ -1333,7 +1349,6 @@ button, input, select, textarea { font: inherit; color: inherit; }
 /* The room's own next opening, offered inside its "not available" row. It is a
    link rather than a button because it does not book anything -- it puts a
    time back in the form and lets the same answer run again. */
-.unavailable__why .link { margin-inline-start: 8px; }
 /* A changeover is not a clash. Same row, quieter reading -- the room is free,
    it is being reset, and the colour should not say otherwise. */
 .unavailable__why--soft { color: var(--muted); font-style: normal; }
@@ -1381,6 +1396,28 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .unavailable__name { display: flex; flex-direction: column; font-weight: 600; }
 .unavailable__meta { font-weight: 400; font-size: 11.5px; color: var(--muted); }
 .unavailable__why { font-size: 12.5px; color: var(--muted); text-align: end; }
+
+/* Reason above, action below, both aligned to the end of the row. Stacked
+   rather than inline because the reason can be a full sentence and the button
+   should not be pushed off the edge by it. */
+.unavailable__end {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+  flex-shrink: 0;
+}
+/* A suggestion, not the main action -- the room the person asked for is still
+   above. Same grey outline as every other secondary control, and the clock says
+   what it does before the words do. */
+.unavailable__free { white-space: nowrap; }
+.unavailable__free .mono { font-weight: 650; }
+
+@media (max-width: 620px) {
+  /* The row stops being two columns and becomes three stacked lines: room,
+     reason, action. At this width the end-aligned column was squeezing the
+     room name into two or three words per line. */
+  .unavailable__row { flex-direction: column; align-items: flex-start; gap: 8px; }
+  .unavailable__end { align-items: flex-start; inline-size: 100%; }
+  .unavailable__why { text-align: start; }
+}
 
 /* -------------------------------------------------------- reservations -- */
 
@@ -1451,7 +1488,17 @@ button, input, select, textarea { font: inherit; color: inherit; }
   border: 1px solid var(--warning-ink);
 }
 
-.roomcal { position: relative; display: flex; min-block-size: 420px; }
+/* Height comes from the day's length, set by the component as --track-h, so an
+   hour is always the same number of pixels whatever hours the room keeps. A
+   long day makes a tall calendar and the page scrolls, which is what a day
+   planner does everywhere else and reads far better than a compressed one.
+   The floor is for a room open an hour or two, so the toolbar above does not
+   sit on top of a sliver. */
+.roomcal {
+  position: relative; display: flex;
+  block-size: var(--track-h, 420px);
+  min-block-size: 220px;
+}
 .roomcal__hours { position: relative; inline-size: 46px; flex-shrink: 0; }
 .roomcal__hourlabel { position: absolute; inset-inline-start: 0; transform: translateY(-0.6em); font-size: 11px; color: var(--muted); }
 .roomcal__track { position: relative; flex: 1; border-inline-start: 1px solid var(--line); }
@@ -1468,7 +1515,34 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .roomcal__block--mine { background: var(--accent); border-color: var(--accent); color: #fff; }
 .roomcal__block--mine .roomcal__blockmeta { color: rgba(255, 255, 255, 0.82); }
 .roomcal__blocktitle { font-size: 12.5px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.roomcal__blockmeta { font-size: 11px; color: var(--muted); }
+.roomcal__blockmeta {
+  font-size: 11px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* A block shows what it has room for.
+   
+   Short meetings are the common case on a florist's calendar -- a fifteen-minute
+   call, a half-hour handover -- and at a fixed track height they were a few
+   pixels with their text clipped through the middle. Rather than shrink the
+   type until nothing is readable, the block drops what will not fit and keeps
+   the tooltip, which carries the title, the times and the organiser in full. */
+.roomcal__block--sm { padding-block: 2px; gap: 0; }
+.roomcal__block--sm .roomcal__blockmeta,
+.roomcal__block--sm .roomcal__blockflag { display: none; }
+.roomcal__block--sm .roomcal__blocktitle { font-size: 11.5px; line-height: 1.15; }
+
+/* Too short for any text at all. Still a real target -- 8px is enough to hover
+   and enough to see, and the dashed border of a pending booking survives, which
+   is the one thing about a block that must never be hidden by size. */
+.roomcal__block--xs {
+  padding-block: 0; padding-inline: 4px;
+  min-block-size: 8px; justify-content: center;
+}
+.roomcal__block--xs > * { display: none; }
+
+.roomcal__blackout--sm .roomcal__blockmeta { display: none; }
+.roomcal__blackout--xs > * { display: none; }
 .roomcal__blockflag { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; color: var(--warning-ink); }
 .roomcal__block--mine .roomcal__blockflag { color: rgba(255, 255, 255, 0.9); }
 
@@ -1477,6 +1551,10 @@ button, input, select, textarea { font: inherit; color: inherit; }
    philosophy of not drawing what does not need to be read. */
 .roomcal__buffer {
   position: absolute; inset-inline: 8px; z-index: 1; border-radius: 4px;
+  /* Visible even when a changeover is five minutes. Without a floor the stripe
+     rounds to nothing and the gap between two back-to-back meetings reads as
+     free time. */
+  min-block-size: 4px;
   background: repeating-linear-gradient(45deg, var(--warning-soft), var(--warning-soft) 4px, transparent 4px, transparent 8px);
   border-inline: 1px solid color-mix(in srgb, var(--warning-ink) 30%, transparent);
 }
@@ -1490,6 +1568,23 @@ button, input, select, textarea { font: inherit; color: inherit; }
   display: flex; flex-direction: column; gap: 1px;
 }
 .roomcal__blackout .roomcal__blocktitle { color: var(--ink-2); }
+
+/* Narrow screens.
+   
+   The legend is the first thing to go: it explains three colours a person can
+   also learn by hovering a block, and on a phone it costs a whole row above a
+   calendar that already needs the height. The hour gutter narrows to fit
+   "08:00" and no more, and the blocks take the width back. */
+@media (max-width: 620px) {
+  .roomcal__legend { display: none; }
+  .roomcal__toolbar .input { max-inline-size: none; flex: 1; }
+  .roomcal__hours { inline-size: 34px; }
+  .roomcal__hourlabel { font-size: 10px; }
+  .roomcal__block, .roomcal__buffer, .roomcal__blackout { inset-inline: 4px; }
+  .roomcal__block { padding-inline: 6px; }
+  .roomcal__blocktitle { font-size: 12px; }
+  .roomcal__blockmeta { font-size: 10.5px; }
+}
 
 /* Past shading and the now-line -- purely visual, not a block type. Sits
    under bookings/buffers/blackouts (lower z-index) so a real event drawn
@@ -1837,3 +1932,157 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .brandlogo svg { display: block; }
 
 .booting__mark { color: var(--brand-gold); }
+/* ==================================================================== *
+   Module 3 — tasks & tickets.
+
+   Written in logical properties like the rest of the sheet, so the whole
+   module mirrors under dir="rtl" without a second stylesheet. References
+   and clock times are pinned LTR: "TK-1042" read right-to-left is a
+   different string, and a due date is meaningless backwards.
+ * ==================================================================== */
+
+.tasksearch {
+  display: flex; align-items: center; gap: 8px;
+  margin-block-end: var(--gap); color: var(--muted);
+}
+.tasksearch .input { flex: 1; }
+
+.switch__count {
+  display: inline-grid; place-items: center;
+  min-inline-size: 18px; margin-inline-start: 6px; padding-inline: 5px;
+  border-radius: var(--radius-pill); background: var(--accent-soft);
+  color: var(--accent); font-size: 11px; font-weight: 600;
+}
+.switch__btn.is-on .switch__count { background: var(--surface); color: var(--ink); }
+
+/* ------------------------------------------------------------- the list -- */
+
+.tasklist { display: flex; flex-direction: column; }
+.taskrow {
+  display: grid; align-items: center; gap: 12px;
+  grid-template-columns: auto 1fr auto auto;
+  padding-block: 11px; padding-inline: 4px;
+  border-block-end: 1px solid var(--line);
+  color: inherit; text-decoration: none;
+  transition: background var(--t-fast) var(--ease);
+}
+.taskrow:last-child { border-block-end: 0; }
+.taskrow:hover { background: var(--surface-2); }
+.taskrow > svg:last-child { color: var(--muted); }
+
+/* A late ticket is marked on its leading edge rather than by tinting the
+   whole row: the row still has to be readable, and a wash of red over
+   forty of them says nothing about which one to open first. */
+.taskrow--late { box-shadow: inset 3px 0 0 var(--critical); }
+[dir="rtl"] .taskrow--late { box-shadow: inset -3px 0 0 var(--critical); }
+
+.taskrow__ref, .tasklet__ref, .deplist__ref, .taskref {
+  font-family: var(--mono); font-size: 11.5px; color: var(--muted);
+  direction: ltr; unicode-bidi: isolate;
+}
+.taskrow__main { display: flex; flex-direction: column; gap: 3px; min-inline-size: 0; }
+.taskrow__title {
+  font-weight: 550; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.taskrow__meta { font-size: 12px; color: var(--muted); }
+.taskrow__side { display: flex; flex-wrap: wrap; gap: 5px; justify-content: flex-end; }
+
+/* ---------------------------------------------------------- the ticket -- */
+
+.taskcols { display: grid; gap: var(--gap); grid-template-columns: minmax(0, 1fr) 320px; align-items: start; }
+.taskcols__main, .taskcols__side { display: flex; flex-direction: column; gap: var(--gap); }
+@media (max-width: 900px) { .taskcols { grid-template-columns: 1fr; } }
+
+.taskbadges { display: flex; flex-wrap: wrap; gap: 6px; margin-block-start: 10px; }
+.taskdesc { white-space: pre-wrap; line-height: 1.6; color: var(--ink-2); }
+
+.taskactions { display: flex; flex-direction: column; gap: 8px; }
+
+.peoplelist, .deplist { display: flex; flex-direction: column; gap: 2px; }
+.peoplelist__row, .deplist__row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding-block: 8px; border-block-end: 1px solid var(--line);
+}
+.peoplelist__row:last-child, .deplist__row:last-child { border-block-end: 0; }
+.peoplelist__name { font-weight: 550; }
+.peoplelist__meta, .deplist__meta { font-size: 12px; color: var(--muted); }
+.peoplelist__row .badge { margin-inline-start: auto; }
+.deplist__main { display: flex; flex-direction: column; gap: 2px; flex: 1; min-inline-size: 0; }
+
+/* -------------------------------------------------------------- timeline -- */
+
+.timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.timeline__row {
+  position: relative; display: flex; gap: 12px;
+  padding-block: 10px; padding-inline-start: 18px;
+}
+/* The rail is drawn by the rows rather than by a container, so the first
+   and last entries do not have a stub of line hanging off them. */
+.timeline__row::before {
+  content: ''; position: absolute; inset-block: 0; inset-inline-start: 4px;
+  inline-size: 1px; background: var(--line);
+}
+.timeline__row:first-child::before { inset-block-start: 16px; }
+.timeline__row:last-child::before { inset-block-end: calc(100% - 16px); }
+.timeline__dot {
+  position: absolute; inset-block-start: 14px; inset-inline-start: 0;
+  inline-size: 9px; block-size: 9px; border-radius: 50%;
+  background: var(--surface); border: 1.5px solid var(--line-strong);
+}
+.timeline__row--comment .timeline__dot { background: var(--accent); border-color: var(--accent); }
+.timeline__body { flex: 1; min-inline-size: 0; }
+.timeline__who { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; font-size: 12.5px; }
+.timeline__when { font-size: 11.5px; color: var(--muted); direction: ltr; unicode-bidi: isolate; }
+.timeline__text { margin-block-start: 3px; color: var(--ink-2); line-height: 1.55; }
+.timeline__row--event .timeline__text { color: var(--muted); font-size: 12.5px; }
+.timeline__row--comment .timeline__text { white-space: pre-wrap; }
+
+.commentbox {
+  display: flex; flex-direction: column; gap: 8px; align-items: flex-end;
+  margin-block-start: 14px; padding-block-start: 14px; border-block-start: 1px solid var(--line);
+}
+.commentbox .input { inline-size: 100%; }
+
+/* --------------------------------------------------------------- picker -- */
+
+.pickerlist {
+  display: flex; flex-direction: column;
+  border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden;
+  max-block-size: 260px; overflow-y: auto;
+}
+.pickerlist__row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding-block: 9px; padding-inline: 11px; border: 0; background: none;
+  text-align: start; cursor: pointer; border-block-end: 1px solid var(--line);
+  transition: background var(--t-fast) var(--ease);
+}
+.pickerlist__row:last-child { border-block-end: 0; }
+.pickerlist__row:hover { background: var(--surface-2); }
+.pickerlist__row.is-on { background: var(--accent-soft); }
+.pickerlist__name { font-weight: 550; }
+.pickerlist__meta { font-size: 12px; color: var(--muted); }
+.pickerlist__row .badge { margin-inline-start: auto; }
+
+/* ------------------------------------------------------------- portlets -- */
+
+.tasklet { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.tasklet__row {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 4px 10px;
+  align-items: center; padding-block: 9px;
+  border-block-end: 1px solid var(--line); color: inherit; text-decoration: none;
+}
+.tasklet li:last-child .tasklet__row { border-block-end: 0; }
+.tasklet__row:hover .tasklet__title { color: var(--accent); }
+.tasklet__title {
+  font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tasklet__meta { grid-column: 2 / -1; font-size: 11.5px; color: var(--muted); }
+
+/* Departments: cards rather than a table, because the unit people reason
+   about is "this department and who runs it", not a grid of cells. */
+.deptgrid {
+  display: grid; gap: var(--gap);
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  align-items: start;
+}

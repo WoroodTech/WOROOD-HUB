@@ -2,15 +2,17 @@
  * The Shopify integration layer: credentials, rate-limit governance, the GraphQL
  * client, and ShopifyQL.
  *
- * The whole layer sits behind a `ShopifySource` interface with two
- * implementations. `LiveShopifySource` talks to Shopify. `FixtureShopifySource`
- * replays data captured from the real Worood store. Swapping between them is
- * one line in the constructor, driven by config -- which is what makes this
- * buildable and testable before the Dev Dashboard app exists.
+ * The layer sits behind a `ShopifySource` interface with one implementation,
+ * `LiveShopifySource`. There used to be a second that replayed JSON captured
+ * read-only from the store, which is what made the dashboards buildable before
+ * the Dev Dashboard app existed. It has been removed for deployment: with no
+ * credentials the service now refuses to start rather than quietly serving
+ * figures from a file.
+ *
+ * The interface stays. It is what lets `ShopifyHealthTracker` sit in front of
+ * every call, and what a sandbox store or a replay for tests would slot into.
  */
 import { Injectable, Logger } from '@nestjs/common';
-import { readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
 import Redis from 'ioredis';
 import { config } from '../../../common/config';
 
@@ -104,7 +106,6 @@ export class TokenManager {
    * at the same time tomorrow.
    */
   async getToken(): Promise<string> {
-    if (config.shopify.tokenStrategy === 'fixture') return 'fixture-token';
     if (config.shopify.tokenStrategy === 'offline') return config.shopify.offlineAccessToken;
 
     const cached = await withRedis('The Shopify token cache', () => redis().get(this.cacheKey));
@@ -154,9 +155,6 @@ export class TokenManager {
   async invalidate() { await redis().del(this.cacheKey); }
 
   async status(): Promise<TokenStatus> {
-    if (config.shopify.tokenStrategy === 'fixture') {
-      return { source: 'fixture (no live credentials)', expiresAt: null, refreshedAt: null };
-    }
     const cached = await redis().get(this.cacheKey);
     const parsed = cached ? JSON.parse(cached) : null;
     return {
@@ -290,86 +288,107 @@ export interface ShopifyQlResult {
   droppedColumns?: string[];
 }
 
+/**
+ * Whether Shopify is answering, and since when it stopped.
+ *
+ * The dashboards can survive an outage: every figure they show is mirrored in
+ * PostgreSQL, so the screen keeps working. What it must not do is keep showing
+ * those figures as though they were current. A number that is four hours old
+ * and looks live is worse than no number, because somebody will act on it.
+ *
+ * Two independent triggers, because they catch different failures:
+ *
+ *   three consecutive failures -- a brief outage, caught in about a minute.
+ *     A single blip is not reported: a dropped connection that recovers on the
+ *     retry is not something anyone needs to see a banner about.
+ *
+ *   no success in fifteen minutes -- the reconciliation interval. This catches
+ *     the case the counter cannot: jobs that are not running at all, so nothing
+ *     is failing because nothing is being attempted. A counter of zero looks
+ *     identical to perfect health.
+ */
+export interface ShopifyHealth {
+  live: boolean;
+  lastOkAt: string | null;
+  /** When the current run of failures began. Null while healthy. */
+  degradedSince: string | null;
+  consecutiveFailures: number;
+  lastError: string | null;
+}
+
+@Injectable()
+export class ShopifyHealthTracker {
+  private lastOk: Date | null = null;
+  private degradedSince: Date | null = null;
+  private failures = 0;
+  private lastError: string | null = null;
+
+  /** Grace at boot: until the first call is made, nothing is wrong yet. */
+  private readonly startedAt = new Date();
+
+  private static readonly FAILURE_LIMIT = 3;
+  private static readonly SILENCE_MS = 15 * 60_000;
+
+  recordSuccess(): void {
+    this.lastOk = new Date();
+    this.failures = 0;
+    this.degradedSince = null;
+    this.lastError = null;
+  }
+
+  recordFailure(message: string): void {
+    this.failures++;
+    this.lastError = message;
+    /* Stamped on the first failure of a run, not the third. When the banner
+       finally appears it says when the trouble started, not when we decided to
+       admit it -- otherwise "unreachable since 14:23" is a minute later than
+       the last figure anyone can trust. */
+    if (!this.degradedSince) this.degradedSince = new Date();
+  }
+
+  get status(): ShopifyHealth {
+    const now = Date.now();
+    const silent = this.lastOk
+      ? now - this.lastOk.getTime() > ShopifyHealthTracker.SILENCE_MS
+      /* Never succeeded. Only counts as silence once the service has been up
+         long enough to have tried -- the scheduler's first run is 10 seconds
+         in, and a fresh boot should not show an outage banner. */
+      : now - this.startedAt.getTime() > ShopifyHealthTracker.SILENCE_MS;
+
+    const live = this.failures < ShopifyHealthTracker.FAILURE_LIMIT && !silent;
+
+    return {
+      live,
+      lastOkAt: this.lastOk?.toISOString() ?? null,
+      degradedSince: live ? null : (this.degradedSince ?? this.lastOk ?? this.startedAt).toISOString(),
+      consecutiveFailures: this.failures,
+      lastError: live ? null : this.lastError,
+    };
+  }
+}
+
 export interface ShopifySource {
-  readonly kind: 'live' | 'fixture';
+  /* Only one implementation now. Kept as a field rather than dropped, because
+     callers branch on it to decide whether an operation can reach Shopify at
+     all -- and a second source (a sandbox store, a replay for tests) would slot
+     in without touching them. */
+  readonly kind: 'live';
   graphql<T = any>(q: string, variables?: Record<string, unknown>): Promise<T>;
   shopifyql(q: string): Promise<ShopifyQlResult>;
   orders(): Promise<any[]>;
-  /** Prove the connection end to end. Fixture mode answers from the captured
-   *  shop record, so a caller can tell the two apart by `kind` rather than by
-   *  the call failing. */
+  /** Prove the connection end to end: credentials, domain and scopes. */
   ping(): Promise<{ shop: string; plan: string; scopes: string[] }>;
-}
-
-const FIXTURES = config.shopify.fixtureDir;
-const readFixture = (name: string): any | null => {
-  const p = join(FIXTURES, name);
-  return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null;
-};
-
-/**
- * Replays data captured read-only from worood-designs.myshopify.com. Fixture
- * mode deliberately returns NO `extensions.cost`: fabricating a throttleStatus
- * would teach the governor a bucket capacity nobody ever measured.
- */
-export class FixtureShopifySource implements ShopifySource {
-  readonly kind = 'fixture' as const;
-
-  async graphql<T = any>(): Promise<T> {
-    throw new Error('Fixture mode does not serve arbitrary GraphQL; use orders() or shopifyql()');
-  }
-
-  async orders(): Promise<any[]> {
-    return readFixture('orders_recent.json')?.orders ?? [];
-  }
-
-  async ping() {
-    const shop = readFixture('shop.json') ?? {};
-    return {
-      shop: `${shop.name ?? 'fixture'} (${shop.myshopifyDomain ?? shop.domain ?? 'captured'})`,
-      plan: shop.planName ?? 'fixture',
-      scopes: [],
-    };
-  }
-
-  /**
-   * Matched on FROM <schema> plus TIMESERIES <grain> / GROUP BY <dimension>,
-   * never on exact string equality -- a captured query and a runtime query
-   * differ in whitespace and date range but mean the same thing.
-   */
-  async shopifyql(q: string): Promise<ShopifyQlResult> {
-    const lower = q.toLowerCase();
-    const from = /from\s+(\w+)/.exec(lower)?.[1] ?? '';
-    const grain = /timeseries\s+(\w+)/.exec(lower)?.[1] ?? null;
-    const groupBy = /group\s+by\s+([\w_]+)/.exec(lower)?.[1] ?? null;
-
-    const candidates: string[] = [];
-    if (from === 'sales' && grain) candidates.push(`sales_${grain}ly.json`, `sales_${grain}.json`);
-    if (from === 'sessions' && grain) candidates.push(`sessions_${grain}ly.json`, `sessions_${grain}.json`);
-    if (from === 'sales' && groupBy === 'product_title') candidates.push('top_products_90d.json', 'top_products.json');
-    if (from === 'sales' && groupBy?.includes('referrer')) candidates.push('order_referrers_30d.json', 'traffic_sources_30d.json');
-    if (from === 'sessions' && groupBy === 'referrer_source') candidates.push('traffic_sources_30d.json');
-    if (from === 'sessions' && groupBy === 'session_device_type') candidates.push('sessions_by_device_30d.json');
-    if (from === 'sessions' && groupBy === 'session_country') candidates.push('sessions_by_country_30d.json');
-    if (from === 'fulfillments') candidates.push('fulfillment_30d.json');
-
-    for (const name of candidates) {
-      const f = readFixture(name);
-      if (!f) continue;
-      const payload = f.sessions_by_referrer ?? f.by_device ?? f;
-      if (payload?.columns && payload?.rows) {
-        return { columns: payload.columns, rows: payload.rows, droppedColumns: f.droppedColumns };
-      }
-    }
-    return { columns: [], rows: [] };
-  }
 }
 
 export class LiveShopifySource implements ShopifySource {
   readonly kind = 'live' as const;
   private readonly log = new Logger('ShopifyClient');
 
-  constructor(private tokens: TokenManager, private governor: CostGovernor) {}
+  constructor(
+    private tokens: TokenManager,
+    private governor: CostGovernor,
+    private health: ShopifyHealthTracker,
+  ) {}
 
   async graphql<T = any>(q: string, variables: Record<string, unknown> = {}): Promise<T> {
     const url = `https://${config.shopify.shopDomain}/admin/api/${config.shopify.apiVersion}/graphql.json`;
@@ -412,7 +431,9 @@ export class LiveShopifySource implements ShopifySource {
          */
         lastNetworkError = e;
         if (attempt === 5) {
-          throw new Error(`Shopify unreachable after ${attempt + 1} attempts: ${e?.message ?? e}`);
+          const msg = `Shopify unreachable after ${attempt + 1} attempts: ${e?.message ?? e}`;
+          this.health.recordFailure(msg);
+          throw new Error(msg);
         }
         this.log.warn(`network error talking to Shopify (attempt ${attempt + 1}): ${e?.message ?? e}`);
         await this.backoff(attempt);
@@ -447,10 +468,11 @@ export class LiveShopifySource implements ShopifySource {
       }
       return body.data as T;
     }
-    throw new Error(
-      lastNetworkError
-        ? `Shopify request failed after retries (last network error: ${lastNetworkError?.message ?? lastNetworkError})`
-        : 'Shopify request failed after retries');
+    const failure = lastNetworkError
+      ? `Shopify request failed after retries (last network error: ${lastNetworkError?.message ?? lastNetworkError})`
+      : 'Shopify request failed after retries';
+    this.health.recordFailure(failure);
+    throw new Error(failure);
   }
 
   /** Backoff starts at one second, Shopify's documented recommendation, with
@@ -546,11 +568,11 @@ export class LiveShopifySource implements ShopifySource {
 @Injectable()
 export class ShopifyService {
   readonly source: ShopifySource;
-  constructor(readonly tokens: TokenManager, readonly governor: CostGovernor) {
-    // One line to go live. Everything downstream is written against the
-    // interface, so nothing else changes when credentials exist.
-    this.source = config.shopify.tokenStrategy === 'fixture'
-      ? new FixtureShopifySource()
-      : new LiveShopifySource(tokens, governor);
+  constructor(
+    readonly tokens: TokenManager,
+    readonly governor: CostGovernor,
+    readonly health: ShopifyHealthTracker,
+  ) {
+    this.source = new LiveShopifySource(tokens, governor, health);
   }
 }

@@ -207,10 +207,10 @@ export class SyncService {
   /**
    * Initial load, and any large historical pull.
    *
-   * Fixture mode replays the captured order slice. Live, this starts a bulk
+   * Starts a bulk
    * operation and waits for it -- which used to be a lie: the live source threw
    * "Live order paging runs through BackfillService, not here" and no such
-   * service existed, so the initial sync simply did not work outside fixtures.
+   * service existed, so the initial sync simply did not work.
    */
   async backfill(since?: string): Promise<number> {
     if (this.shopify.source.kind !== 'live') {
@@ -240,7 +240,7 @@ export class SyncService {
    */
   async registerWebhooks(): Promise<{ created: string[]; existing: string[]; skipped?: string }> {
     if (this.shopify.source.kind !== 'live') {
-      return { created: [], existing: [], skipped: 'fixture source' };
+      return { created: [], existing: [], skipped: 'Shopify source is not live' };
     }
     if (!config.shopify.webhookBaseUrl) {
       /* Refusing is the right move. A subscription pointing at an unreachable
@@ -299,8 +299,8 @@ export class SyncService {
    * Read the shop's own currency, timezone, name and plan from Shopify and
    * store them.
    *
-   * These used to come from the captured fixture, which was fine while the
-   * fixture and the store were the same shop. Point the app at a different
+   * These used to come from a captured fixture, which was fine while the
+   * capture and the store were the same shop. Point the app at a different
    * store and the mirror inherits the old shop's settings: order rows carry
    * their real currency while every total is labelled with the seeded one, so
    * a page shows `USD 154` in the table and `EGP 1,269` in the summary above

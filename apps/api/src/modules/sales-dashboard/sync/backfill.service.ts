@@ -4,8 +4,9 @@
  * This is the half of the pipeline that never existed. `SyncService.backfill()`
  * called `source.orders()`, and the live implementation of that method threw
  * "Live order paging runs through BackfillService, not here" -- pointing at a
- * file that was not written. In fixture mode nobody noticed, because the
- * fixture source returned a captured slice and the dashboard filled up.
+ * file that was not written. Nobody noticed, because the captured fixture
+ * source that existed then returned a slice of orders and the dashboard
+ * filled up.
  *
  * Why a bulk operation rather than paged queries. Shopify prices every ordinary
  * GraphQL call against a leaky bucket, and a full order history is tens of

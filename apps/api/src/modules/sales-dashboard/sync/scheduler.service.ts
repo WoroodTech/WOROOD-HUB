@@ -30,6 +30,8 @@
  */
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { config } from '../../../common/config';
+import { query } from '../../../common/db';
+import { ShopContext } from '../analytics/snapshot.service';
 import { ShopifyService } from '../shopify/shopify.service';
 import { SnapshotService } from '../analytics/snapshot.service';
 import { SyncService } from './sync.service';
@@ -57,6 +59,7 @@ export class SalesScheduler implements OnModuleInit, OnModuleDestroy {
     private shopify: ShopifyService,
     private abandoned: AbandonedCheckoutService,
     private credit: StoreCreditService,
+    private shops: ShopContext,
   ) {}
 
   onModuleInit() {
@@ -141,9 +144,93 @@ export class SalesScheduler implements OnModuleInit, OnModuleDestroy {
       }
     });
 
+    /* First run on a fresh install: import the history and register the
+       webhooks, once, without anybody having to remember two POSTs in the right
+       order.
+    
+       Delayed further than the recurring jobs because it is the heaviest thing
+       the module does -- a bulk export of every order -- and because on EC2 the
+       first minute after a deploy is also when nginx is warming and the first
+       requests are being served.
+    
+       It decides for itself whether to run, from sd_sync_state, so a restart
+       does not repeat it. That is the whole design: safe to call on every boot,
+       does something on exactly one of them. */
+    setTimeout(() => void this.bootstrap(), 90_000);
+
     this.log.log(
-      'scheduled sync started — reconcile 15m, snapshots hourly, ' +
+      'scheduled sync started — reconcile 15m, abandoned 30m, snapshots hourly, ' +
       'nightly 02:00 Cairo, watchdog 03:00 Cairo');
+  }
+
+  /**
+   * The one-time setup a fresh deployment needs, run by the server rather than
+   * by a person with an HTTP client.
+   *
+   * Each step decides for itself whether it is needed, and each is independent:
+   * a failure to register webhooks must not prevent the order import, because
+   * reconciliation covers the first while nothing covers the second.
+   *
+   * Everything here is idempotent by inspection, not by hope. The backfill runs
+   * only when the orders resource has never succeeded; webhook registration
+   * only when Shopify reports none of ours; the hourly fill only when the store
+   * holds almost no hour buckets. Restarting the service ten times performs the
+   * work once.
+   */
+  private async bootstrap(): Promise<void> {
+    try {
+      const shop = await this.shops.get();
+
+      /* 1. Shop settings. Cheap, and everything downstream reads the timezone
+            it writes -- a snapshot captured against the wrong one is wrong by
+            hours and looks fine. */
+      await this.sync.syncShopSettings().catch((e) =>
+        this.log.warn(`bootstrap: shop settings failed — ${e?.message ?? e}`));
+
+      /* 2. The order history, if it has never been imported. `last_ok_at` on
+            the orders resource is the record of that, and the seeder leaves it
+            null deliberately. */
+      const [orders] = await query<{ last_ok_at: Date | null; n: string }>(
+        `SELECT s.last_ok_at, (SELECT COUNT(*) FROM sd_orders WHERE shop_id = $1) AS n
+           FROM sd_sync_state s WHERE s.shop_id = $1 AND s.resource = 'orders'`,
+        [shop.id]);
+
+      if (!orders?.last_ok_at && Number(orders?.n ?? 0) === 0) {
+        this.log.log('bootstrap: no orders mirrored yet — starting the initial import');
+        const n = await this.sync.backfill();
+        this.log.log(`bootstrap: imported ${n} orders`);
+      }
+
+      /* 3. Webhook subscriptions. Skipped without a public address, and the
+            method says so itself rather than registering something pointed at
+            an unreachable host -- which Shopify deletes after eight failures,
+            leaving a dashboard that looks healthy and receives nothing. */
+      const registered = await this.sync.registerWebhooks();
+      if (registered.skipped) {
+        this.log.warn(`bootstrap: webhooks not registered — ${registered.skipped}`);
+      } else if (registered.created.length) {
+        this.log.log(`bootstrap: registered ${registered.created.length} webhook topics`);
+      }
+
+      /* 4. Hour-grain history, so day comparisons read from the store rather
+            than calling Shopify. Only on a near-empty store: the recurring
+            hourly job keeps a fortnight, and this fills what sits behind it. */
+      const [hours] = await query<{ n: string }>(
+        `SELECT COUNT(*) AS n FROM sd_metric_snapshots
+          WHERE shop_id = $1 AND grain = 'hour'`, [shop.id]);
+      if (Number(hours?.n ?? 0) < 500) {
+        this.log.log('bootstrap: filling hour-grain history');
+        const rows = await this.snapshots.backfillHourly(13);
+        this.log.log(`bootstrap: ${rows} hourly rows`);
+      }
+
+      this.log.log('bootstrap: complete');
+    } catch (e: any) {
+      /* Logged, never rethrown. A failure here must not take down a process
+         that is otherwise serving the portal perfectly well -- and everything
+         bootstrap does can be done later by the recurring jobs or by hand. */
+      this.log.error(`bootstrap failed: ${e?.message ?? e}`);
+    }
   }
 
   onModuleDestroy() {

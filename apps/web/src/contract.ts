@@ -331,12 +331,31 @@ export interface WidgetEnvelope {
   payload: WidgetPayload | null; error?: string | null;
 }
 
+/** Whether Shopify is currently answering.
+ *
+ *  Sent with every dashboard payload. The figures below it are mirrored in
+ *  PostgreSQL and remain readable during an outage -- what must not happen is
+ *  their being read as current. A four-hour-old number that looks live is worse
+ *  than no number, because somebody will act on it. */
+export interface ShopifyConnection {
+  live: boolean;
+  lastOkAt: string | null;
+  /** When the trouble started, stamped at the first failure rather than when it
+   *  was finally reported -- so the banner's time matches the last figure that
+   *  can be trusted. */
+  degradedSince: string | null;
+  lastError: string | null;
+}
+
 export interface DashboardDataResponse {
   dashboard: DashboardDetail;
   widgets: WidgetEnvelope[];
   shop: { name: string; currency: string; timezone: string };
   range: string;
   staleAfterMinutes: number;
+  /** Absent means the question was not asked; present and false means the
+   *  figures are the last received rather than the current ones. */
+  connection?: ShopifyConnection;
 }
 
 /* --------------------------------------------------------------- orders -- */

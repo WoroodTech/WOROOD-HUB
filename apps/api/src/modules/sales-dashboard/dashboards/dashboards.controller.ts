@@ -6,6 +6,7 @@ import { query, one, tx } from '../../../common/db';
 import { AuditService } from '../../../core/core.module';
 import { AccessService } from './access.service';
 import { MetricsService, RangeKey, CompareDays } from '../metrics/metrics.service';
+import { ShopifyService } from '../shopify/shopify.service';
 import { ShopContext } from '../analytics/snapshot.service';
 import { PERMISSIONS, DashboardDataResponse, OrderListResponse } from '../../../contract';
 
@@ -19,6 +20,7 @@ export class DashboardsController {
     private metrics: MetricsService,
     private shops: ShopContext,
     private audit: AuditService,
+    private shopify: ShopifyService,
   ) {}
 
   /* ------------------------------------------------------------ viewing -- */
@@ -66,6 +68,10 @@ export class DashboardsController {
       dashboard, widgets, range,
       shop: { name: shop.name, currency: shop.currency_code, timezone: shop.iana_timezone },
       staleAfterMinutes: this.metrics.staleAfterMinutes,
+      /* Sent whether or not anything is wrong. A flag that only appears during
+         an outage is a flag the client has to treat as optional, and optional
+         handling is handling that gets forgotten. */
+      connection: this.shopify.health.status,
     };
   }
 

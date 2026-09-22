@@ -359,15 +359,24 @@ export function BookRoom() {
                     {entry.room.floor ? `Floor ${entry.room.floor} · ` : ''}{entry.room.capacity} seats
                   </span>
                 </span>
-                <span className={`unavailable__why${entry.blockedBy === 'BUFFER' ? ' unavailable__why--soft' : ''}`}>
-                  {entry.reason ?? 'Taken.'}
+                {/* The reason and the way out are two different things, so they
+                    are two elements rather than one run of text with a link in
+                    it. The reason explains; the button acts -- it puts that time
+                    into the form and re-runs the search. Sized and coloured like
+                    every other secondary action in the portal, because that is
+                    what it is. */}
+                <span className="unavailable__end">
+                  <span className={`unavailable__why${entry.blockedBy === 'BUFFER' ? ' unavailable__why--soft' : ''}`}>
+                    {entry.reason ?? 'Taken.'}
+                  </span>
                   {entry.nextFree ? (
                     <button
-                      type="button" className="link"
+                      type="button" className="btn btn--ghost btn--sm unavailable__free"
                       onClick={() => useSuggestion(entry.nextFree!.startsAt)}
+                      title={`Search again at ${formatTime(entry.nextFree.startsAt)}`}
                     >
-                      Free at {formatTime(entry.nextFree.startsAt)}
-                      <Icon name="right" size={13} />
+                      <Icon name="clock" size={13} />
+                      Free at <span className="mono">{formatTime(entry.nextFree.startsAt)}</span>
                     </button>
                   ) : null}
                 </span>

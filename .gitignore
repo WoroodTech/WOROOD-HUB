@@ -9,8 +9,6 @@ node_modules/
 .env.production.local
 
 
-# Real Shopify fixtures / business data
-fixtures/shopify/
 
 
 
