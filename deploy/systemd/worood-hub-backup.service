@@ -1,0 +1,52 @@
+# WOROOD HUB — nightly logical backup to S3
+#
+# Triggered by worood-hub-backup.timer. Run one immediately with:
+#   systemctl start worood-hub-backup.service
+#   journalctl -u worood-hub-backup -n 50
+
+[Unit]
+Description=WOROOD HUB nightly pg_dump to S3
+Documentation=https://github.com/worood/worood-hub
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+
+# Runs as the postgres system user so peer authentication applies: no
+# database password is needed, stored, or exposed in the process list.
+User=postgres
+Group=postgres
+
+Environment=BACKUP_BUCKET=@BACKUP_BUCKET@
+
+# AWS credentials come from the EC2 instance role via the instance metadata
+# service. Nothing is configured here and no keys are on disk.
+ExecStart=/usr/local/bin/worood-hub-backup
+
+# A dump of a database this size takes seconds, but a slow S3 upload on a
+# throttled instance should not hang forever.
+TimeoutStartSec=1800
+
+# Backups are nice-to-have relative to serving traffic. Yield CPU and disk to
+# the application if they ever compete.
+Nice=10
+IOSchedulingClass=idle
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+# The script writes the dump to a temporary directory before uploading.
+# PrivateTmp gives it a private /tmp, which is enough.
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=worood-hub-backup

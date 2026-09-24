@@ -1,0 +1,85 @@
+{
+  "_comment": [
+    "WOROOD HUB - CloudWatch agent configuration.",
+    "Install:",
+    "  wget https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/arm64/latest/amazon-cloudwatch-agent.deb",
+    "  dpkg -i -E ./amazon-cloudwatch-agent.deb",
+    "  install -m 0644 deploy/cloudwatch/config.json /opt/aws/amazon-cloudwatch-agent/etc/worood-hub.json",
+    "  /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/worood-hub.json",
+    "",
+    "CPUCreditBalance, StatusCheckFailed and EstimatedCharges come from EC2 and",
+    "Billing directly - they need no agent. Memory and disk do, which is the",
+    "reason this file exists: without it the two metrics that actually predict",
+    "trouble on this workload are invisible."
+  ],
+
+  "agent": {
+    "metrics_collection_interval": 60,
+    "run_as_user": "cwagent",
+    "omit_hostname": true
+  },
+
+  "metrics": {
+    "namespace": "WoroodHub",
+    "append_dimensions": {
+      "InstanceId": "${aws:InstanceId}"
+    },
+    "aggregation_dimensions": [["InstanceId"]],
+    "metrics_collected": {
+      "mem": {
+        "measurement": [
+          { "name": "mem_used_percent", "rename": "MemoryUtilization", "unit": "Percent" },
+          { "name": "mem_available_percent" }
+        ],
+        "metrics_collection_interval": 60
+      },
+      "swap": {
+        "measurement": ["swap_used_percent"],
+        "metrics_collection_interval": 300
+      },
+      "disk": {
+        "resources": ["/", "/var/lib/postgresql"],
+        "measurement": [
+          { "name": "used_percent", "rename": "DiskUtilization", "unit": "Percent" },
+          "inodes_free"
+        ],
+        "ignore_file_system_types": ["sysfs", "devtmpfs", "tmpfs", "overlay", "squashfs"],
+        "metrics_collection_interval": 300
+      },
+      "diskio": {
+        "resources": ["*"],
+        "measurement": ["io_time", "read_bytes", "write_bytes"],
+        "metrics_collection_interval": 300
+      }
+    }
+  },
+
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/var/log/nginx/worood-hub.error.log",
+            "log_group_name": "/worood-hub/nginx/error",
+            "log_stream_name": "{instance_id}",
+            "retention_in_days": 30
+          },
+          {
+            "file_path": "/var/log/nginx/worood-hub.access.log",
+            "log_group_name": "/worood-hub/nginx/access",
+            "log_stream_name": "{instance_id}",
+            "retention_in_days": 14
+          },
+          {
+            "file_path": "/var/log/postgresql/postgresql-*.log",
+            "log_group_name": "/worood-hub/postgresql",
+            "log_stream_name": "{instance_id}",
+            "retention_in_days": 30,
+            "multi_line_start_pattern": "^\\d{4}-\\d{2}-\\d{2}"
+          }
+        ]
+      }
+    },
+    "force_flush_interval": 15
+  }
+}

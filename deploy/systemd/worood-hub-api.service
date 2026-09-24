@@ -1,25 +1,121 @@
+# WOROOD HUB — API service
+#
+# Installed to /etc/systemd/system/worood-hub-api.service by ec2-bootstrap.sh,
+# which substitutes the @PLACEHOLDER@ values from deploy.env.
+
 [Unit]
-Description=WOROOD HUB API
-After=network.target postgresql.service redis-server.service
-Wants=postgresql.service redis-server.service
+Description=WOROOD HUB API (NestJS)
+Documentation=https://github.com/worood/worood-hub
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+Requires=postgresql.service redis-server.service
+
+# Redis is a hard requirement, not an optional extra for a later module. The
+# sales module keeps the Shopify access token, the shared rate-limit bucket and
+# the webhook queue there; without it no token can be fetched, every sync fails,
+# and the dashboards stay empty. Requires= rather than Wants= so the API does
+# not start into a state it cannot work in.
+
+# Give up after 5 failures in 60s rather than restart-looping forever, which
+# fills the disk with logs and hides the original error.
+#
+# These belong in [Unit], not [Service] — systemd moved them in v229 and
+# silently ignores them in [Service], so a unit that looks rate-limited is
+# not. Check with: systemd-analyze verify
+StartLimitBurst=5
+StartLimitIntervalSec=60
 
 [Service]
 Type=simple
-User=worood
-WorkingDirectory=/opt/worood-hub/apps/api
-EnvironmentFile=/etc/worood-hub/api.env
-# Migrations run here, so a deploy that cannot migrate never serves traffic.
-ExecStartPre=/usr/bin/node dist/db/migrate.js
-ExecStart=/usr/bin/node dist/main.js
-Restart=always
-RestartSec=5
-# Module 1 sized this at 1.5 GB and it stays there; the worker gets its own.
-MemoryMax=1536M
-NoNewPrivileges=true
+User=@SERVICE_USER@
+Group=@SERVICE_GROUP@
+
+# A symlink into the current release. systemd resolves it at start time, so
+# `systemctl restart` is what picks up a new release — there is nothing else
+# to reload.
+WorkingDirectory=@CURRENT_LINK@/api
+EnvironmentFile=@API_ENV_FILE@
+
+# Migrations run here, before the service is allowed to start. A migration
+# that fails means the unit never reaches ExecStart, so a broken schema
+# change can never serve a single request. release.sh sees the resulting
+# unhealthy service and rolls back automatically.
+#
+# Re-running is a no-op: the runner records each file's checksum in
+# core_migrations and skips what it has already applied.
+ExecStartPre=/usr/bin/node @CURRENT_LINK@/api/@MIGRATE_ENTRYPOINT@
+
+ExecStart=/usr/bin/node @CURRENT_LINK@/api/@API_ENTRYPOINT@
+
+# Migrations on a large table can take a while. This covers both the
+# ExecStartPre and the application's own boot.
+TimeoutStartSec=180
+TimeoutStopSec=30
+
+Restart=on-failure
+RestartSec=5s
+
+# --- Memory ------------------------------------------------------------------
+# The hard ceiling. Exceeding it means the kernel kills the process.
+MemoryMax=@API_MEMORY_MAX@
+
+# V8's heap limit is set below the cgroup ceiling on purpose: the process
+# should hit its own garbage collector and recover, not hit MemoryMax and be
+# killed. Roughly two thirds of MemoryMax is the usual ratio, leaving room
+# for the non-heap portion of the process.
+Environment=NODE_OPTIONS=--max-old-space-size=1024
+
+# The scheduler and the first-run bootstrap live inside this process: the
+# initial order import, webhook registration and the hourly-history fill all
+# happen on their own about 90 seconds after start. Nothing has to be POSTed by
+# hand after a deploy. Watch it with:
+#   journalctl -u worood-hub-api -f | grep bootstrap
+
+LimitNOFILE=65535
+
+# --- Hardening ---------------------------------------------------------------
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
 ProtectSystem=strict
-ProtectHome=true
-PrivateTmp=true
-ReadWritePaths=/var/log/worood-hub
+ProtectHome=yes
+ProtectProc=invisible
+ProcSubset=pid
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+UMask=0077
+
+# ProtectSystem=strict makes the entire filesystem read-only apart from /dev,
+# /proc and /sys. The API writes nothing to disk — logs go to journald and
+# the database holds the state — so nothing needs to be listed here. If a
+# future module needs a writable directory, add it explicitly rather than
+# weakening ProtectSystem:
+#
+# ReadWritePaths=/var/lib/worood-hub
+
+# MemoryDenyWriteExecute is deliberately NOT set. V8 compiles JavaScript to
+# machine code at runtime and needs pages that are both writable and
+# executable; setting it makes Node refuse to start. This is the one standard
+# hardening directive that does not apply to a Node service.
+
+# --- Logging -----------------------------------------------------------------
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=worood-hub-api
 
 [Install]
 WantedBy=multi-user.target
