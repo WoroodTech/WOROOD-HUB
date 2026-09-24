@@ -466,6 +466,7 @@ export class LiveShopifySource implements ShopifySource {
       if (body.errors?.length) {
         throw new Error(`Shopify GraphQL error: ${JSON.stringify(body.errors).slice(0, 500)}`);
       }
+      this.health.recordSuccess();
       return body.data as T;
     }
     const failure = lastNetworkError
