@@ -224,6 +224,20 @@ export class SalesScheduler implements OnModuleInit, OnModuleDestroy {
         this.log.log(`bootstrap: ${rows} hourly rows`);
       }
 
+      /* 5. Store credit. Runs nightly otherwise, which on a fresh deployment
+            means the Store Credit dashboard is empty for up to a day -- long
+            enough for somebody to report it as broken. It is a bulk export over
+            every customer, so it goes last: after the orders exist, because the
+            ledger is filed against customers the backfill creates. */
+      const [credit] = await query<{ n: string }>(
+        `SELECT COUNT(*) AS n FROM sd_store_credit_transactions WHERE shop_id = $1`,
+        [shop.id]);
+      if (Number(credit?.n ?? 0) === 0) {
+        this.log.log('bootstrap: importing store credit');
+        const n = await this.credit.sync();
+        this.log.log(`bootstrap: ${n} store credit transactions`);
+      }
+
       this.log.log('bootstrap: complete');
     } catch (e: any) {
       /* Logged, never rethrown. A failure here must not take down a process

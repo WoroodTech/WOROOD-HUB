@@ -1293,6 +1293,27 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .chipbtn--on { background: var(--accent); border-color: var(--accent); color: #fff; }
 .chipbtn--on:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: #fff; }
 
+/* --------------------------------------------------------- sync actions -- */
+
+/* Named jobs rather than one ambiguous Refresh. The hint sits inside the
+   button because what each job does is the thing that decides whether to press
+   it -- putting that in a tooltip means reading it only after hovering, which
+   is after deciding. */
+.syncactions { margin-block-end: 18px; }
+.syncactions__head { margin-block-end: 12px; }
+.syncactions__row { display: flex; flex-wrap: wrap; gap: 10px; }
+.syncactions__btn {
+  flex-direction: column; align-items: flex-start; gap: 2px;
+  text-align: start; block-size: auto; padding: 10px 14px;
+  min-inline-size: 180px; flex: 1 1 180px;
+}
+.syncactions__hint { font-size: 11.5px; font-weight: 400; color: var(--muted); }
+.syncactions__btn:disabled { opacity: 0.55; }
+
+@media (max-width: 620px) {
+  .syncactions__btn { min-inline-size: 100%; }
+}
+
 /* ------------------------------------------------------- compare days -- */
 
 /* The two date pickers, in a row under the range buttons rather than behind a

@@ -1,10 +1,11 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { SyncHealthResponse, SyncStateRow } from '../contract';
 import { api } from '../lib/api';
 import { qk } from '../lib/keys';
 import { ErrorState, LoadingState } from '../components/States';
 import { Badge } from '../components/Card';
 import { Icon } from '../components/Icon';
+import { useToast } from '../lib/toast';
 import { formatDateTime, formatDuration, formatInteger } from '../lib/format';
 
 const RESOURCE_LABEL: Record<string, string> = {
@@ -24,11 +25,59 @@ function StatusBadge({ row }: { row: SyncStateRow }) {
   return <Badge tone="good" icon="check">healthy</Badge>;
 }
 
+/* The jobs that can be started by hand.
+ *
+ * All of these run on their own -- reconciliation every fifteen minutes,
+ * abandoned checkouts every thirty, snapshots hourly, store credit nightly --
+ * and a fresh deployment does its own first import. These exist for the times
+ * when waiting is the wrong answer: after correcting a credential, after a
+ * failed run, or when somebody is standing over the screen wanting to see it
+ * work now.
+ *
+ * The backfill is not among them. It is a bulk export of the entire order
+ * history, it takes minutes, and it is the one action here with a real cost --
+ * so it stays a deliberate API call rather than a button that looks like the
+ * others. */
+const ACTIONS = [
+  { key: 'reconcile', label: 'Pull changes',
+    hint: 'Orders changed since the last run' },
+  { key: 'snapshots', label: 'Capture figures',
+    hint: 'ShopifyQL sales and sessions' },
+  { key: 'abandoned', label: 'Abandoned checkouts',
+    hint: 'Last 30 days, including recoveries' },
+  { key: 'store-credit', label: 'Store credit',
+    hint: 'Full export; needs orders imported first' },
+  { key: 'webhooks/register', label: 'Register webhooks',
+    hint: 'After a hostname or API version change' },
+] as const;
+
 export function Sync() {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+
   const { data, isPending, error, refetch, isFetching } = useQuery({
     queryKey: qk.sync,
     queryFn: () => api<SyncHealthResponse>('/sales/admin/sync'),
     refetchInterval: 60_000,
+  });
+
+  const run = useMutation({
+    mutationFn: (key: string) =>
+      api<Record<string, unknown>>(`/sales/admin/sync/${key}`, { method: 'POST' }),
+    onSuccess: (result, key) => {
+      const label = ACTIONS.find((a) => a.key === key)?.label ?? key;
+      /* The count comes back under a different name per endpoint -- orders,
+         checkouts, transactions, rows -- so the first number in the response is
+         reported rather than a field name that would be wrong four times out of
+         five. */
+      const n = Object.values(result ?? {}).find((v) => typeof v === 'number');
+      toast.push(n === undefined ? `${label} finished.` : `${label}: ${n}.`, 'good');
+      void queryClient.invalidateQueries({ queryKey: qk.sync });
+      void queryClient.invalidateQueries({ queryKey: ['sales'] });
+    },
+    onError: (e: unknown) => {
+      toast.push(e instanceof Error ? e.message : 'The job did not finish.', 'warning');
+    },
   });
 
   if (isPending) return <div className="page"><LoadingState label="Loading sync health" lines={5} /></div>;
@@ -49,10 +98,38 @@ export function Sync() {
             Admin API <span className="mono">{shop.apiVersion}</span>
           </p>
         </div>
+        {/* Re-reads this page. It does not start a sync -- which is what
+            everybody assumed it did, on a screen called Data & Sync where it
+            was the only button. The jobs are below, named for what they do. */}
         <button type="button" className="btn btn--ghost" onClick={() => void refetch()}>
-          <Icon name="refresh" size={16} /> {isFetching ? 'Refreshing…' : 'Refresh'}
+          <Icon name="refresh" size={16} /> {isFetching ? 'Reloading…' : 'Reload page'}
         </button>
       </header>
+
+      <section className="card syncactions">
+        <div className="syncactions__head">
+          <h2 className="card__title">Run a job now</h2>
+          <p className="card__sub">
+            Everything here runs on its own schedule. These are for when waiting
+            is the wrong answer.
+          </p>
+        </div>
+        <div className="syncactions__row">
+          {ACTIONS.map((a) => (
+            <button
+              key={a.key} type="button"
+              className="btn btn--ghost syncactions__btn"
+              title={a.hint}
+              disabled={run.isPending}
+              onClick={() => run.mutate(a.key)}
+            >
+              <Icon name="refresh" size={15} />
+              <span>{a.label}</span>
+              <span className="syncactions__hint">{a.hint}</span>
+            </button>
+          ))}
+        </div>
+      </section>
 
       {unhealthy.length ? (
         <p className="banner banner--stale" role="status">
