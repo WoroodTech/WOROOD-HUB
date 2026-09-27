@@ -190,13 +190,47 @@ export class SalesScheduler implements OnModuleInit, OnModuleDestroy {
       /* 2. The order history, if it has never been imported. `last_ok_at` on
             the orders resource is the record of that, and the seeder leaves it
             null deliberately. */
-      const [orders] = await query<{ last_ok_at: Date | null; n: string }>(
-        `SELECT s.last_ok_at, (SELECT COUNT(*) FROM sd_orders WHERE shop_id = $1) AS n
-           FROM sd_sync_state s WHERE s.shop_id = $1 AND s.resource = 'orders'`,
-        [shop.id]);
+      /* Has the history ever been imported?
+       *
+       * This asked whether `sd_orders` was empty, and that was wrong in a way
+       * that only shows on a real deployment. Reconciliation runs ten seconds
+       * after start; the bootstrap runs at ninety. On the first boot the sweep
+       * wins the race, writes a handful of recently-changed orders, and the
+       * emptiness test is false forever after. Production came up with 399
+       * orders out of 96,512 and no indication anything was wrong -- the
+       * dashboards simply showed a much smaller shop.
+       *
+       * Two changes. The record of an import is now its own row, so a
+       * reconciliation cannot look like one. And the fallback compares against
+       * what Shopify says it holds rather than against zero, because "a few
+       * hundred orders" and "no orders" need the same response and only the
+       * second was being detected. */
+      const [backfilled] = await query<{ last_ok_at: Date | null }>(
+        `SELECT last_ok_at FROM sd_sync_state
+          WHERE shop_id = $1 AND resource = 'orders_backfill'`, [shop.id]);
 
-      if (!orders?.last_ok_at && Number(orders?.n ?? 0) === 0) {
-        this.log.log('bootstrap: no orders mirrored yet — starting the initial import');
+      let needsImport = !backfilled?.last_ok_at;
+
+      if (needsImport) {
+        /* Before importing, check it is actually needed: an install that ran
+           the backfill before this row existed is complete and must not be made
+           to do it again. Shopify's own count is the only honest yardstick. */
+        const [mirrored] = await query<{ n: string }>(
+          `SELECT COUNT(*) AS n FROM sd_orders WHERE shop_id = $1`, [shop.id]);
+        const ours = Number(mirrored?.n ?? 0);
+
+        const remote = await this.sync.shopifyOrderCount().catch(() => null);
+        if (remote !== null && ours >= remote * 0.95) {
+          this.log.log(
+            `bootstrap: ${ours} orders mirrored against ${remote} at Shopify — ` +
+            `history looks complete, recording it rather than re-importing`);
+          await this.sync.markBackfilled(ours);
+          needsImport = false;
+        }
+      }
+
+      if (needsImport) {
+        this.log.log('bootstrap: order history not imported yet — starting the initial import');
         const n = await this.sync.backfill();
         this.log.log(`bootstrap: imported ${n} orders`);
       }

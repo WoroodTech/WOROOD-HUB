@@ -38,6 +38,26 @@ export class SyncService {
 
   /** Upsert path shared by the backfill and by reconciliation, so an order
    *  written by either takes exactly the same route into the mirror. */
+  /**
+   * Write orders into the mirror. Does not touch `sd_sync_state`.
+   *
+   * It used to mark `orders` itself, which was wrong twice over. Both the
+   * backfill and reconciliation pass through here, so a backfill writing in
+   * batches stamped OK over its own RUNNING status every few seconds -- the
+   * Data & Sync screen showed a finished job while ninety thousand orders were
+   * still arriving.
+   *
+   * The second problem was quieter and worse. `markSync` advances the
+   * watermark, and reconciliation resumes from it. A backfill covering all of
+   * history would therefore set the watermark to now on completion, and the
+   * next reconciliation would skip everything that changed during the import --
+   * thirteen minutes of edits, silently missed, on the one run where the mirror
+   * is most likely to be out of date.
+   *
+   * Marking is the caller's business: reconciliation owns `orders` and its
+   * watermark, the backfill owns `orders_backfill` and has no watermark to
+   * advance.
+   */
   async upsertOrders(orders: any[]): Promise<number> {
     const shop = await this.shops.get();
     let n = 0;
@@ -200,7 +220,6 @@ export class SyncService {
     }
 
     await this.refreshCustomerSpend([...touchedCustomers]);
-    await this.markSync('orders', n);
 
     /* Customers are kept current as a consequence of syncing orders -- there is
        no separate customer pull -- and nothing was marking the resource. The
@@ -235,6 +254,13 @@ export class SyncService {
     const result = await this.backfills.waitAndIngest(
       operationId, (orders) => this.upsertOrders(orders));
     this.log.log(`backfill ingested ${result.orders} orders from ${result.objectCount} objects`);
+
+    /* Its own resource, deliberately. Sharing `orders` with reconciliation meant
+       the two overwrote each other's status, and it meant a full-history import
+       advanced the watermark reconciliation resumes from. This row records that
+       the import happened and how much it brought; it carries no watermark,
+       because there is nothing to resume. */
+    await this.markSync('orders_backfill', result.orders);
     return result.orders;
   }
 
@@ -535,6 +561,21 @@ export class SyncService {
           `${gap > 0 ? 'more' : 'fewer'} than the mirror. Shopify counts on its own terms ` +
           `— drafts and tests among them — so this is expected to differ and is not a fault on its own.`,
     };
+  }
+
+  /** Shopify's own order count, for deciding whether the mirror is complete.
+   *  Null when it cannot be asked, so the caller can tell "no" from "unknown". */
+  async shopifyOrderCount(): Promise<number | null> {
+    if (this.shopify.source.kind !== 'live') return null;
+    const d = await this.shopify.source.graphql<any>('{ ordersCount { count } }');
+    const n = d?.ordersCount?.count;
+    return typeof n === 'number' ? n : null;
+  }
+
+  /** Record that the history is present without re-importing it -- for an
+   *  install that backfilled before the dedicated row existed. */
+  async markBackfilled(count: number): Promise<void> {
+    await this.markSync('orders_backfill', count);
   }
 
   /** Public entry point for the detached runner above. */
@@ -925,7 +966,7 @@ export class SyncController {
        uncaught into "Something went wrong", which for an operator-triggered
        action is the least useful thing it could say -- the reason a bulk export
        was refused is nearly always specific and actionable. */
-    return this.sync.startLongJob('orders', 'Order backfill',
+    return this.sync.startLongJob('orders_backfill', 'Order backfill',
       () => this.sync.backfill(body?.since));
   }
 
