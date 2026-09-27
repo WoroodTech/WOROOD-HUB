@@ -35,27 +35,7 @@ export function Orders() {
         </div>
       </header>
 
-      {data ? (
-        <ul className="totals">
-          <li className="totals__item">
-            <span className="totals__label">Ordered</span>
-            <span className="totals__value" title={formatMoney(data.totals.sales, data.totals.currency)}>
-              {formatMoney(data.totals.sales, data.totals.currency)}
-            </span>
-            <span className="totals__hint">value of all {formatInteger(data.total)} mirrored orders</span>
-          </li>
-          <li className="totals__item totals__item--good">
-            <span className="totals__label">Collected</span>
-            <span className="totals__value">{formatMoney(data.totals.collected, data.totals.currency)}</span>
-            <span className="totals__hint">cash actually received</span>
-          </li>
-          <li className="totals__item totals__item--transit">
-            <span className="totals__label">Outstanding</span>
-            <span className="totals__value">{formatMoney(data.totals.outstanding, data.totals.currency)}</span>
-            <span className="totals__hint">money in transit with couriers, not a shortfall</span>
-          </li>
-        </ul>
-      ) : null}
+
 
       {redacted ? (
         <p className="notice notice--lock">
