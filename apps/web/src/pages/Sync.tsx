@@ -58,7 +58,10 @@ export function Sync() {
   const { data, isPending, error, refetch, isFetching } = useQuery({
     queryKey: qk.sync,
     queryFn: () => api<SyncHealthResponse>('/sales/admin/sync'),
-    refetchInterval: 60_000,
+    /* Faster while a job is running, so the badge is not a minute behind the
+       thing it describes. */
+    refetchInterval: (q) =>
+      (q.state.data?.resources ?? []).some((r) => r.status === 'RUNNING') ? 5_000 : 60_000,
   });
 
   const run = useMutation({
@@ -66,12 +69,23 @@ export function Sync() {
       api<Record<string, unknown>>(`/sales/admin/sync/${key}`, { method: 'POST' }),
     onSuccess: (result, key) => {
       const label = ACTIONS.find((a) => a.key === key)?.label ?? key;
-      /* The count comes back under a different name per endpoint -- orders,
-         checkouts, transactions, rows -- so the first number in the response is
-         reported rather than a field name that would be wrong four times out of
-         five. */
-      const n = Object.values(result ?? {}).find((v) => typeof v === 'number');
-      toast.push(n === undefined ? `${label} finished.` : `${label}: ${n}.`, 'good');
+
+      /* The long jobs answer immediately and carry on in the background, so the
+         response says what was started rather than what was found. Their result
+         appears in the table below as the status moves from running to a count.
+      
+         The short ones still report inline. Telling somebody "started" about a
+         job that already finished would be its own small lie. */
+      const started = (result as { message?: string })?.message;
+      if (started) { toast.push(started, 'neutral'); }
+      else {
+        /* The count comes back under a different name per endpoint -- orders,
+           checkouts, transactions, rows -- so the first number in the response
+           is reported rather than a field name that would be wrong four times
+           out of five. */
+        const n = Object.values(result ?? {}).find((v) => typeof v === 'number');
+        toast.push(n === undefined ? `${label} finished.` : `${label}: ${n}.`, 'good');
+      }
       void queryClient.invalidateQueries({ queryKey: qk.sync });
       void queryClient.invalidateQueries({ queryKey: ['sales'] });
     },

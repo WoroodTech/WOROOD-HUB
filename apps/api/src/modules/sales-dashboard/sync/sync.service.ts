@@ -201,6 +201,18 @@ export class SyncService {
 
     await this.refreshCustomerSpend([...touchedCustomers]);
     await this.markSync('orders', n);
+
+    /* Customers are kept current as a consequence of syncing orders -- there is
+       no separate customer pull -- and nothing was marking the resource. The
+       Data & Sync screen therefore reported customers as permanently behind,
+       on a row that had never once been stamped since the seed created it.
+    
+       Marked here rather than given a job of its own, because that is the
+       truth: a customer is current because the orders that touched them are. */
+    if (touchedCustomers.size) {
+      await this.markSync('customers', touchedCustomers.size);
+    }
+
     return n;
   }
 
@@ -284,7 +296,25 @@ export class SyncService {
 
       const errs = res?.webhookSubscriptionCreate?.userErrors ?? [];
       if (errs.length) {
-        this.log.warn(`${enumName}: ${errs.map((e: any) => e.message).join('; ')}`);
+        const message = errs.map((e: any) => e.message).join('; ');
+
+        /* Stop on a rejection that is about the address rather than the topic.
+        
+           Shopify validates the callback URL on every create, so an address it
+           will not accept fails identically fifteen times -- fifteen warnings
+           saying the same thing, which buries whichever one was different. The
+           first is the whole story, and continuing serves no purpose. */
+        if (/domain|address|url|https/i.test(message)) {
+          this.log.error(
+            `Shopify rejected the webhook address "${callbackUrl}": ${message}. ` +
+            `No subscriptions were created. Check SHOPIFY_WEBHOOK_BASE_URL — it ` +
+            `must be a public HTTPS hostname, and the API must be restarted ` +
+            `after changing it.`);
+          await this.markSync('webhooks', 0, message);
+          return { created, existing, skipped: message };
+        }
+
+        this.log.warn(`${enumName}: ${message}`);
         continue;
       }
       created.push(enumName);
@@ -505,6 +535,11 @@ export class SyncService {
           `${gap > 0 ? 'more' : 'fewer'} than the mirror. Shopify counts on its own terms ` +
           `— drafts and tests among them — so this is expected to differ and is not a fault on its own.`,
     };
+  }
+
+  /** Public entry point for the detached runner above. */
+  startLongJob(resource: string, label: string, job: () => Promise<number>) {
+    return this.startDetached(resource, label, job);
   }
 
   get sourceKind() { return this.shopify.source.kind; }
@@ -731,6 +766,75 @@ export class SyncService {
     return { payloadsTrimmed: payloads.length, customersPurged: pii.length };
   }
 
+  /**
+   * Start a long job, return immediately, report through `sd_sync_state`.
+   *
+   * A full store-credit export or an order backfill takes minutes. Held open as
+   * an HTTP request, nginx gives up at its sixty-second proxy timeout and the
+   * caller gets a 504 -- while the job carries on server-side, invisible. The
+   * operator sees a failure that did not happen and presses the button again,
+   * which starts a second copy of the same bulk export.
+   *
+   * Raising the nginx timeout would be the wrong fix: a request that takes ten
+   * minutes is not a request, and no timeout is long enough for a backfill on a
+   * store that keeps growing.
+   *
+   * So the resource is marked RUNNING, the job is detached, and the Data & Sync
+   * screen -- which already polls every sixty seconds and already knows how to
+   * render a `running` badge -- shows it happening. `markSync` writes the
+   * outcome whether it succeeds or fails, so the row is never left claiming to
+   * be running after the process has moved on.
+   */
+  private async startDetached(
+    resource: string, label: string, job: () => Promise<number>,
+  ): Promise<{ started: boolean; resource: string; message: string }> {
+    const shop = await this.shops.get();
+
+    /* Refuse a second copy. Two concurrent bulk exports of the same data
+       achieve nothing except spending the rate-limit budget twice, and the
+       double-press is the most likely way to get here given the 504 that
+       prompted this. */
+    const [state] = await query<{ status: string; last_run_at: Date | null }>(
+      `SELECT status, last_run_at FROM sd_sync_state
+        WHERE shop_id = $1 AND resource = $2`, [shop.id, resource]);
+
+    if (state?.status === 'RUNNING') {
+      const since = state.last_run_at ? new Date(state.last_run_at) : null;
+      /* Unless it has been running implausibly long, in which case the process
+         was restarted mid-job and the row is stale rather than accurate. */
+      const stuck = since ? Date.now() - since.getTime() > 30 * 60_000 : true;
+      if (!stuck) {
+        return { started: false, resource,
+                 message: `${label} is already running — watch the status below.` };
+      }
+      this.log.warn(`${resource} was left RUNNING since ${since?.toISOString()} — restarting it`);
+    }
+
+    await query(
+      `INSERT INTO sd_sync_state (shop_id, resource, last_run_at, status)
+       VALUES ($1,$2, now(), 'RUNNING')
+       ON CONFLICT (shop_id, resource) DO UPDATE
+         SET last_run_at = now(), status = 'RUNNING', error = NULL`,
+      [shop.id, resource]);
+
+    /* Deliberately not awaited. The catch is what keeps a failure from becoming
+       an unhandled rejection, and what makes sure the row stops saying RUNNING. */
+    void (async () => {
+      try {
+        const n = await job();
+        await this.markSync(resource, n);
+        this.log.log(`${label}: finished, ${n} records`);
+      } catch (e: any) {
+        const message = e?.message ?? String(e);
+        await this.markSync(resource, 0, message).catch(() => undefined);
+        this.log.error(`${label} failed: ${message}`);
+      }
+    })();
+
+    return { started: true, resource,
+             message: `${label} started. It runs in the background — watch the status below.` };
+  }
+
   private async markSync(resource: string, records: number, error?: string) {
     const shop = await this.shops.get();
     await query(
@@ -821,11 +925,8 @@ export class SyncController {
        uncaught into "Something went wrong", which for an operator-triggered
        action is the least useful thing it could say -- the reason a bulk export
        was refused is nearly always specific and actionable. */
-    try {
-      return { orders: await this.sync.backfill(body?.since) };
-    } catch (e: any) {
-      throw new BadRequestException(e?.message ?? 'Backfill failed');
-    }
+    return this.sync.startLongJob('orders', 'Order backfill',
+      () => this.sync.backfill(body?.since));
   }
 
   /** Register the webhook subscriptions with Shopify. Needs a public HTTPS
@@ -948,11 +1049,17 @@ export class SyncController {
   /** Export store credit on demand. Runs nightly otherwise. */
   @Post('store-credit')
   @Permissions(PERMISSIONS.SYNC_MANAGE)
-  async storeCredit() { return { transactions: await this.credit.sync() }; }
+  async storeCredit() {
+    return this.sync.startLongJob('store_credit', 'Store credit export',
+      () => this.credit.sync());
+  }
 
   @Post('abandoned')
   @Permissions(PERMISSIONS.SYNC_MANAGE)
-  async abandoned() { return { checkouts: await this.abandonedCheckouts.sync() }; }
+  async abandoned() {
+    return this.sync.startLongJob('abandoned_checkouts', 'Abandoned checkout pull',
+      () => this.abandonedCheckouts.sync());
+  }
 
   @Post('reconcile')
   @Permissions(PERMISSIONS.SYNC_MANAGE)
@@ -963,7 +1070,8 @@ export class SyncController {
   @Post('snapshots/hourly-backfill')
   @Permissions(PERMISSIONS.SYNC_MANAGE)
   async hourlyBackfill(@Body() body: { months?: number } = {}) {
-    return { rows: await this.snapshots.backfillHourly(body?.months ?? 13) };
+    return this.sync.startLongJob('hourly_backfill', 'Hourly history fill',
+      () => this.snapshots.backfillHourly(body?.months ?? 13));
   }
 
   @Post('snapshots')

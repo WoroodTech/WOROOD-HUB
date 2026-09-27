@@ -139,7 +139,14 @@ export class SnapshotService {
     const sessions = await this.shopify.source.shopifyql(this.sessionsQuery('day', `-${sinceDays}d`, shop));
     const a = await this.upsertSeries(shop, 'sales', 'day', sales, 'day');
     const b = await this.upsertSeries(shop, 'sessions', 'day', sessions, 'day');
-    await this.markSync(shop.id, 'sales_snapshot', a + b);
+    /* Both series, marked separately.
+    
+       This wrote only `sales_snapshot`, while writing rows for both -- so the
+       Data & Sync screen reported sessions as hours behind when the figures
+       were as current as the sales beside them. A warning that fires when
+       nothing is wrong is how people learn to ignore warnings. */
+    await this.markSync(shop.id, 'sales_snapshot', a);
+    await this.markSync(shop.id, 'sessions_snapshot', b);
     this.log.log(`daily snapshots: ${a} sales + ${b} sessions buckets`);
     return a + b;
   }
@@ -367,6 +374,8 @@ export class SnapshotService {
     const sessions = await this.shopify.source.shopifyql(this.sessionsQuery('hour', `-${sinceDays}d`, shop));
     const a = await this.upsertSeries(shop, 'sales', 'hour', sales, 'hour');
     const b = await this.upsertSeries(shop, 'sessions', 'hour', sessions, 'hour');
+    await this.markSync(shop.id, 'sales_snapshot', a);
+    await this.markSync(shop.id, 'sessions_snapshot', b);
     return a + b;
   }
 
