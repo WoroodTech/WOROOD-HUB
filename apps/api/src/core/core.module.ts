@@ -13,6 +13,10 @@ import { createHash, randomBytes } from 'node:crypto';
 import * as bcrypt from 'bcryptjs';
 import { config } from '../common/config';
 import { query, one } from '../common/db';
+import { MailService } from './mail.service';
+import {
+  NotificationMailer, NotificationReadService, NotificationsController,
+} from './notifications.controller';
 import { CurrentUser, Principal, Public, loadPrincipal } from '../common/auth';
 import { resolveForPrincipal } from './hub-registry';
 
@@ -38,14 +42,17 @@ export class AuditService {
 
 @Injectable()
 export class NotificationsService {
+  /** Returns the row id, which is what lets a caller attach an email to the
+   *  notification it just wrote and record whether that email arrived. */
   async notify(userId: string, moduleKey: string, title: string,
                body?: string, severity: 'INFO' | 'WARNING' | 'CRITICAL' = 'INFO',
-               link?: string) {
-    await query(
+               link?: string): Promise<string | null> {
+    const row = await one<{ id: string }>(
       `INSERT INTO core_notifications (user_id, module_key, severity, title, body, link)
-       VALUES ($1,$2,$3,$4,$5,$6)`,
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
       [userId, moduleKey, severity, title, body ?? null, link ?? null],
     );
+    return row?.id ?? null;
   }
 
   /** Fan out to everyone holding a permission -- used for sync alerts. */
@@ -252,8 +259,8 @@ export class HealthController {
     secret: config.jwt.secret,
     signOptions: { expiresIn: config.jwt.accessTtlSeconds },
   })],
-  controllers: [AuthController, HubController, UsersController, HealthController],
-  providers: [AuthService, AuditService, NotificationsService],
-  exports: [JwtModule, AuditService, NotificationsService],
+  controllers: [NotificationsController, AuthController, HubController, UsersController, HealthController],
+  providers: [MailService, NotificationReadService, NotificationMailer, AuthService, AuditService, NotificationsService],
+  exports: [MailService, NotificationMailer, JwtModule, AuditService, NotificationsService],
 })
 export class CoreModule {}

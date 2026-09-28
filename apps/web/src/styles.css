@@ -1293,6 +1293,91 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .chipbtn--on { background: var(--accent); border-color: var(--accent); color: #fff; }
 .chipbtn--on:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: #fff; }
 
+/* ------------------------------------------------------ notification bell -- */
+
+.bell { position: relative; display: flex; }
+.bell__btn {
+  position: relative; display: grid; place-items: center;
+  inline-size: 34px; block-size: 34px; border-radius: 9px;
+  background: transparent; border: 1px solid transparent; color: var(--ink-2);
+  cursor: pointer;
+}
+.bell__btn:hover { background: var(--surface-2); color: var(--ink); }
+
+/* The count sits on the bell rather than beside it: the badge is the thing
+   people look for, and a number in the toolbar reads as another control. */
+.bell__count {
+  position: absolute; inset-block-start: 2px; inset-inline-end: 2px;
+  min-inline-size: 16px; block-size: 16px; padding-inline: 4px;
+  display: grid; place-items: center;
+  background: var(--accent); color: #fff;
+  font-size: 10px; font-weight: 700; line-height: 1;
+  border-radius: 9px; border: 2px solid var(--surface);
+}
+
+.bell__panel {
+  position: absolute; inset-block-start: calc(100% + 8px); inset-inline-end: 0;
+  inline-size: min(380px, calc(100vw - 32px));
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: var(--shadow-lg);
+  z-index: 60; overflow: hidden;
+}
+.bell__head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 12px 14px; border-block-end: 1px solid var(--line);
+}
+
+/* Offered once there is something to show. A permission prompt on first load
+   is the one people dismiss without reading, and a dismissal is permanent. */
+.bell__prompt {
+  display: flex; align-items: center; gap: 7px; inline-size: 100%;
+  padding: 10px 14px; border: 0; border-block-end: 1px solid var(--line);
+  background: var(--info-soft); color: var(--info-ink);
+  font-size: 12.5px; text-align: start; cursor: pointer;
+}
+.bell__prompt:hover { filter: brightness(0.97); }
+
+/* Capped and scrolled. A list this long is glanced at, not read to the end. */
+.bell__list { list-style: none; margin: 0; padding: 0; max-block-size: 60vh; overflow-y: auto; }
+.bell__item {
+  display: flex; flex-direction: column; gap: 3px; inline-size: 100%;
+  padding: 11px 14px; border: 0; background: transparent;
+  text-align: start; cursor: pointer; border-block-end: 1px solid var(--line);
+}
+.bell__item:hover { background: var(--surface-2); }
+.bell__title { font-size: 13px; font-weight: 600; color: var(--ink); }
+.bell__body { font-size: 12.5px; color: var(--muted); line-height: 1.4; }
+.bell__when { font-size: 11px; color: var(--muted); }
+
+/* A dot rather than a background wash: the unread ones must be findable in a
+   list where every row is already a button. */
+.bell__item--unread { position: relative; }
+.bell__item--unread::before {
+  content: ''; position: absolute; inset-inline-start: 5px; inset-block-start: 16px;
+  inline-size: 5px; block-size: 5px; border-radius: 50%; background: var(--accent);
+}
+.bell__item--unread .bell__title { font-weight: 700; }
+.bell__empty { padding: 20px 14px; color: var(--muted); font-size: 13px; text-align: center; }
+
+[dir='rtl'] .bell__item--unread::before { inset-inline-start: auto; inset-inline-end: 5px; }
+
+/* ---------------------------------------------------------- invitation -- */
+
+.invitepage { max-inline-size: 640px; }
+.invitepage__guests {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  list-style: none; margin: 14px 0 0; padding: 14px 0 0;
+  border-block-start: 1px solid var(--line);
+}
+.invitepage__actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.invitepage__answered { margin-block-start: 10px; font-size: 12.5px; }
+
+@media (max-width: 520px) {
+  /* Full width, because these are the two things the page exists for and a
+     thumb should not have to aim. */
+  .invitepage__actions .btn { flex: 1 1 100%; justify-content: center; }
+}
+
 /* --------------------------------------------------------- sync actions -- */
 
 /* Named jobs rather than one ambiguous Refresh. The hint sits inside the

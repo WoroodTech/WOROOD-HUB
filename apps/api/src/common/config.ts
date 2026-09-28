@@ -25,6 +25,36 @@ export const config = {
     lockoutMinutes: 15,
   },
 
+  /**
+   * Where the portal lives, for links in emails.
+   *
+   * An email is read outside the application, so a relative path means nothing
+   * in it. Falls back to the CORS origin, which is the same hostname in every
+   * deployment and saves a second variable that could disagree with the first.
+   */
+  portalUrl: (process.env.PORTAL_URL
+    || process.env.CORS_ORIGIN
+    || 'http://localhost:5173').replace(/\/$/, ''),
+
+  /**
+   * Email, through SES.
+   *
+   * Off unless `MAIL_ENABLED=true`, and off is a working state rather than a
+   * misconfiguration: a developer's machine has no instance role, and booking a
+   * meeting should not require an AWS account. Notifications still appear in
+   * the portal; only the email is skipped, and the reason is recorded on the
+   * notification row so it is visible rather than assumed.
+   *
+   * No credentials here. The instance carries an IAM role and the SDK reads it
+   * from the metadata service -- nothing to leak, nothing to rotate.
+   */
+  mail: {
+    enabled: process.env.MAIL_ENABLED === 'true',
+    region: process.env.AWS_REGION || 'eu-west-1',
+    from: process.env.MAIL_FROM || 'technology@worood.co',
+    fromName: process.env.MAIL_FROM_NAME || 'WOROOD HUB',
+  },
+
   shopify: {
     shopDomain: process.env.SHOPIFY_SHOP_DOMAIN || 'worood-designs.myshopify.com',
     apiVersion: process.env.SHOPIFY_API_VERSION || '2026-07',
@@ -105,6 +135,10 @@ export const config = {
  * Failing at boot is louder and cheaper. A deployment that cannot work should
  * say so while somebody is still watching it deploy.
  */
+if (config.mail.enabled && !config.mail.from.includes('@')) {
+  throw new Error('MAIL_FROM must be an address SES has verified for this domain.');
+}
+
 if (config.shopify.tokenStrategy === 'client_credentials'
     && (!config.shopify.clientId || !config.shopify.clientSecret)) {
   throw new Error(
