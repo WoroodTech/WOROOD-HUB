@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { Icon, WoroodMark, WoroodWordmark } from './Icon';
-import { NotificationBell } from './NotificationBell';
+import { NotificationBell } from './Notificationbell';
 import { useAuth } from '../lib/auth';
 import { useHubModules } from '../lib/hub';
 import { useRealtime } from '../lib/realtime';
