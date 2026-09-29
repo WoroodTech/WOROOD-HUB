@@ -24,7 +24,13 @@ import {
 import { DateTime } from 'luxon';
 import { one, query, tx } from '../../common/db';
 import { can, type Principal } from '../../common/auth';
+import { config } from '../../common/config';
 import { NotificationsService } from '../../core/core.module';
+import { NotificationMailer } from '../../core/notifications.controller';
+import {
+  cancellationMail, invitationMail, movedMail, responseMail,
+  type MeetingMailInput,
+} from './meeting-mail';
 import { MR_PERMISSIONS } from './permissions';
 import type {
   CancelReservation, CreateReservation, ListReservationsQuery,
@@ -78,6 +84,7 @@ export class ReservationsService {
   constructor(
     private readonly rooms: RoomsService,
     private readonly notifications: NotificationsService,
+    private readonly mailer: NotificationMailer,
   ) { }
 
   private view(r: any, p: Principal): ReservationView {
@@ -492,8 +499,15 @@ export class ReservationsService {
       || room.id !== existing.room_id;
     if (moved) {
       const keeping = nowInvited.filter((uid) => wasInvited.has(uid));
-      await this.tellAll(keeping, 'Meeting moved',
-        `"${after.title}" is now ${this.whenText(after, room)}.`, `/meeting-rooms/reservations`);
+      const sent = await this.tellAll(keeping, 'Meeting moved',
+        `"${after.title}" is now ${this.whenText(after, room)}.`,
+        `/meeting-rooms/invitations/${after.id}`);
+
+      /* A fresh calendar file goes with it, carrying the same UID -- so a
+         client that already has the event updates it in place rather than
+         leaving the old time sitting in the calendar beside the new one. */
+      const m = await this.mailInput(after);
+      if (m) await this.emailAll(sent, () => movedMail(m));
     }
 
     return after;
@@ -518,9 +532,12 @@ export class ReservationsService {
       // Anyone who had it in their calendar needs to know it is gone. Silence
       // here means people turning up to an empty room.
       const guests = before.attendees.map((a) => a.userId).filter((x): x is string => !!x && x !== p.id);
-      await this.tellAll(guests, 'Meeting cancelled',
+      const sent = await this.tellAll(guests, 'Meeting cancelled',
         `"${before.title}" has been cancelled${dto.reason ? `: ${dto.reason}` : '.'}`,
         '/meeting-rooms/reservations', 'WARNING');
+
+      const m = await this.mailInput(before);
+      if (m) await this.emailAll(sent, () => cancellationMail(m, dto.reason));
     }
     return this.get(p, id);
   }
@@ -551,11 +568,19 @@ export class ReservationsService {
     const reservation = await this.get(p, id);
     // The organiser asked a question; they should get the answer.
     if (reservation.organiser.id !== p.id) {
-      await this.notifications.notify(
-        reservation.organiser.id, 'meeting-rooms',
-        `${p.fullName} ${dto.response === 'ACCEPTED' ? 'accepted' : 'declined'}`,
+      const accepted = dto.response === 'ACCEPTED';
+      const sent = await this.tellAll(
+        [reservation.organiser.id],
+        `${p.fullName} ${accepted ? 'accepted' : 'declined'}`,
         `"${reservation.title}" — ${reservation.reference}`,
-        'INFO', '/meeting-rooms/reservations');
+        `/meeting-rooms/invitations/${reservation.id}`);
+
+      /* The one email that goes to the organiser rather than a guest. It is an
+         answer to a question they asked, which is the opposite case from the
+         invitation copy nobody wants. No calendar file: they have the meeting
+         already, and a decline does not remove it. */
+      const m = await this.mailInput(reservation);
+      if (m) await this.emailAll(sent, () => responseMail(m, p.fullName, accepted));
     }
     return reservation;
   }
@@ -686,20 +711,96 @@ export class ReservationsService {
 
     const room = await this.rooms.get(r.room.id).catch(() => null);
     const when = room ? this.whenText(r, room) : `${r.room.name}`;
-    await this.tellAll(
+
+    /* The in-app link points at the invitation itself, not the list. Somebody
+       following a notification to answer a question should land on the
+       question. */
+    const sent = await this.tellAll(
       guests,
       `${organiser.fullName} invited you to a meeting`,
       `"${r.title}" — ${when}. ${r.reference}`,
-      '/meeting-rooms/reservations');
+      `/meeting-rooms/invitations/${r.id}`);
+
+    /* Only the people invited are emailed. The organiser knows: they just
+       booked it, and a copy of their own invitation is noise in an inbox. */
+    const m = await this.mailInput(r);
+    if (m) await this.emailAll(sent, () => invitationMail(m));
+  }
+
+  /**
+   * Everything an email about this meeting needs, in one shape.
+   *
+   * Built from the reservation the caller already has plus one room lookup,
+   * rather than re-reading the reservation: the caller is usually inside a
+   * flow that has just written it, and re-reading would be both wasteful and a
+   * chance to disagree with itself.
+   */
+  private async mailInput(r: ReservationView): Promise<MeetingMailInput | null> {
+    const room = await this.rooms.get(r.room.id).catch(() => null);
+    if (!room) return null;
+    return {
+      reference: r.reference,
+      title: r.title,
+      organiserName: r.organiser.fullName,
+      startsAt: new Date(r.startsAt),
+      endsAt: new Date(r.endsAt),
+      timezone: room.location.timezone,
+      roomName: room.name,
+      roomFloor: room.floor,
+      locationName: room.location.name,
+      description: r.description ?? null,
+      attendeeCount: r.attendeeCount ?? (r.attendees?.length ?? 0) + 1,
+      /* Deep link to the one page that answers the question. Login bounces
+         through and returns here, because RequireAuth records the path it
+         turned away. */
+      invitationUrl: `${config.portalUrl}/meeting-rooms/invitations/${r.id}`,
+    };
+  }
+
+  /**
+   * Email the people a notification was just written for.
+   *
+   * Runs after the notifications, never inside the booking transaction, and
+   * every failure is swallowed. The rule the whole module follows: the meeting
+   * is the thing that matters, the announcement is a courtesy, and a courtesy
+   * must not be able to undo the thing.
+   *
+   * Addresses are read here rather than carried in, because an attendee list is
+   * user ids and a person's email can change between being invited and being
+   * told.
+   */
+  private async emailAll(
+    sent: Array<{ userId: string; notificationId: string | null }>,
+    build: (name: string) => { subject: string; html: string; text: string; ics?: string },
+  ): Promise<void> {
+    const withIds = sent.filter((x) => x.notificationId);
+    if (!withIds.length) return;
+
+    const people = await query<{ id: string; email: string; full_name: string }>(
+      `SELECT id, email, full_name FROM core_users
+        WHERE id = ANY($1) AND deleted_at IS NULL AND status = 'ACTIVE'`,
+      [withIds.map((x) => x.userId)]);
+
+    await Promise.all(withIds.map(async (x) => {
+      const person = people.find((u) => u.id === x.userId);
+      if (!person?.email) return;
+      const m = build(person.full_name);
+      await this.mailer.deliver(
+        x.notificationId!, person.email, m.subject, m.html, m.text, m.ics,
+      ).catch(() => undefined);
+    }));
   }
 
   private async tellAll(
     userIds: string[], title: string, body: string, link: string,
     severity: 'INFO' | 'WARNING' = 'INFO',
-  ): Promise<void> {
-    await Promise.all([...new Set(userIds)].map((uid) =>
-      this.notifications.notify(uid, 'meeting-rooms', title, body, severity, link)
-        .catch(() => undefined)));
+  ): Promise<Array<{ userId: string; notificationId: string | null }>> {
+    return Promise.all([...new Set(userIds)].map(async (uid) => ({
+      userId: uid,
+      notificationId: await this.notifications
+        .notify(uid, 'meeting-rooms', title, body, severity, link)
+        .catch(() => null),
+    })));
   }
 
   private async replaceAttendees(c: any, reservationId: string, userIds?: string[]): Promise<void> {

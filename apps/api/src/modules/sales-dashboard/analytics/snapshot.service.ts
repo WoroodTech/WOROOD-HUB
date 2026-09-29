@@ -103,7 +103,7 @@ export class SnapshotService {
   salesQuery(grain: 'day' | 'hour', since: string, shop: Shop) {
     /* `sales_reversals` is asked for again.
      *
-     * It was dropped when the fixtures were captured, because the column was
+     * It was dropped when the original data was captured, because the column was
      * genuinely absent from the schema at the time and the query failed with
      * it. It exists now: 2026-04 renamed the old `returns` family to
      * `sales_reversals` -- same definition, clearer name, since the figure
@@ -139,7 +139,14 @@ export class SnapshotService {
     const sessions = await this.shopify.source.shopifyql(this.sessionsQuery('day', `-${sinceDays}d`, shop));
     const a = await this.upsertSeries(shop, 'sales', 'day', sales, 'day');
     const b = await this.upsertSeries(shop, 'sessions', 'day', sessions, 'day');
-    await this.markSync(shop.id, 'sales_snapshot', a + b);
+    /* Both series, marked separately.
+    
+       This wrote only `sales_snapshot`, while writing rows for both -- so the
+       Data & Sync screen reported sessions as hours behind when the figures
+       were as current as the sales beside them. A warning that fires when
+       nothing is wrong is how people learn to ignore warnings. */
+    await this.markSync(shop.id, 'sales_snapshot', a);
+    await this.markSync(shop.id, 'sessions_snapshot', b);
     this.log.log(`daily snapshots: ${a} sales + ${b} sessions buckets`);
     return a + b;
   }
@@ -215,7 +222,30 @@ export class SnapshotService {
     const stored = await this.storedHoursFor(shop, day, schema);
     if (stored) return stored;
 
-    const fetched = await this.fetchFromShopify(shop, day, schema);
+    let fetched: HourlyDay;
+    try {
+      fetched = await this.fetchFromShopify(shop, day, schema);
+    } catch (e: any) {
+      /* Shopify did not answer. Serve whatever is stored for this day, even
+         though it failed the completeness test above.
+      
+         Incomplete and labelled beats an error message. The dashboard already
+         carries a "not live" banner when the connection is down, so a reader
+         seeing partial figures is a reader who has been told they are partial
+         -- whereas "could not load this" on eight widgets tells them only that
+         something is broken, which is both less useful and more alarming than
+         the truth.
+      
+         Nothing is written back: a partial day captured during an outage must
+         not become the stored answer for that day once Shopify returns. */
+      const partial = await this.storedHoursFor(shop, day, schema, { allowPartial: true });
+      if (partial) {
+        this.log.warn(
+          `Shopify unreachable for ${schema} on ${day} — serving ${partial.sales.length} stored buckets`);
+        return partial;
+      }
+      throw e;
+    }
 
     /* Written back, so the next reader gets it from the store. A day chosen
        once from a calendar is usually chosen again -- by the same person
@@ -238,6 +268,7 @@ export class SnapshotService {
    */
   private async storedHoursFor(
     shop: Shop, day: string, schema: 'sales' | 'sessions',
+    { allowPartial = false } = {},
   ): Promise<HourlyDay | null> {
     const start = DateTime.fromISO(day, { zone: shop.iana_timezone }).startOf('day');
     if (!start.isValid) return null;
@@ -261,10 +292,12 @@ export class SnapshotService {
     const now = DateTime.now().setZone(shop.iana_timezone);
     const isToday = start.hasSame(now, 'day');
     const expected = isToday ? now.hour + 1 : 24;
-    if (rows.length < Math.max(1, Math.floor(expected * 0.5))) return null;
+    if (!allowPartial && rows.length < Math.max(1, Math.floor(expected * 0.5))) return null;
 
-    // Today is never served from the store: the current hour is still moving.
-    if (isToday) return null;
+    /* Today is never served from the store while Shopify is answering -- the
+       current hour is still moving. During an outage it is, because a partial
+       today is the best that exists and the banner says so. */
+    if (isToday && !allowPartial) return null;
 
     return {
       sales: rows.map((r) => ({
@@ -341,6 +374,8 @@ export class SnapshotService {
     const sessions = await this.shopify.source.shopifyql(this.sessionsQuery('hour', `-${sinceDays}d`, shop));
     const a = await this.upsertSeries(shop, 'sales', 'hour', sales, 'hour');
     const b = await this.upsertSeries(shop, 'sessions', 'hour', sessions, 'hour');
+    await this.markSync(shop.id, 'sales_snapshot', a);
+    await this.markSync(shop.id, 'sessions_snapshot', b);
     return a + b;
   }
 

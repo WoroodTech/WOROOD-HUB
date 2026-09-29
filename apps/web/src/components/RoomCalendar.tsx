@@ -78,6 +78,22 @@ export function RoomCalendar({ room, date }: { room: MeetingRoom; date: string }
   const openMin = hhmmToMinutes(room.opensAt);
   const closeMin = hhmmToMinutes(room.closesAt);
   const totalMin = Math.max(closeMin - openMin, 60);
+
+  /* The track is as tall as the day is long, rather than a fixed 420px.
+   *
+   * With a fixed height, a thirty-minute meeting in a ten-hour day was 5% of it
+   * -- about twenty pixels, against roughly thirty-eight needed for a title, a
+   * time and the padding around them. The text was clipped, and a fifteen-minute
+   * booking was a five-pixel sliver with nothing legible in it at all. Worse,
+   * the squeeze got tighter the longer the room's opening hours, so the rooms
+   * with the most bookings were the ones you could read least.
+   *
+   * Sixty pixels an hour means a thirty-minute meeting is thirty pixels and a
+   * fifteen-minute one is fifteen, always, whatever the day's length. A long day
+   * makes a tall track and the calendar scrolls -- which is what a day planner
+   * does everywhere else, and is far easier to read than a compressed one. */
+  const HOUR_PX = 60;
+  const trackPx = Math.round((totalMin / 60) * HOUR_PX);
   const hourMarks: number[] = [];
   for (let h = Math.ceil(openMin / 60); h <= Math.floor(closeMin / 60); h++) hourMarks.push(h * 60);
 
@@ -118,7 +134,7 @@ export function RoomCalendar({ room, date }: { room: MeetingRoom; date: string }
       ) : null}
 
       {calendar.data ? (
-        <div className="roomcal">
+        <div className="roomcal" style={{ ['--track-h' as string]: `${trackPx}px` }}>
           <div className="roomcal__hours">
             {hourMarks.map((m) => (
               <span key={m} className="roomcal__hourlabel" style={{ top: `${((m - openMin) / totalMin) * 100}%` }}>
@@ -151,6 +167,18 @@ export function RoomCalendar({ room, date }: { room: MeetingRoom; date: string }
               const height = Math.max(((end - start) / totalMin) * 100, 1.2);
               const style = { top: `${top}%`, height: `${height}%` };
 
+              /* How much room this block actually has, in pixels -- known here
+                 because the track's height is known, which it was not when the
+                 track was sized by flex.
+                 A block decides what it can show rather than showing everything
+                 and letting it overflow: below ~34px the time line is dropped,
+                 below ~18px the text goes entirely and the block becomes a bar
+                 whose tooltip carries the detail. Hiding what will not fit is
+                 the difference between a dense calendar and a broken one. */
+              const blockPx = ((end - start) / 60) * HOUR_PX;
+              const size = blockPx < 18 ? ' roomcal__block--xs'
+                         : blockPx < 34 ? ' roomcal__block--sm' : '';
+
               if (b.type === 'BUFFER') {
                 return (
                   <div
@@ -162,7 +190,7 @@ export function RoomCalendar({ room, date }: { room: MeetingRoom; date: string }
 
               if (b.type === 'BLACKOUT') {
                 return (
-                  <div key={`blackout-${i}`} className="roomcal__blackout" style={style}
+                  <div key={`blackout-${i}`} className={`roomcal__blackout${size}`} style={style}
                     title={`${room.name} is unavailable${b.reason ? `: ${b.reason}` : '.'}`}>
                     <span className="roomcal__blocktitle">Unavailable</span>
                     {b.reason ? <span className="roomcal__blockmeta">{b.reason}</span> : null}
@@ -173,12 +201,16 @@ export function RoomCalendar({ room, date }: { room: MeetingRoom; date: string }
               return (
                 <div
                   key={b.id}
-                  className={`roomcal__block${b.status === 'PENDING' ? ' roomcal__block--pending' : ''}${b.isMine ? ' roomcal__block--mine' : ''}`}
+                  className={`roomcal__block${size}${b.status === 'PENDING' ? ' roomcal__block--pending' : ''}${b.isMine ? ' roomcal__block--mine' : ''}`}
                   style={style}
                   title={`${b.title} — ${formatTime(b.startsAt)} to ${formatTime(b.endsAt)} — ${b.organiserName}`}
                 >
                   <span className="roomcal__blocktitle">{b.title}</span>
                   <span className="roomcal__blockmeta">{formatTime(b.startsAt)}–{formatTime(b.endsAt)} · {b.organiserName}</span>
+                  {/* The pending marker is the one thing never hidden by size:
+                      a booking that is not yet confirmed is the most important
+                      thing about it, and at --xs it survives as the dashed
+                      border the CSS keeps. */}
                   {b.status === 'PENDING' ? <span className="roomcal__blockflag"><Icon name="clock" size={11} /> pending</span> : null}
                 </div>
               );

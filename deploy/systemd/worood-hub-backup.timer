@@ -1,0 +1,25 @@
+# WOROOD HUB — nightly backup schedule
+#
+#   systemctl enable --now worood-hub-backup.timer
+#   systemctl list-timers worood-hub-backup
+
+[Unit]
+Description=Run the WOROOD HUB database backup nightly
+Documentation=https://github.com/worood/worood-hub
+
+[Timer]
+# 23:30 UTC — 02:30 in Cairo during summer time, 01:30 in winter. Comfortably
+# outside working hours either way, and before the 02:00 AWS Backup window so
+# the EBS snapshot captures a database that has just been dumped cleanly.
+OnCalendar=*-*-* 23:30:00 UTC
+
+# Spread the start over five minutes so the dump, the snapshot and any other
+# midnight job on the instance do not all begin on the same second.
+RandomizedDelaySec=300
+
+# If the instance was asleep or rebooting at 23:30, run as soon as it is back
+# rather than skipping the night entirely.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

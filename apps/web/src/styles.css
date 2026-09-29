@@ -521,6 +521,22 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .banner span { flex: 1; }
 .banner--stale { background: var(--warning-soft); color: var(--warning-ink); }
+/* An outage reads differently from staleness, so it looks different. Stale is a
+   caution -- the figures are real, just behind. Offline is a statement of fact
+   about the connection, and there is no action the reader can take, which is why
+   it carries no Refetch button. */
+.banner--offline {
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--line));
+  color: var(--ink);
+}
+.banner--offline .icon { color: var(--danger); }
+/* The underlying error, for whoever is fixing it. Small and secondary: the
+   sentence above is for everyone else. */
+.banner__detail {
+  display: block; margin-block-start: 4px;
+  font-size: 12px; color: var(--muted); font-family: var(--font-mono);
+}
 .banner--ok { background: var(--good-soft); color: var(--good-ink); }
 .banner--quiet { background: var(--surface-2); color: var(--ink-2); border-color: var(--line); }
 
@@ -1277,6 +1293,112 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .chipbtn--on { background: var(--accent); border-color: var(--accent); color: #fff; }
 .chipbtn--on:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: #fff; }
 
+/* ------------------------------------------------------ notification bell -- */
+
+.bell { position: relative; display: flex; }
+.bell__btn {
+  position: relative; display: grid; place-items: center;
+  inline-size: 34px; block-size: 34px; border-radius: 9px;
+  background: transparent; border: 1px solid transparent; color: var(--ink-2);
+  cursor: pointer;
+}
+.bell__btn:hover { background: var(--surface-2); color: var(--ink); }
+
+/* The count sits on the bell rather than beside it: the badge is the thing
+   people look for, and a number in the toolbar reads as another control. */
+.bell__count {
+  position: absolute; inset-block-start: 2px; inset-inline-end: 2px;
+  min-inline-size: 16px; block-size: 16px; padding-inline: 4px;
+  display: grid; place-items: center;
+  background: var(--accent); color: #fff;
+  font-size: 10px; font-weight: 700; line-height: 1;
+  border-radius: 9px; border: 2px solid var(--surface);
+}
+
+.bell__panel {
+  position: absolute; inset-block-start: calc(100% + 8px); inset-inline-end: 0;
+  inline-size: min(380px, calc(100vw - 32px));
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: var(--shadow-lg);
+  z-index: 60; overflow: hidden;
+}
+.bell__head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 12px 14px; border-block-end: 1px solid var(--line);
+}
+
+/* Offered once there is something to show. A permission prompt on first load
+   is the one people dismiss without reading, and a dismissal is permanent. */
+.bell__prompt {
+  display: flex; align-items: center; gap: 7px; inline-size: 100%;
+  padding: 10px 14px; border: 0; border-block-end: 1px solid var(--line);
+  background: var(--info-soft); color: var(--info-ink);
+  font-size: 12.5px; text-align: start; cursor: pointer;
+}
+.bell__prompt:hover { filter: brightness(0.97); }
+
+/* Capped and scrolled. A list this long is glanced at, not read to the end. */
+.bell__list { list-style: none; margin: 0; padding: 0; max-block-size: 60vh; overflow-y: auto; }
+.bell__item {
+  display: flex; flex-direction: column; gap: 3px; inline-size: 100%;
+  padding: 11px 14px; border: 0; background: transparent;
+  text-align: start; cursor: pointer; border-block-end: 1px solid var(--line);
+}
+.bell__item:hover { background: var(--surface-2); }
+.bell__title { font-size: 13px; font-weight: 600; color: var(--ink); }
+.bell__body { font-size: 12.5px; color: var(--muted); line-height: 1.4; }
+.bell__when { font-size: 11px; color: var(--muted); }
+
+/* A dot rather than a background wash: the unread ones must be findable in a
+   list where every row is already a button. */
+.bell__item--unread { position: relative; }
+.bell__item--unread::before {
+  content: ''; position: absolute; inset-inline-start: 5px; inset-block-start: 16px;
+  inline-size: 5px; block-size: 5px; border-radius: 50%; background: var(--accent);
+}
+.bell__item--unread .bell__title { font-weight: 700; }
+.bell__empty { padding: 20px 14px; color: var(--muted); font-size: 13px; text-align: center; }
+
+[dir='rtl'] .bell__item--unread::before { inset-inline-start: auto; inset-inline-end: 5px; }
+
+/* ---------------------------------------------------------- invitation -- */
+
+.invitepage { max-inline-size: 640px; }
+.invitepage__guests {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  list-style: none; margin: 14px 0 0; padding: 14px 0 0;
+  border-block-start: 1px solid var(--line);
+}
+.invitepage__actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.invitepage__answered { margin-block-start: 10px; font-size: 12.5px; }
+
+@media (max-width: 520px) {
+  /* Full width, because these are the two things the page exists for and a
+     thumb should not have to aim. */
+  .invitepage__actions .btn { flex: 1 1 100%; justify-content: center; }
+}
+
+/* --------------------------------------------------------- sync actions -- */
+
+/* Named jobs rather than one ambiguous Refresh. The hint sits inside the
+   button because what each job does is the thing that decides whether to press
+   it -- putting that in a tooltip means reading it only after hovering, which
+   is after deciding. */
+.syncactions { margin-block-end: 18px; }
+.syncactions__head { margin-block-end: 12px; }
+.syncactions__row { display: flex; flex-wrap: wrap; gap: 10px; }
+.syncactions__btn {
+  flex-direction: column; align-items: flex-start; gap: 2px;
+  text-align: start; block-size: auto; padding: 10px 14px;
+  min-inline-size: 180px; flex: 1 1 180px;
+}
+.syncactions__hint { font-size: 11.5px; font-weight: 400; color: var(--muted); }
+.syncactions__btn:disabled { opacity: 0.55; }
+
+@media (max-width: 620px) {
+  .syncactions__btn { min-inline-size: 100%; }
+}
+
 /* ------------------------------------------------------- compare days -- */
 
 /* The two date pickers, in a row under the range buttons rather than behind a
@@ -1333,7 +1455,6 @@ button, input, select, textarea { font: inherit; color: inherit; }
 /* The room's own next opening, offered inside its "not available" row. It is a
    link rather than a button because it does not book anything -- it puts a
    time back in the form and lets the same answer run again. */
-.unavailable__why .link { margin-inline-start: 8px; }
 /* A changeover is not a clash. Same row, quieter reading -- the room is free,
    it is being reset, and the colour should not say otherwise. */
 .unavailable__why--soft { color: var(--muted); font-style: normal; }
@@ -1381,6 +1502,28 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .unavailable__name { display: flex; flex-direction: column; font-weight: 600; }
 .unavailable__meta { font-weight: 400; font-size: 11.5px; color: var(--muted); }
 .unavailable__why { font-size: 12.5px; color: var(--muted); text-align: end; }
+
+/* Reason above, action below, both aligned to the end of the row. Stacked
+   rather than inline because the reason can be a full sentence and the button
+   should not be pushed off the edge by it. */
+.unavailable__end {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+  flex-shrink: 0;
+}
+/* A suggestion, not the main action -- the room the person asked for is still
+   above. Same grey outline as every other secondary control, and the clock says
+   what it does before the words do. */
+.unavailable__free { white-space: nowrap; }
+.unavailable__free .mono { font-weight: 650; }
+
+@media (max-width: 620px) {
+  /* The row stops being two columns and becomes three stacked lines: room,
+     reason, action. At this width the end-aligned column was squeezing the
+     room name into two or three words per line. */
+  .unavailable__row { flex-direction: column; align-items: flex-start; gap: 8px; }
+  .unavailable__end { align-items: flex-start; inline-size: 100%; }
+  .unavailable__why { text-align: start; }
+}
 
 /* -------------------------------------------------------- reservations -- */
 
@@ -1451,7 +1594,17 @@ button, input, select, textarea { font: inherit; color: inherit; }
   border: 1px solid var(--warning-ink);
 }
 
-.roomcal { position: relative; display: flex; min-block-size: 420px; }
+/* Height comes from the day's length, set by the component as --track-h, so an
+   hour is always the same number of pixels whatever hours the room keeps. A
+   long day makes a tall calendar and the page scrolls, which is what a day
+   planner does everywhere else and reads far better than a compressed one.
+   The floor is for a room open an hour or two, so the toolbar above does not
+   sit on top of a sliver. */
+.roomcal {
+  position: relative; display: flex;
+  block-size: var(--track-h, 420px);
+  min-block-size: 220px;
+}
 .roomcal__hours { position: relative; inline-size: 46px; flex-shrink: 0; }
 .roomcal__hourlabel { position: absolute; inset-inline-start: 0; transform: translateY(-0.6em); font-size: 11px; color: var(--muted); }
 .roomcal__track { position: relative; flex: 1; border-inline-start: 1px solid var(--line); }
@@ -1468,7 +1621,34 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .roomcal__block--mine { background: var(--accent); border-color: var(--accent); color: #fff; }
 .roomcal__block--mine .roomcal__blockmeta { color: rgba(255, 255, 255, 0.82); }
 .roomcal__blocktitle { font-size: 12.5px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.roomcal__blockmeta { font-size: 11px; color: var(--muted); }
+.roomcal__blockmeta {
+  font-size: 11px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* A block shows what it has room for.
+   
+   Short meetings are the common case on a florist's calendar -- a fifteen-minute
+   call, a half-hour handover -- and at a fixed track height they were a few
+   pixels with their text clipped through the middle. Rather than shrink the
+   type until nothing is readable, the block drops what will not fit and keeps
+   the tooltip, which carries the title, the times and the organiser in full. */
+.roomcal__block--sm { padding-block: 2px; gap: 0; }
+.roomcal__block--sm .roomcal__blockmeta,
+.roomcal__block--sm .roomcal__blockflag { display: none; }
+.roomcal__block--sm .roomcal__blocktitle { font-size: 11.5px; line-height: 1.15; }
+
+/* Too short for any text at all. Still a real target -- 8px is enough to hover
+   and enough to see, and the dashed border of a pending booking survives, which
+   is the one thing about a block that must never be hidden by size. */
+.roomcal__block--xs {
+  padding-block: 0; padding-inline: 4px;
+  min-block-size: 8px; justify-content: center;
+}
+.roomcal__block--xs > * { display: none; }
+
+.roomcal__blackout--sm .roomcal__blockmeta { display: none; }
+.roomcal__blackout--xs > * { display: none; }
 .roomcal__blockflag { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; color: var(--warning-ink); }
 .roomcal__block--mine .roomcal__blockflag { color: rgba(255, 255, 255, 0.9); }
 
@@ -1477,6 +1657,10 @@ button, input, select, textarea { font: inherit; color: inherit; }
    philosophy of not drawing what does not need to be read. */
 .roomcal__buffer {
   position: absolute; inset-inline: 8px; z-index: 1; border-radius: 4px;
+  /* Visible even when a changeover is five minutes. Without a floor the stripe
+     rounds to nothing and the gap between two back-to-back meetings reads as
+     free time. */
+  min-block-size: 4px;
   background: repeating-linear-gradient(45deg, var(--warning-soft), var(--warning-soft) 4px, transparent 4px, transparent 8px);
   border-inline: 1px solid color-mix(in srgb, var(--warning-ink) 30%, transparent);
 }
@@ -1490,6 +1674,23 @@ button, input, select, textarea { font: inherit; color: inherit; }
   display: flex; flex-direction: column; gap: 1px;
 }
 .roomcal__blackout .roomcal__blocktitle { color: var(--ink-2); }
+
+/* Narrow screens.
+   
+   The legend is the first thing to go: it explains three colours a person can
+   also learn by hovering a block, and on a phone it costs a whole row above a
+   calendar that already needs the height. The hour gutter narrows to fit
+   "08:00" and no more, and the blocks take the width back. */
+@media (max-width: 620px) {
+  .roomcal__legend { display: none; }
+  .roomcal__toolbar .input { max-inline-size: none; flex: 1; }
+  .roomcal__hours { inline-size: 34px; }
+  .roomcal__hourlabel { font-size: 10px; }
+  .roomcal__block, .roomcal__buffer, .roomcal__blackout { inset-inline: 4px; }
+  .roomcal__block { padding-inline: 6px; }
+  .roomcal__blocktitle { font-size: 12px; }
+  .roomcal__blockmeta { font-size: 10.5px; }
+}
 
 /* Past shading and the now-line -- purely visual, not a block type. Sits
    under bookings/buffers/blackouts (lower z-index) so a real event drawn
@@ -1990,4 +2191,3 @@ button, input, select, textarea { font: inherit; color: inherit; }
   display: grid; gap: var(--gap);
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   align-items: start;
-}

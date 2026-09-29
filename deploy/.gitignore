@@ -1,0 +1,16 @@
+# Nothing generated on an instance belongs in the repository.
+#
+# The real environment file lives at /etc/worood-hub/api.env and is generated
+# by ec2-bootstrap.sh. If a copy ever appears in this directory, it is a
+# mistake — and these rules mean it is a mistake that does not become a commit.
+
+*.env
+!deploy.env
+!env/*.env.example
+
+*.pem
+*.key
+*.dump
+*.sql.gz
+bootstrap.log
+release-*.log

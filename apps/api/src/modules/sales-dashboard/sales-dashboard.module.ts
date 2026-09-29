@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { CoreModule } from '../../core/core.module';
 import './descriptor';                    // side effect: registers the module
-import { ShopifyService, TokenManager, CostGovernor } from './shopify/shopify.service';
+import { ShopifyHealthTracker, ShopifyService, TokenManager, CostGovernor } from './shopify/shopify.service';
 import { ShopContext, SnapshotService } from './analytics/snapshot.service';
 import { MetricsService } from './metrics/metrics.service';
 import { CustomerMetricsService } from './metrics/customer-metrics.service';
@@ -26,7 +26,7 @@ import { SalesGateway } from './realtime/sales.gateway';
   imports: [CoreModule],
   controllers: [DashboardsController, PortletsController, WebhooksController, SyncController],
   providers: [
-    TokenManager, CostGovernor, ShopifyService,
+    ShopifyHealthTracker, TokenManager, CostGovernor, ShopifyService,
     ShopContext, SnapshotService, MetricsService, CustomerMetricsService, AbandonedCheckoutService, StoreCreditService, AccessService,
     WebhookProcessor, SyncService, BackfillService, SalesScheduler, SalesGateway,
   ],

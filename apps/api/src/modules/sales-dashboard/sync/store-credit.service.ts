@@ -266,6 +266,7 @@ export class StoreCreditService {
     const accountToCustomer = new Map<string, string>();
     const balances = new Map<string, { amount: number; currency: string }>();
     let written = 0;
+    let skipped = 0;
 
     const rl = createInterface({
       input: Readable.fromWeb(res.body as any), crlfDelay: Infinity });
@@ -299,7 +300,15 @@ export class StoreCreditService {
         if (!customerGid) continue;
         const customer = await one(
           `SELECT id FROM sd_customers WHERE shopify_gid = $1`, [customerGid]);
-        if (!customer) continue;
+        /* Counted, not silently dropped.
+        
+           A customer Shopify knows about but the mirror does not is not a
+           corrupt export -- it is an order backfill that has not run or has not
+           finished. Skipping in silence made that look like missing store
+           credit instead: the sync reported a number, the dashboard showed
+           fewer holders, and nothing said the two were describing different
+           populations. */
+        if (!customer) { skipped++; continue; }
 
         await this.writeTransaction(shop, customer.id, obj.__parentId, obj);
         written++;
@@ -333,6 +342,12 @@ export class StoreCreditService {
       this.log.warn(
         `${off} customers whose transactions do not sum to their Shopify balance — ` +
         `the ledger is missing rows, not merely stale`);
+    }
+
+    if (skipped) {
+      this.log.warn(
+        `store credit: skipped ${skipped} transactions for customers not in the ` +
+        `mirror — run the order backfill first, then re-run this`);
     }
 
     this.log.log(`store credit: ${written} transactions, ${balances.size} accounts`);

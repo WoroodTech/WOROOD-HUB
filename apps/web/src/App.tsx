@@ -6,6 +6,7 @@ import { Login } from './pages/Login';
 import { Home } from './pages/Home';
 import { BookRoom } from './pages/BookRoom';
 import { MyReservations } from './pages/MyReservations';
+import { Invitation } from './pages/Invitation';
 import { ManageRooms } from './pages/ManageRooms';
 import { People } from './pages/People';
 import { Departments } from './pages/Departments';
@@ -49,6 +50,8 @@ export function App() {
             end, which is what these three were before. */}
         <Route path="/meeting-rooms/book" element={<BookRoom />} />
         <Route path="/meeting-rooms/reservations" element={<MyReservations />} />
+
+        <Route path="/meeting-rooms/invitations/:id" element={<Invitation />} />
         <Route path="/meeting-rooms/admin" element={<ManageRooms />} />
 
         {/* The administration console. The links are permission-gated in the

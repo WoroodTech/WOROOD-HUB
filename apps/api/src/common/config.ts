@@ -25,6 +25,36 @@ export const config = {
     lockoutMinutes: 15,
   },
 
+  /**
+   * Where the portal lives, for links in emails.
+   *
+   * An email is read outside the application, so a relative path means nothing
+   * in it. Falls back to the CORS origin, which is the same hostname in every
+   * deployment and saves a second variable that could disagree with the first.
+   */
+  portalUrl: (process.env.PORTAL_URL
+    || process.env.CORS_ORIGIN
+    || 'http://localhost:5173').replace(/\/$/, ''),
+
+  /**
+   * Email, through SES.
+   *
+   * Off unless `MAIL_ENABLED=true`, and off is a working state rather than a
+   * misconfiguration: a developer's machine has no instance role, and booking a
+   * meeting should not require an AWS account. Notifications still appear in
+   * the portal; only the email is skipped, and the reason is recorded on the
+   * notification row so it is visible rather than assumed.
+   *
+   * No credentials here. The instance carries an IAM role and the SDK reads it
+   * from the metadata service -- nothing to leak, nothing to rotate.
+   */
+  mail: {
+    enabled: process.env.MAIL_ENABLED === 'true',
+    region: process.env.AWS_REGION || 'eu-west-1',
+    from: process.env.MAIL_FROM || 'technology@worood.co',
+    fromName: process.env.MAIL_FROM_NAME || 'WOROOD HUB',
+  },
+
   shopify: {
     shopDomain: process.env.SHOPIFY_SHOP_DOMAIN || 'worood-designs.myshopify.com',
     apiVersion: process.env.SHOPIFY_API_VERSION || '2026-07',
@@ -36,13 +66,19 @@ export const config = {
     // Accepted alongside clientSecret during rotation: Shopify can take up to
     // an hour to start signing with a newly rotated secret.
     previousClientSecret: process.env.SHOPIFY_PREVIOUS_CLIENT_SECRET || '',
-    // 'client_credentials' | 'offline' | 'fixture'
-    tokenStrategy: process.env.SHOPIFY_TOKEN_STRATEGY || 'fixture',
+    /* 'client_credentials' | 'offline'.
+     *
+     * The default was 'fixture', which replayed JSON captured read-only from
+     * the store. That was the right default while the Dev Dashboard app did not
+     * exist and the dashboards had to be built against something. It is the
+     * wrong one now: a deployment missing its credentials would start, look
+     * healthy, and serve figures from a file nobody remembered was there.
+     *
+     * Failing to start is the better outcome -- see the check below. */
+    tokenStrategy: process.env.SHOPIFY_TOKEN_STRATEGY || 'client_credentials',
     offlineAccessToken: process.env.SHOPIFY_OFFLINE_TOKEN || '',
     /** Advanced plan. Configuration, so a plan change is an edit not a defect. */
     costRestoreRate: parseInt(process.env.SHOPIFY_COST_RESTORE_RATE || '200', 10),
-    fixtureDir: process.env.SHOPIFY_FIXTURE_DIR ||
-      require('node:path').join(__dirname, '../../../../fixtures/shopify'),
 
     /**
      * Where Shopify should deliver webhooks. It must be a public HTTPS address:
@@ -66,9 +102,7 @@ export const config = {
      * never updated itself, and had to discover an undocumented environment
      * variable to fix it. Nothing about that is safer; it is just quieter.
      *
-     * The real guard is the token strategy. In fixture mode the scheduler does
-     * not start at all, so an unconfigured checkout still makes no outbound
-     * calls. Set this to `false` explicitly to opt out with live credentials --
+     * Set this to `false` explicitly to opt out --
      * worth doing when two machines point at the same store, since both would
      * otherwise reconcile and spend the rate-limit budget twice for one set of
      * numbers.
@@ -88,3 +122,27 @@ export const config = {
 
   portalOrigin: process.env.PORTAL_ORIGIN || 'http://localhost:5173',
 };
+
+/**
+ * Refuse to start without Shopify credentials.
+ *
+ * There used to be a fixture source to fall back on, so a missing client id was
+ * survivable -- the dashboards filled with captured JSON and somebody noticed
+ * eventually. With the fixtures gone there is no fallback, and the failure mode
+ * without this check is the quietest kind there is: the service starts, every
+ * sync fails in a log nobody is reading, and the dashboards show an empty store.
+ *
+ * Failing at boot is louder and cheaper. A deployment that cannot work should
+ * say so while somebody is still watching it deploy.
+ */
+if (config.mail.enabled && !config.mail.from.includes('@')) {
+  throw new Error('MAIL_FROM must be an address SES has verified for this domain.');
+}
+
+if (config.shopify.tokenStrategy === 'client_credentials'
+    && (!config.shopify.clientId || !config.shopify.clientSecret)) {
+  throw new Error(
+    'SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET are required. ' +
+    'Set them in the environment, or set SHOPIFY_TOKEN_STRATEGY=offline to run ' +
+    'the portal without the sales module talking to Shopify.');
+}

@@ -60,6 +60,10 @@ export function SalesDashboard() {
   }, [data]);
 
   const staleAfter = (data?.staleAfterMinutes ?? 0) * 60;
+  /* `connection` is sent on every response, so its absence means an older API
+     rather than a healthy one -- treated as healthy, because a banner that
+     appears after a partial deploy is worse than one that briefly does not. */
+  const offline = data?.connection ? !data.connection.live && !!data.connection.degradedSince : false;
   const stale = age !== null && staleAfter > 0 && age > staleAfter;
   const generatedAt = data?.widgets.find((w) => w.generatedAt)?.generatedAt ?? null;
 
@@ -152,7 +156,28 @@ export function SalesDashboard() {
         </div>
       ) : null}
 
-      {stale ? (
+      {/* The connection banner comes before the staleness one and replaces it.
+          Both would otherwise appear together saying the same thing twice --
+          figures are old *because* Shopify is unreachable -- and the second
+          would send the reader to a Refetch button that cannot help. */}
+      {offline ? (
+        <p className="banner banner--offline" role="status">
+          <Icon name="warning" size={18} />
+          <span>
+            <strong>
+              Shopify has been unreachable since {formatDateTime(data!.connection!.degradedSince!)}.
+            </strong>{' '}
+            These are the last figures received, not the current ones. They will
+            catch up on their own once the connection returns — nothing needs to
+            be re-run.
+            {data!.connection!.lastError ? (
+              <span className="banner__detail">{data!.connection!.lastError}</span>
+            ) : null}
+          </span>
+        </p>
+      ) : null}
+
+      {stale && !offline ? (
         <p className="banner banner--stale" role="status">
           <Icon name="warning" size={18} />
           <span>
