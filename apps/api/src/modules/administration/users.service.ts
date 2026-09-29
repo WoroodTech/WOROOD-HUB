@@ -28,6 +28,7 @@ import type { Principal } from '../../common/auth';
 import { AuditService } from '../../core/core.module';
 import { CORE_PERMISSIONS } from './permissions';
 import { assertNotSelf, assertSomebodyIsLeft, rolesGrantUserManage } from './guards';
+import { assertDepartmentKeepsAManager } from './departments.service';
 import type {
   CreateUser, ListUsersQuery, SetPassword, SetUserDashboards, UpdateUser,
 } from './dto';
@@ -40,6 +41,9 @@ export interface UserSummary {
   roles: Array<{ id: string; key: string; name: string }>;
   /** Whether this account can reach the administration console. */
   isAdministrator: boolean;
+  /** Departments this person RUNS -- a different question from the one they
+   *  belong to, and the one the People screen now asks alongside roles. */
+  managedDepartments: Array<{ id: string; name: string }>;
 }
 
 export interface UserDetail extends UserSummary {
@@ -68,7 +72,18 @@ const USER_SELECT = `
              JOIN core_role_permissions rp ON rp.role_id = ur.role_id
              JOIN core_permissions p       ON p.id = rp.permission_id
             WHERE ur.user_id = u.id AND p.key = 'core.user.manage'
-         ) AS is_administrator
+         ) AS is_administrator,
+         /* Which departments this person RUNS, which is a different question
+            from which one they belong to. Returned here so the People screen
+            can ask it in the same place it asks about roles -- an org chart
+            edited on a screen nobody opens while adding an employee is an org
+            chart that goes stale. */
+         COALESCE(
+           (SELECT json_agg(json_build_object('id', md.id, 'name', md.name) ORDER BY md.name)
+              FROM core_department_managers m
+              JOIN core_departments md ON md.id = m.department_id
+             WHERE m.user_id = u.id),
+           '[]'::json) AS managed_departments
     FROM core_users u
     LEFT JOIN core_departments d ON d.id = u.department_id
    WHERE u.deleted_at IS NULL`;
@@ -81,6 +96,7 @@ const toSummary = (r: any): UserSummary => ({
   createdAt: new Date(r.created_at).toISOString(),
   roles: r.roles ?? [],
   isAdministrator: !!r.is_administrator,
+  managedDepartments: r.managed_departments ?? [],
 });
 
 @Injectable()
@@ -217,6 +233,18 @@ export class AdminUsersService {
     if (dto.status === 'SUSPENDED') {
       assertNotSelf(actor.id, id, 'suspend');
       await assertSomebodyIsLeft(id, false, 'Suspending this account');
+      /* A suspended account cannot sign in, so a department whose only manager
+         is suspended is as unreachable as one with none -- and nothing would
+         say so until somebody raised a ticket into it and waited. */
+      await assertDepartmentKeepsAManager(null, [id], 'Suspending this account');
+    }
+    if (dto.departmentId !== undefined && dto.departmentId !== before.departmentId) {
+      /* Moving somebody out of a department they run leaves them managing a
+         team they are no longer part of, and the assign picker only offers a
+         department's own members -- so they would see a queue with nobody to
+         put on it. */
+      await assertDepartmentKeepsAManager(before.departmentId ?? null, [id],
+        'Moving this person to another department');
     }
     if (dto.roleIds !== undefined) {
       await this.assertRolesExist(dto.roleIds);
@@ -354,6 +382,7 @@ export class AdminUsersService {
     const before = await this.get(id);
     assertNotSelf(actor.id, id, 'delete');
     await assertSomebodyIsLeft(id, false, 'Deleting this account');
+    await assertDepartmentKeepsAManager(null, [id], 'Deleting this account');
 
     await tx(async (c) => {
       await c.query(

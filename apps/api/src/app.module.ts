@@ -4,6 +4,7 @@ import { CoreModule } from './core/core.module';
 import { AdministrationModule } from './modules/administration/administration.module';
 import { MeetingRoomsModule } from './modules/meeting-rooms/meeting-rooms.module';
 import { SalesDashboardModule } from './modules/sales-dashboard/sales-dashboard.module';
+import { TasksModule } from './modules/tasks/tasks.module';
 import { JwtAuthGuard, PermissionsGuard } from './common/auth';
 
 /**
@@ -14,7 +15,7 @@ import { JwtAuthGuard, PermissionsGuard } from './common/auth';
  * Guards are global and ordered: identity first, then authorisation.
  */
 @Module({
-  imports: [CoreModule, AdministrationModule, MeetingRoomsModule, SalesDashboardModule],
+  imports: [CoreModule, AdministrationModule, MeetingRoomsModule, SalesDashboardModule, TasksModule],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },

@@ -33,6 +33,80 @@ import { formatDateTime } from '../lib/format';
 
 const MIN_PASSWORD = 12;
 
+/**
+ * Running a department, asked in the place somebody is already standing.
+ *
+ * It is deliberately NOT a role. A role is company-wide, so a "Manager" role
+ * would let whoever held it hand out work inside every department in the
+ * company — there is nowhere in a role to say "but only Marketing". Authority
+ * is therefore attached to the department, in `core_department_managers`, and
+ * the tree decides its scope.
+ *
+ * That reasoning is sound and it is not the administrator's problem. They are
+ * adding an employee and they think "she runs Customer Care", so the question
+ * is asked here rather than on a screen they would have to remember to visit.
+ * Administration → Departments remains the place to see the whole org chart at
+ * once and to spot a department that has lost its last manager.
+ *
+ * Saved immediately rather than on the form's Save, because it is not a column
+ * on this person: it is a row in another table, with rails of its own that have
+ * to answer straight away.
+ */
+function RunsDepartment({ user }: { user: AdminUserDetail }) {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const runsOwn = user.managedDepartments.some((d) => d.id === user.departmentId);
+  const elsewhere = user.managedDepartments.filter((d) => d.id !== user.departmentId);
+
+  const toggle = useMutation({
+    mutationFn: (on: boolean) => api(
+      `/admin/departments/${user.departmentId}/managers${on ? '' : `/${user.id}`}`,
+      on ? { method: 'POST', body: { userId: user.id } } : { method: 'DELETE' }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: qk.adminUser(user.id) });
+      void queryClient.invalidateQueries({ queryKey: ['admin', 'departments'] });
+    },
+    onError: (e) => toast.push(e instanceof Error ? e.message : 'Could not change it.', 'warning'),
+  });
+
+  return (
+    <>
+      <h3 className="formsection">Runs a department</h3>
+      {!user.departmentId ? (
+        <p className="hint">
+          Give them a department above first. Somebody can only run a department they are in —
+          the assign picker offers a department's own members, so a manager from outside would
+          see a queue with nobody to put on it.
+        </p>
+      ) : (
+        <>
+          <label className="checkline">
+            <input
+              type="checkbox" checked={runsOwn} disabled={toggle.isPending}
+              onChange={(e) => toggle.mutate(e.target.checked)}
+            />
+            <span>
+              <strong>Runs {user.department}.</strong>
+              <span className="hint">
+                {' '}Tickets raised to {user.department} land in their queue, and they decide who
+                does each one — there and in any department underneath it. This is not a role and
+                gives them nothing anywhere else. More than one person may run a department, which
+                is how cover during leave works.
+              </span>
+            </span>
+          </label>
+          {elsewhere.length > 0 ? (
+            <p className="hint">
+              Also runs {elsewhere.map((d) => d.name).join(', ')} — change that from
+              Administration → Departments.
+            </p>
+          ) : null}
+        </>
+      )}
+    </>
+  );
+}
+
 export function People() {
   const { principal } = useAuth();
   const toast = useToast();
@@ -332,7 +406,9 @@ function PersonPanel({ userId, roles, departments, onChanged, onDeleted }: {
 
         <h3 className="formsection">Roles</h3>
         <p className="hint">
-          Roles decide what they can <em>do</em>. Dashboards are assigned separately, below.
+          Roles decide what they can <em>do</em>, everywhere in the company. Dashboards are
+          assigned separately, below, and running a department is separate again — see under
+          the roles.
         </p>
         <div className="chiplist">
           {roles.map((r) => {
@@ -355,6 +431,8 @@ function PersonPanel({ userId, roles, departments, onChanged, onDeleted }: {
             );
           })}
         </div>
+
+        <RunsDepartment user={user} />
 
         {save.error ? (
           <p className="notice notice--error">
@@ -558,22 +636,35 @@ function NewPersonDialog({ roles, departments, onClose, onCreated }: {
   const [form, setForm] = useState({
     email: '', fullName: '', fullNameAr: '', jobTitle: '',
     departmentId: '', password: '', roleIds: [] as string[],
+    runsDepartment: false,
   });
   const set = (patch: Partial<typeof form>) => setForm({ ...form, ...patch });
 
   const create = useMutation({
-    mutationFn: () => api<AdminUserDetail>('/admin/users', {
-      method: 'POST',
-      body: {
-        email: form.email.trim(),
-        fullName: form.fullName.trim(),
-        fullNameAr: form.fullNameAr.trim() || undefined,
-        jobTitle: form.jobTitle.trim() || undefined,
-        departmentId: form.departmentId || undefined,
-        password: form.password,
-        roleIds: form.roleIds,
-      },
-    }),
+    mutationFn: async () => {
+      const user = await api<AdminUserDetail>('/admin/users', {
+        method: 'POST',
+        body: {
+          email: form.email.trim(),
+          fullName: form.fullName.trim(),
+          fullNameAr: form.fullNameAr.trim() || undefined,
+          jobTitle: form.jobTitle.trim() || undefined,
+          departmentId: form.departmentId || undefined,
+          password: form.password,
+          roleIds: form.roleIds,
+        },
+      });
+      /* A second call rather than a field on the user, because running a
+         department is a row in another table and not a column on this person.
+         It follows the account rather than being part of it: if it fails, an
+         employee still exists and can be made a manager from Departments,
+         whereas folding it into the create would lose the account too. */
+      if (form.runsDepartment && form.departmentId) {
+        await api(`/admin/departments/${form.departmentId}/managers`,
+          { method: 'POST', body: { userId: user.id } });
+      }
+      return user;
+    },
     onSuccess: onCreated,
   });
 
@@ -631,6 +722,20 @@ function NewPersonDialog({ roles, departments, onClose, onCreated }: {
               </span>
             </label>
           </div>
+
+          {form.departmentId ? (
+            <label className="checkline">
+              <input type="checkbox" checked={form.runsDepartment}
+                     onChange={(e) => set({ runsDepartment: e.target.checked })} />
+              <span>
+                <strong>They run this department.</strong>
+                <span className="hint">
+                  {' '}Tickets raised to it land in their queue and they decide who does each one.
+                  This is not a role and gives them nothing in any other department.
+                </span>
+              </span>
+            </label>
+          ) : null}
 
           <h3 className="formsection">Roles</h3>
           <div className="chiplist">

@@ -23,10 +23,11 @@ import { CoreModule } from '../../core/core.module';
 import { CORE_PERMISSIONS } from './permissions';
 import {
   CreateUser, ListUsersQuery, SetPassword, SetRolePermissions,
-  SetUserDashboards, UpdateUser, UpsertRole,
+  SetDepartmentManager, SetUserDashboards, UpdateUser, UpsertRole,
 } from './dto';
 import { AdminUsersService } from './users.service';
 import { AdminRolesService } from './roles.service';
+import { AdminDepartmentsService } from './departments.service';
 
 export const ADMINISTRATION_MODULE = registerHubModule({
   key: 'administration',
@@ -41,6 +42,11 @@ export const ADMINISTRATION_MODULE = registerHubModule({
       requiresAnyPermission: [CORE_PERMISSIONS.USER_MANAGE] },
     { label: 'Roles', labelAr: 'الأدوار', path: '/admin/roles', icon: 'lock',
       requiresAnyPermission: [CORE_PERMISSIONS.ROLE_MANAGE] },
+    /* Added with Module 3, which made the org chart load-bearing: who runs a
+       department decides who may hand work out, and until this screen it could
+       only be changed in SQL. */
+    { label: 'Departments', labelAr: 'الإدارات', path: '/admin/departments', icon: 'globe',
+      requiresAnyPermission: [CORE_PERMISSIONS.USER_MANAGE] },
   ],
   // Nothing on the home screen: administration is a place you go, not a thing
   // that should be watching you from your dashboard every morning.
@@ -59,6 +65,7 @@ export class AdministrationController {
   constructor(
     private readonly users: AdminUsersService,
     private readonly roles: AdminRolesService,
+    private readonly depts: AdminDepartmentsService,
   ) {}
 
   /* --------------------------------------------------------------- people */
@@ -115,6 +122,32 @@ export class AdministrationController {
   @Permissions(CORE_PERMISSIONS.USER_MANAGE)
   async dashboards() { return { dashboards: await this.users.dashboards() }; }
 
+  /* ---------------------------------------------------- department heads */
+
+  @Get('departments/overview')
+  @Permissions(CORE_PERMISSIONS.USER_MANAGE)
+  departmentOverview() { return this.depts.list(); }
+
+  @Get('departments/:id/candidates')
+  @Permissions(CORE_PERMISSIONS.USER_MANAGE)
+  async departmentCandidates(@Param('id', ParseUUIDPipe) id: string) {
+    return { candidates: await this.depts.candidates(id) };
+  }
+
+  @Post('departments/:id/managers')
+  @Permissions(CORE_PERMISSIONS.USER_MANAGE)
+  addManager(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string,
+             @Body() dto: SetDepartmentManager) {
+    return this.depts.addManager(p, id, dto.userId);
+  }
+
+  @Delete('departments/:id/managers/:userId')
+  @Permissions(CORE_PERMISSIONS.USER_MANAGE)
+  removeManager(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string,
+                @Param('userId', ParseUUIDPipe) userId: string) {
+    return this.depts.removeManager(p, id, userId);
+  }
+
   /* ---------------------------------------------------------------- roles */
 
   /* Readable with either permission: the people screen has to show which roles
@@ -165,6 +198,6 @@ export class AdministrationController {
 @Module({
   imports: [CoreModule],
   controllers: [AdministrationController],
-  providers: [AdminUsersService, AdminRolesService],
+  providers: [AdminUsersService, AdminRolesService, AdminDepartmentsService],
 })
 export class AdministrationModule {}
