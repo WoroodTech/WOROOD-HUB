@@ -23,9 +23,11 @@ import { CoreModule } from '../../core/core.module';
 import { TASK_PERMISSIONS } from './permissions';
 import { TasksService } from './tasks.service';
 import { TasksScheduler } from './scheduler.service';
+import { BoardService } from './board.service';
 import {
   AddComment, AddDependency, AssignTask, CreateTask, ListTasksQuery,
-  ManageContributor, ReasonOnly, ResolveTask, SetDue, TransferTask, UpdateRequest,
+  ManageContributor, MoveTask, PlanTask, ReasonOnly, ResolveTask, SetDue, TransferTask,
+  UpdateRequest,
 } from './dto';
 
 export const TASKS_MODULE = registerHubModule({
@@ -39,13 +41,24 @@ export const TASKS_MODULE = registerHubModule({
 
   navigation: [
     { label: 'Tasks & Tickets', labelAr: 'المهام والتذاكر', path: '/tasks', icon: 'check' },
-    /* ASSIGN is derived from managing a department rather than granted by a
-       role, so this entry appears for managers without anybody assigning them
-       anything. See loadPrincipal. */
-    { label: 'Department Queue', labelAr: 'طابور الإدارة', path: '/tasks/queue', icon: 'list',
+
+    /* The board. One entry for everybody: a manager sees their department's
+       work with a filter, an employee sees their own. The screen knows which
+       it is from who is asking, so two entries would be two names for the same
+       place. */
+    { label: 'Board', labelAr: 'اللوحة', path: '/tasks/board', icon: 'grip' },
+
+    /* Both gated on ASSIGN, which is derived from managing a department rather
+       than granted by a role -- so they appear for managers without anybody
+       having to assign a permission, and for nobody else.
+    
+       The old 'Department Queue' is gone: deciding what to do with a new
+       ticket is what the first of these is for, and two screens for one job
+       meant neither was the place to look. */
+    { label: 'Decisions', labelAr: 'قرارات', path: '/tasks/decisions', icon: 'list',
       requiresAnyPermission: [TASK_PERMISSIONS.ASSIGN] },
-    { label: 'All Tickets', labelAr: 'كل التذاكر', path: '/tasks/all', icon: 'database',
-      requiresAnyPermission: [TASK_PERMISSIONS.VIEW_ANY] },
+    { label: 'Department', labelAr: 'الإدارة', path: '/tasks/department', icon: 'activity',
+      requiresAnyPermission: [TASK_PERMISSIONS.ASSIGN] },
   ],
 
   /* No permission gate on the first two: every employee raises tickets and
@@ -82,7 +95,7 @@ export class TasksPortletsController {
 
 @Controller('tasks')
 export class TasksController {
-  constructor(private readonly tasks: TasksService, private readonly scheduler: TasksScheduler) {}
+  constructor(private readonly tasks: TasksService, private readonly scheduler: TasksScheduler, private readonly boards: BoardService) {}
 
   /* Pickers. Departments with no manager are filtered out at source rather
      than shown and refused: offering a destination nothing can come back from
@@ -105,6 +118,34 @@ export class TasksController {
   create(@CurrentUser() p: Principal, @Body() dto: CreateTask) { return this.tasks.create(p, dto); }
 
   /* :id is last among the GETs so it cannot swallow 'departments' or 'counts'. */
+  /* Declared ahead of the `:id` routes. Nest matches in order, and
+     `/tasks/board` would otherwise be read as a ticket whose id is "board" --
+     a 400 from the UUID pipe, on a route that exists. */
+  @Get('board')
+  board(@CurrentUser() p: Principal,
+        @Query('side') side: 'doing' | 'requested' = 'doing',
+        @Query('departmentId') departmentId?: string) {
+    return this.boards.managerBoard(p, side === 'requested' ? 'requested' : 'doing', departmentId);
+  }
+
+  @Get('decisions')
+  decisions(@CurrentUser() p: Principal, @Query('departmentId') departmentId?: string) {
+    return this.boards.decisions(p, departmentId);
+  }
+
+  @Get('board/mine')
+  myBoard(@CurrentUser() p: Principal) {
+    return this.boards.myBoard(p);
+  }
+
+  @Get('dashboard')
+  dashboard(@CurrentUser() p: Principal,
+            @Query('side') side: 'doing' | 'requested' = 'doing',
+            @Query('departmentId') departmentId?: string) {
+    return this.boards.managerDashboard(p, side === 'requested' ? 'requested' : 'doing', departmentId);
+  }
+
+
   @Get(':id')
   detail(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string) {
     return this.tasks.detail(p, id);
@@ -152,19 +193,41 @@ export class TasksController {
     return this.tasks.resolve(p, id, dto);
   }
 
-  @Post(':id/confirm')
+  @Post(':id/review/approve')
   confirm(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string) {
-    return this.tasks.confirm(p, id);
+    return this.tasks.approveReview(p, id);
   }
 
-  @Post(':id/reject-resolution')
-  rejectResolution(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ReasonOnly) {
-    return this.tasks.rejectResolution(p, id, dto);
+  @Post(':id/review/reject')
+  rejectReview(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ReasonOnly) {
+    return this.tasks.rejectReview(p, id, dto);
   }
 
-  @Post(':id/reopen')
-  reopen(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ReasonOnly) {
-    return this.tasks.reopen(p, id, dto);
+  /* Park it for a date, or park it for a reason. The two decisions a manager
+     makes most, and neither existed as a route before. */
+  /* Drag and drop. One route rather than the board choosing between plan,
+     hold and assign -- which would put a second copy of the lifecycle in the
+     browser. */
+  @Post(':id/move')
+  move(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: MoveTask) {
+    return this.tasks.move(p, id, dto);
+  }
+
+  @Post(':id/plan')
+  plan(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: PlanTask) {
+    return this.tasks.plan(p, id, dto);
+  }
+
+  @Post(':id/hold')
+  hold(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ReasonOnly) {
+    return this.tasks.hold(p, id, dto);
+  }
+
+  /* The assignee declares the implementation finished. The only route to
+     DONE. */
+  @Post(':id/complete')
+  complete(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string) {
+    return this.tasks.complete(p, id);
   }
 
   @Post(':id/comments')
@@ -205,6 +268,6 @@ export class TasksController {
 @Module({
   imports: [CoreModule],
   controllers: [TasksPortletsController, TasksController],
-  providers: [TasksService, TasksScheduler],
+  providers: [BoardService, TasksService, TasksScheduler],
 })
 export class TasksModule {}

@@ -12,7 +12,7 @@
  */
 import { Type } from 'class-transformer';
 import {
-  IsIn, IsInt, IsISO8601, IsOptional, IsString, IsUUID, MaxLength, Min, MinLength,
+  IsBoolean, IsIn, IsInt, IsISO8601, IsOptional, IsString, IsUUID, MaxLength, Min, MinLength,
 } from 'class-validator';
 
 export const PRIORITIES = ['LOW', 'NORMAL', 'HIGH', 'URGENT'] as const;
@@ -31,6 +31,18 @@ export class CreateTask {
    * to hand you back your own note would be theatre.
    */
   @IsOptional() @IsUUID() assignToSelf?: string;
+
+  /**
+   * Skip the review step: the work goes straight from being finished to being
+   * carried out.
+   *
+   * Decided here and nowhere else — the database refuses to change it after
+   * insert. A ticket whose review requirement could be removed mid-flight has
+   * no review requirement, because it would be removed on exactly the tickets
+   * where review was about to be inconvenient.
+   */
+  @IsOptional() @IsBoolean()
+  fastTrack?: boolean;
 }
 
 export class UpdateRequest {
@@ -103,4 +115,40 @@ export class ListTasksQuery {
 
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) page?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) pageSize?: number;
+}
+
+/** Planning takes a date and nothing else. The note is optional because the
+ *  date usually says it all -- "next Tuesday" needs no explanation the way
+ *  "on hold" does. */
+export class PlanTask {
+  @IsISO8601()
+  plannedFor!: string;
+
+  @IsOptional() @IsString() @MaxLength(500)
+  note?: string;
+}
+
+/**
+ * A card dropped on another column.
+ *
+ * The extra fields are optional because a drop cannot know it needs them until
+ * it lands: dropping on Planning needs a date, on On hold a reason, on Assigned
+ * a person. The API refuses and says which, and the board opens the dialog —
+ * rather than the board holding its own copy of which columns need what.
+ */
+export class MoveTask {
+  /* Where a card may be dropped.
+  
+     IMPLEMENTATION and DONE are absent on purpose and not for want of a
+     dialog: approval is the requester's judgement of work they asked for, and
+     "it is in place" is something only the person who put it there can say.
+     Neither is a manager's to declare by moving a card. */
+  @IsIn(['PLANNING', 'ON_HOLD', 'ASSIGNED', 'IN_PROGRESS', 'FOR_REVIEW'])
+  to!: string;
+
+  @IsOptional() @IsISO8601() plannedFor?: string;
+  @IsOptional() @IsString() @MaxLength(500) reason?: string;
+  @IsOptional() @IsUUID() assigneeId?: string;
+  /** What was done, when dropping on For review. */
+  @IsOptional() @IsString() @MinLength(3) @MaxLength(2000) resolution?: string;
 }

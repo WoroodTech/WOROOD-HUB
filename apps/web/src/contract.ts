@@ -444,8 +444,8 @@ export const PERMISSIONS = {
 /* ======================================================= tasks & tickets == */
 
 export type TaskStatus =
-  | 'NEW' | 'ASSIGNED' | 'IN_PROGRESS' | 'BLOCKED'
-  | 'RESOLVED' | 'CLOSED' | 'REJECTED' | 'CANCELLED';
+  | 'NEW' | 'PLANNING' | 'ON_HOLD' | 'ASSIGNED' | 'IN_PROGRESS' | 'BLOCKED'
+  | 'FOR_REVIEW' | 'IMPLEMENTATION' | 'DONE' | 'REJECTED' | 'CANCELLED';
 
 export type TaskPriority = 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
 
@@ -482,8 +482,14 @@ export interface TaskAccessFlags {
   canEditRequest: boolean; canCancel: boolean;
   canAssign: boolean; canTransfer: boolean; canReject: boolean;
   canManageContributors: boolean;
+  canPlan: boolean; canHold: boolean;
   canWork: boolean; canAddDependency: boolean; canResolve: boolean;
-  canConfirmResolution: boolean; canReopen: boolean; canComment: boolean;
+  canApproveReview: boolean; canRejectReview: boolean; canComplete: boolean;
+  /** After work is sent back the assignee owes a new date before anything else
+   *  is possible. The screen insists rather than letting the ticket sit there
+   *  looking normal with no commitment on it. */
+  mustSetNewDueDate: boolean;
+  canComment: boolean;
 }
 
 export interface TaskParticipant {
@@ -546,4 +552,59 @@ export interface TaskPerson {
 
 export interface TasksPortlet {
   items: TaskSummary[]; total: number; counts: TaskCounts;
+}
+
+/* ------------------------------------------------------------ ticket board -- */
+
+/** One card. Fat on purpose: a manager scanning a board should not have to open
+ *  a ticket to know whether it needs them. */
+export interface BoardCard {
+  id: string; reference: string; title: string;
+  status: TaskStatus; priority: TaskPriority; slaState: string;
+  dueAt: string | null; plannedFor: string | null; createdAt: string;
+  overdueSince: string | null;
+  fastTrack: boolean; reviewRejectionCount: number;
+  requesterName: string; assigneeName: string | null; assigneeId: string | null;
+  departmentName: string; requesterDepartmentName: string | null;
+  departmentId: string;
+  waitingOn: number;
+  /** False on the requesting department's view: they may look, not steer. */
+  draggable: boolean;
+}
+
+export interface BoardColumnData {
+  key: string;
+  cards: BoardCard[];
+  droppable: boolean;
+}
+
+export interface BoardResponse {
+  side: 'doing' | 'requested';
+  departments: Array<{ id: string; name: string }>;
+  columns: BoardColumnData[];
+  empty: 'notAManager' | null;
+}
+
+export interface MyBoardResponse {
+  columns: BoardColumnData[];
+  /** Tickets I raised that are sitting in review — waiting on me, but not
+   *  assigned to me, so they appear on no column of this board. */
+  awaitingMyReview: number;
+}
+
+export interface TicketDashboardResponse {
+  side: 'doing' | 'requested';
+  departments: Array<{ id: string; name: string }>;
+  empty: 'notAManager' | null;
+  totals: {
+    total: number; unassigned: number; planning: number; onHold: number;
+    assigned: number; inProgress: number; blocked: number; forReview: number;
+    implementation: number; done: number; cancelled: number; delayed: number;
+    fastTracked: number; sentBackAtLeastOnce: number;
+  } | null;
+  people: Array<{
+    id: string; name: string;
+    active: number; inProgress: number; blocked: number;
+    forReview: number; implementation: number; done: number; delayed: number;
+  }>;
 }

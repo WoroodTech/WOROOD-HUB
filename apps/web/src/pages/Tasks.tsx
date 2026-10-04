@@ -31,15 +31,29 @@ import { formatDate } from '../lib/format';
 
 type Scope = 'assigned' | 'requested' | 'contributing' | 'queue' | 'department' | 'all';
 
+/* Named for what somebody is waiting for, not for the state machine. A person
+   reading a board wants to know whose move it is. */
 export const STATUS_LABEL: Record<string, string> = {
-  NEW: 'Awaiting assignment', ASSIGNED: 'Assigned', IN_PROGRESS: 'In progress',
-  BLOCKED: 'Blocked', RESOLVED: 'Resolved', CLOSED: 'Closed',
+  NEW: 'Awaiting assignment', PLANNING: 'Planned', ON_HOLD: 'On hold',
+  ASSIGNED: 'Assigned', IN_PROGRESS: 'In progress', BLOCKED: 'Waiting on another team',
+  FOR_REVIEW: 'For review', IMPLEMENTATION: 'Being carried out', DONE: 'Done',
   REJECTED: 'Not accepted', CANCELLED: 'Cancelled',
+  /* Not a status. The board draws this column from slaState, and the card keeps
+     showing the real one underneath. */
+  DELAYED: 'Delayed',
+};
+
+/** Short forms, for a board column header where the long name wraps. */
+export const STATUS_SHORT: Record<string, string> = {
+  ...STATUS_LABEL,
+  NEW: 'Unassigned', BLOCKED: 'Blocked', IMPLEMENTATION: 'Carrying out',
 };
 
 export const STATUS_TONE: Record<string, 'neutral' | 'good' | 'warning' | 'critical' | 'info' | 'accent'> = {
-  NEW: 'warning', ASSIGNED: 'info', IN_PROGRESS: 'accent', BLOCKED: 'critical',
-  RESOLVED: 'good', CLOSED: 'neutral', REJECTED: 'neutral', CANCELLED: 'neutral',
+  NEW: 'warning', PLANNING: 'info', ON_HOLD: 'warning', ASSIGNED: 'info',
+  IN_PROGRESS: 'accent', BLOCKED: 'critical', FOR_REVIEW: 'warning',
+  IMPLEMENTATION: 'accent', DONE: 'good',
+  REJECTED: 'neutral', CANCELLED: 'neutral', DELAYED: 'critical',
 };
 
 export const PRIORITY_TONE: Record<string, 'neutral' | 'warning' | 'critical'> = {
@@ -248,6 +262,7 @@ function NewTicket({ onClose }: { onClose: () => void }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState<TaskPriority>('NORMAL');
+  const [fastTrack, setFastTrack] = useState(false);
   const [departmentId, setDepartmentId] = useState('');
   const [forMyself, setForMyself] = useState(false);
 
@@ -261,6 +276,7 @@ function NewTicket({ onClose }: { onClose: () => void }) {
         title, description: description || undefined, priority,
         departmentId: target || undefined,
         assignToSelf: forMyself ? principal?.id : undefined,
+        fastTrack: fastTrack || undefined,
       },
     }),
     onSuccess: (t) => {
@@ -343,6 +359,23 @@ function NewTicket({ onClose }: { onClose: () => void }) {
               Urgency is yours to state. The date is theirs to commit to — they set it when they pick it up.
             </span>
           </div>
+
+          {/* Decided here and nowhere else. The database refuses to change it
+              once the ticket exists, because a review requirement that can be
+              dropped mid-flight would be dropped on exactly the tickets where
+              review was about to be inconvenient. */}
+          <label className="checkline">
+            <input type="checkbox" checked={fastTrack}
+                   onChange={(e) => setFastTrack(e.target.checked)} />
+            <span>
+              <strong>Fast-track it.</strong>
+              <span className="hint">
+                {' '}Skips your review: when the work is finished it goes straight
+                to being carried out, and you are told once it is done. This
+                cannot be turned on or off later.
+              </span>
+            </span>
+          </label>
         </div>
 
         <footer className="modal__foot">

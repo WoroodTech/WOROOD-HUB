@@ -447,7 +447,7 @@ function TaskCardList({ data, empty, emptyHint }: {
             </span>
             {t.slaState === 'OVERDUE'
               ? <Badge tone="critical" icon="warning">Late</Badge>
-              : t.status === 'RESOLVED'
+              : t.status === 'FOR_REVIEW'
                 ? <Badge tone="good">Needs your nod</Badge>
                 : null}
           </Link>

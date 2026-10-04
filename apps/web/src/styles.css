@@ -2191,3 +2191,262 @@ button, input, select, textarea { font: inherit; color: inherit; }
   display: grid; gap: var(--gap);
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   align-items: start;
+}
+
+/* ============================================================ ticket board = */
+
+/* Each lifecycle state gets a colour, set once here and used by the column
+   header, the card's left edge and the status pill on a card. One source, so a
+   state cannot be amber on the board and grey on the ticket.
+
+   Chosen so they read in order rather than at random: cool while work is
+   waiting, warm while somebody holds it, green once it is out. */
+.board {
+  --st-new:      #b4552d;
+  --st-planning: #4b6b8a;
+  --st-hold:     #8a7250;
+  --st-assigned: #5a6b8a;
+  --st-progress: #2f6f8f;
+  --st-blocked:  #a4453f;
+  --st-review:   #97722a;
+  --st-impl:     #4a7a5e;
+  --st-done:     #4f7a52;
+  --st-delayed:  #a4453f;
+}
+
+.bcol--NEW            { --st: var(--st-new); }
+.bcol--PLANNING       { --st: var(--st-planning); }
+.bcol--ON_HOLD        { --st: var(--st-hold); }
+.bcol--ASSIGNED       { --st: var(--st-assigned); }
+.bcol--IN_PROGRESS    { --st: var(--st-progress); }
+.bcol--BLOCKED        { --st: var(--st-blocked); }
+.bcol--FOR_REVIEW     { --st: var(--st-review); }
+.bcol--IMPLEMENTATION { --st: var(--st-impl); }
+.bcol--DONE           { --st: var(--st-done); }
+.bcol--DELAYED        { --st: var(--st-delayed); }
+
+.board__controls {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-block-end: 14px;
+}
+.board__controls .input { max-inline-size: 220px; }
+
+/* Scrolls sideways rather than wrapping. Left to right IS the lifecycle, and a
+   board that wraps to a second row stops being readable as one. */
+.board__scroll {
+  display: flex; gap: 14px; overflow-x: auto; align-items: flex-start;
+  padding-block-end: 12px; scroll-snap-type: x proximity;
+}
+
+.bcol {
+  flex: 0 0 292px; scroll-snap-align: start;
+  display: flex; flex-direction: column;
+  border-radius: 12px; overflow: hidden;
+  /* A wash of the column's own colour, faint enough that the white cards stay
+     the thing you look at. */
+  background: color-mix(in srgb, var(--st) 6%, var(--surface-2));
+  border: 1px solid color-mix(in srgb, var(--st) 18%, var(--line));
+  max-block-size: calc(100vh - 230px);
+}
+.bcol--over {
+  border-color: var(--st);
+  background: color-mix(in srgb, var(--st) 13%, var(--surface-2));
+}
+
+.bcol__head {
+  display: flex; align-items: center; gap: 9px;
+  padding: 11px 12px; flex-shrink: 0;
+}
+
+/* The pill is the column's identity -- the reference design leads with it, and
+   it works because the eye finds a shape faster than a word. */
+.bcol__pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 11px 4px 9px; border-radius: 999px;
+  background: var(--st); color: #fff;
+  font-size: 11px; font-weight: 700; letter-spacing: .05em;
+  text-transform: uppercase; white-space: nowrap;
+}
+.bcol__dot {
+  inline-size: 8px; block-size: 8px; border-radius: 50%;
+  border: 2px solid currentColor;
+}
+.bcol--DONE .bcol__dot, .bcol--IMPLEMENTATION .bcol__dot { background: currentColor; }
+.bcol__count { font-size: 13px; font-weight: 700; color: var(--st); }
+
+.bcol__cards {
+  display: flex; flex-direction: column; gap: 9px;
+  padding: 0 10px 12px; overflow-y: auto;
+}
+
+/* ------------------------------------------------------------- the card -- */
+
+.tcard {
+  display: block; text-decoration: none; color: inherit;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 10px; padding: 11px 12px 9px;
+  box-shadow: var(--shadow-1);
+}
+.tcard:hover { border-color: color-mix(in srgb, var(--st, var(--accent)) 55%, var(--line)); }
+/* Grab, not pointer. A card that cannot move must not offer the gesture. */
+.tcard--grab { cursor: grab; }
+.tcard--grab:active { cursor: grabbing; box-shadow: var(--shadow-lg); }
+
+.tcard__title {
+  display: block; font-size: 13.5px; font-weight: 600; line-height: 1.4;
+  color: var(--ink);
+}
+
+/* Icons, then the people and the flag. Two rows rather than one because a
+   title plus six facts on one line is unreadable at 290px. */
+.tcard__signals {
+  display: flex; align-items: center; gap: 10px;
+  margin-block-start: 8px; color: var(--muted);
+}
+.tcard__signal { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; }
+.tcard__signal--warn { color: var(--warning-ink); }
+.tcard__signal--bad { color: var(--danger); }
+
+.tcard__foot {
+  display: flex; align-items: center; gap: 8px;
+  margin-block-start: 9px; padding-block-start: 9px;
+  border-block-start: 1px solid var(--line);
+}
+
+/* Initials rather than a name. At this width a name is either truncated or
+   takes the whole row, and initials plus a tooltip answer "whose is this" in
+   the space of a full stop. */
+.tcard__who {
+  inline-size: 24px; block-size: 24px; border-radius: 50%;
+  display: grid; place-items: center; flex-shrink: 0;
+  background: var(--accent-soft); color: var(--accent-ink);
+  font-size: 10px; font-weight: 700; letter-spacing: .02em;
+}
+.tcard__who--none {
+  background: transparent; color: var(--muted);
+  border: 1px dashed var(--line);
+}
+
+.tcard__date {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; color: var(--muted);
+}
+.tcard__date--late { color: var(--danger); font-weight: 650; }
+
+.tcard__flag {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-inline-start: auto; font-size: 11.5px; font-weight: 600;
+}
+.tcard__flag--LOW { color: var(--muted); }
+.tcard__flag--NORMAL { color: var(--info-ink); }
+.tcard__flag--HIGH { color: var(--warning-ink); }
+.tcard__flag--URGENT { color: var(--danger); }
+
+/* Only in the Delayed column, where the column header cannot say it. */
+.tcard__realstatus { display: block; margin-block-start: 8px; }
+
+.bcol__empty {
+  margin: 4px 0 8px; padding: 18px 10px; text-align: center;
+  color: var(--muted); font-size: 12px;
+  border: 1px dashed color-mix(in srgb, var(--st) 22%, var(--line));
+  border-radius: 9px;
+}
+
+/* ======================================================== decisions ======= */
+
+/* Three bordered containers, each a column of rows. Stacked down the page
+   because the screen is vertical and a manager reads them in order: what is
+   undecided, then what has a date, then what is parked. */
+.dgroup {
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface); overflow: hidden;
+  margin-block-end: 16px;
+}
+.dgroup__head {
+  padding: 13px 16px; border-block-end: 1px solid var(--line);
+  background: var(--surface-2);
+}
+.dgroup__title {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 14.5px; font-weight: 650; color: var(--ink);
+}
+/* No count beside the title. The rows are right there and countable, and a
+   number next to a heading is one more thing competing with the heading. */
+.dgroup__hint {
+  display: block; margin-block-start: 3px;
+  font-size: 12.5px; color: var(--muted); line-height: 1.45;
+}
+
+.drows { list-style: none; margin: 0; padding: 0; }
+.drow {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 16px; border-block-end: 1px solid var(--line);
+}
+.drow:last-child { border-block-end: 0; }
+/* The whole row lifts, not just the link: the row is what somebody aims at. */
+.drow:hover { background: var(--surface-2); }
+
+.drow__main {
+  flex: 1; min-inline-size: 0;
+  display: flex; flex-direction: column; gap: 3px;
+  text-decoration: none; color: inherit;
+}
+.drow__top { display: flex; align-items: center; gap: 8px; }
+.drow__ref { font-size: 11px; color: var(--muted); }
+.drow__flag {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 10.5px; color: var(--accent);
+}
+.drow__title {
+  font-size: 13.5px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.drow__meta { font-size: 11.5px; color: var(--muted); }
+
+/* Visible always, not on hover. A control that appears only under a pointer
+   does not exist on a touchscreen. */
+.drow__actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+/* A shape where the rows would be, rather than a sentence saying there are
+   none. It says "this is a list and it is empty" in one glance, and keeps the
+   three containers the same height while a manager scans them. */
+.dskeleton { padding: 8px 16px 14px; }
+.dskeleton__row {
+  display: flex; align-items: center; gap: 12px;
+  padding-block: 11px; border-block-end: 1px solid var(--line);
+}
+.dskeleton__row:last-child { border-block-end: 0; }
+.dskeleton__bar {
+  block-size: 9px; border-radius: 5px;
+  background: linear-gradient(90deg,
+    var(--surface-2) 0%,
+    color-mix(in srgb, var(--line) 60%, var(--surface-2)) 50%,
+    var(--surface-2) 100%);
+}
+.dskeleton__bar--title { inline-size: 42%; }
+.dskeleton__bar--meta { inline-size: 24%; block-size: 7px; }
+.dskeleton__note {
+  margin: 10px 0 0; text-align: center;
+  font-size: 12.5px; color: var(--muted);
+}
+
+/* ---------------------------------------------------------- dashboard -- */
+
+.kpi__value--bad { color: var(--danger); }
+.num { text-align: end; font-variant-numeric: tabular-nums; }
+.num--bad { color: var(--danger); font-weight: 650; }
+.modal__sub { margin: 0 0 12px; font-size: 13px; color: var(--muted); line-height: 1.5; }
+
+@media (max-width: 720px) {
+  /* Rows stack rather than squeeze: the buttons keep their labels, because
+     three unlabelled icons in a row is a quiz. */
+  .drow { flex-direction: column; align-items: stretch; gap: 10px; }
+  .drow__actions { justify-content: flex-start; flex-wrap: wrap; }
+}
+
+@media (max-width: 620px) {
+  /* Wide enough that the next column peeks in -- a board showing exactly one
+     column is a list, and the comparison is the point. */
+  .bcol { flex-basis: 80vw; max-block-size: none; }
+  .board__controls .input { max-inline-size: none; flex: 1; }
+}

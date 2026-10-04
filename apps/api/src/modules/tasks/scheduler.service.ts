@@ -19,7 +19,10 @@
  * briefly overlapping all produce the same answer.
  */
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { query } from '../../common/db';
+import { one, query } from '../../common/db';
+import { config } from '../../common/config';
+import { NotificationMailer } from '../../core/notifications.controller';
+import { ticketMail } from './ticket-mail';
 import { NotificationsService } from '../../core/core.module';
 
 const MODULE_KEY = 'tasks';
@@ -32,7 +35,9 @@ export class TasksScheduler implements OnModuleInit, OnModuleDestroy {
   private readonly log = new Logger(TasksScheduler.name);
   private timers: NodeJS.Timeout[] = [];
 
-  constructor(private readonly notifications: NotificationsService) {}
+  constructor(private readonly notifications: NotificationsService,
+    private readonly mailer: NotificationMailer,
+  ) {}
 
   onModuleInit() {
     this.every(SWEEP_INTERVAL_MS, 'sla sweep', () => this.sweep());
@@ -42,6 +47,40 @@ export class TasksScheduler implements OnModuleInit, OnModuleDestroy {
   onModuleDestroy() {
     for (const t of this.timers) clearInterval(t);
     this.timers = [];
+  }
+
+  /** The one SLA message that leaves the portal. */
+  private async emailOverdue(
+    notificationId: string, assigneeId: string, itemId: string, reference: string,
+  ): Promise<void> {
+    const [person] = await query<{ email: string }>(
+      `SELECT email FROM core_users
+        WHERE id = $1 AND deleted_at IS NULL AND status = 'ACTIVE'`, [assigneeId]);
+    if (!person?.email) return;
+
+    const item = await one<any>(
+      `SELECT t.reference, t.title, t.status, t.priority, t.due_at, t.planned_for,
+              d.name AS department, rd.name AS requester_department,
+              u.full_name AS requester_name
+         FROM tk_items t
+         JOIN core_departments d ON d.id = t.department_id
+    LEFT JOIN core_departments rd ON rd.id = t.requester_department_id
+         JOIN core_users u ON u.id = t.requester_id
+        WHERE t.id = $1`, [itemId]);
+    if (!item) return;
+
+    const mail = ticketMail({
+      reference: item.reference, title: item.title, status: item.status,
+      priority: item.priority, department: item.department,
+      requesterDepartment: item.requester_department,
+      requesterName: item.requester_name,
+      dueAt: item.due_at, plannedFor: item.planned_for,
+      heading: `Past its date: ${reference}`,
+      message: 'The date you committed to has passed. Set a new one, or say where it stands.',
+      url: `${config.portalUrl}/tasks/${itemId}`,
+    });
+
+    await this.mailer.deliver(notificationId, person.email, mail.subject, mail.html, mail.text);
   }
 
   private every(ms: number, name: string, run: () => Promise<unknown>) {
@@ -66,7 +105,13 @@ export class TasksScheduler implements OnModuleInit, OnModuleDestroy {
                        ELSE 'ON_TIME' END AS next
              FROM tk_items i
             WHERE i.due_at IS NOT NULL
-              AND i.status IN ('ASSIGNED','IN_PROGRESS','BLOCKED')
+              /* BLOCKED is deliberately absent. A ticket waiting on another
+                 department is not late -- the clock is stopped, and letting it
+                 tick would make somebody overdue for a week through no fault of
+                 theirs, then show them as the problem on their manager's
+                 board. FOR_REVIEW and IMPLEMENTATION are included: the work is
+                 still owed, it is simply at a later stage. */
+              AND i.status IN ('ASSIGNED','IN_PROGRESS','FOR_REVIEW','IMPLEMENTATION')
          ) AS s
         WHERE t.id = s.id AND t.sla_state IS DISTINCT FROM s.next
         RETURNING t.id, t.reference, t.assignee_id, t.sla_state AS state`);
@@ -77,15 +122,28 @@ export class TasksScheduler implements OnModuleInit, OnModuleDestroy {
         `INSERT INTO tk_events (item_id, actor_id, type, payload) VALUES ($1,NULL,$2,'{}'::jsonb)`,
         [row.id, row.state]);
       if (!row.assignee_id) continue;
+      const overdue = row.state === 'OVERDUE';
       try {
-        await this.notifications.notify(
+        const notificationId = await this.notifications.notify(
           row.assignee_id, MODULE_KEY,
-          row.state === 'OVERDUE' ? `Past its date: ${row.reference}` : `Due tomorrow: ${row.reference}`,
-          row.state === 'OVERDUE'
-            ? 'The date you committed to has passed. Move it, or say where it stands.'
+          overdue ? `Past its date: ${row.reference}` : `Due tomorrow: ${row.reference}`,
+          overdue
+            ? 'The date you committed to has passed. Set a new one, or say where it stands.'
             : 'The date you committed to is within a day.',
-          row.state === 'OVERDUE' ? 'WARNING' : 'INFO',
+          overdue ? 'WARNING' : 'INFO',
           `/tasks/${row.id}`);
+
+        /* Only the day it goes late, and only to the person holding it.
+        
+           "Due tomorrow" stays in the portal: it is a reminder, and a reminder
+           that emails everybody every evening is a reminder people filter. Going
+           overdue is different -- it is a commitment that has been missed, the
+           assignee is the one who can fix it, and nobody else will notice it on
+           a board until it is much later. */
+        if (overdue && notificationId) {
+          void this.emailOverdue(notificationId, row.assignee_id, row.id, row.reference)
+            .catch(() => undefined);
+        }
       } catch (e) {
         this.log.warn(`sla notification failed: ${(e as Error).message}`);
       }

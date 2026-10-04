@@ -11,7 +11,7 @@ import { registerHubModule } from '../../core/hub-registry';
  */
 export const SALES_DASHBOARD_MODULE = registerHubModule({
   key: 'sales-dashboard',
-  name: 'Sales Dashboard',
+  name: 'Worood Dashboard',
   nameAr: 'لوحة المبيعات',
   version: '1.0.0',
   apiPrefix: '/api/v1/sales',
@@ -22,7 +22,7 @@ export const SALES_DASHBOARD_MODULE = registerHubModule({
   // independent: an operations engineer holding only sales.sync.manage sees
   // Data & Sync and nothing else. That is intended, not an oversight.
   navigation: [
-    { label: 'Sales', labelAr: 'المبيعات', path: '/sales', icon: 'trending-up',
+    { label: 'Dashboards', labelAr: 'المبيعات', path: '/sales', icon: 'trending-up',
       requiresAnyPermission: ['sales.dashboard.view'] },
     { label: 'Orders', labelAr: 'الطلبات', path: '/sales/orders', icon: 'receipt',
       requiresAnyPermission: ['sales.order.view'] },

@@ -12,6 +12,9 @@ import { People } from './pages/People';
 import { Departments } from './pages/Departments';
 import { AllTasks, TaskQueue, Tasks } from './pages/Tasks';
 import { TaskDetailPage } from './pages/TaskDetail';
+import { TicketBoardPage } from './pages/TicketBoardPage';
+import { TicketDashboard } from './pages/TicketDashboard';
+import { TicketDecisions } from './pages/TicketDecisions';
 import { Roles } from './pages/Roles';
 import { SalesIndex } from './pages/SalesIndex';
 import { SalesDashboard } from './pages/SalesDashboard';
@@ -60,6 +63,11 @@ export function App() {
         <Route path="/tasks" element={<Tasks />} />
         <Route path="/tasks/queue" element={<TaskQueue />} />
         <Route path="/tasks/all" element={<AllTasks />} />
+        {/* Ahead of /tasks/:id — the router matches in order, and "board"
+            would otherwise be read as a ticket id. */}
+        <Route path="/tasks/board" element={<TicketBoardPage />} />
+        <Route path="/tasks/decisions" element={<TicketDecisions />} />
+        <Route path="/tasks/department" element={<TicketDashboard />} />
         <Route path="/tasks/:id" element={<TaskDetailPage />} />
 
         <Route path="/admin/people" element={<People />} />

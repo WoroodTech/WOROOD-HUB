@@ -24,7 +24,7 @@ import { closeDb, one, query } from '../src/common/db';
 import { config } from '../src/common/config';
 
 const BASE = `http://127.0.0.1:${config.port}/api/v1`;
-const OPEN = ['NEW', 'ASSIGNED', 'IN_PROGRESS', 'BLOCKED', 'RESOLVED'];
+const OPEN = ['NEW', 'PLANNING', 'ON_HOLD', 'ASSIGNED', 'IN_PROGRESS', 'BLOCKED', 'FOR_REVIEW', 'IMPLEMENTATION'];
 let pass = 0, fail = 0;
 const failures: string[] = [];
 
@@ -125,8 +125,10 @@ async function main() {
     outsider.status === 400, `got ${outsider.status}`);
 
   const assigned = await post(omnia, `/tasks/${ticket.id}/assign`, { assigneeId: youssefMe.id });
-  check('the manager assigns it to one of her own team',
-    assigned.status === 201 && assigned.body.status === 'ASSIGNED'
+  /* Assigning starts the work. There is no pause where somebody has been given
+     a ticket and has not yet pressed a button to admit it. */
+  check('assigning puts it straight into progress',
+    assigned.status === 201 && assigned.body.status === 'IN_PROGRESS'
     && assigned.body.assigneeId === youssefMe.id);
   check('the assignee can now see it',
     (await call(youssef, `/tasks/${ticket.id}`)).status === 200);
@@ -221,7 +223,7 @@ async function main() {
     stillBlocked.status === 'BLOCKED');
   const answered = stillBlocked.blockedBy.find((d: any) => !d.releasedAt);
   check('and the parent can see the answer is sitting there waiting for them',
-    answered.status === 'RESOLVED' && answered.readable === true && !!answered.reference);
+    answered.status === 'FOR_REVIEW' && answered.readable === true && !!answered.reference);
   check('with a route to it, not just the name of a department',
     answered.itemId === childId);
 
@@ -283,23 +285,55 @@ async function main() {
 
   console.log('\n-- finishing --');
 
-  const resolved = await post(youssef, `/tasks/${ticket.id}/resolve`,
+  const submitted = await post(youssef, `/tasks/${ticket.id}/resolve`,
     { resolution: 'Courier note attached, refund raised with Finance.' });
-  check('the assignee resolves it', resolved.body.status === 'RESOLVED');
+  check('submitted work waits for the requester, not the assignee',
+    submitted.body.status === 'FOR_REVIEW');
 
-  const assigneeCloses = await post(youssef, `/tasks/${ticket.id}/confirm`);
-  check('the assignee cannot close his own work',
-    assigneeCloses.status === 403, `got ${assigneeCloses.status}`);
+  const assigneeApproves = await post(youssef, `/tasks/${ticket.id}/review/approve`);
+  check('the assignee cannot approve his own work',
+    assigneeApproves.status === 403, `got ${assigneeApproves.status}`);
 
-  const sentBack = await post(nadia, `/tasks/${ticket.id}/reject-resolution`,
+  const sentBack = await post(nadia, `/tasks/${ticket.id}/review/reject`,
     { reason: 'The refund has not reached the customer yet.' });
   check('the requester can send it back, and it returns to the same person',
     sentBack.body.status === 'IN_PROGRESS' && sentBack.body.assigneeId === youssefMe.id);
 
+  /* The date was a promise about work that has just been refused. Leaving it
+     would show the ticket as on time against a commitment nobody holds. */
+  check('sending back clears the due date', sentBack.body.dueAt === null);
+  check('and the screen is told to insist on a new one',
+    sentBack.body.access?.mustSetNewDueDate !== false);
+
   await post(youssef, `/tasks/${ticket.id}/resolve`, { resolution: 'Refund confirmed received.' });
-  const closed = await post(nadia, `/tasks/${ticket.id}/confirm`);
-  check('and close it when satisfied', closed.body.status === 'CLOSED');
-  check('closing clears the late flag', closed.body.slaState === 'ON_TIME');
+
+  const approved = await post(nadia, `/tasks/${ticket.id}/review/approve`);
+  check('approval sends it to be carried out, not straight to done',
+    approved.body.status === 'IMPLEMENTATION');
+
+  const requesterCompletes = await post(nadia, `/tasks/${ticket.id}/complete`);
+  check('the requester cannot declare the work finished',
+    requesterCompletes.status === 403, `got ${requesterCompletes.status}`);
+
+  const done = await post(youssef, `/tasks/${ticket.id}/complete`);
+  check('the person carrying it out marks it done', done.body.status === 'DONE');
+  check('finishing clears the late flag', done.body.slaState === 'ON_TIME');
+
+  /* Fast tracking, which is the whole reason the flag exists: no review step,
+     and it cannot be added or removed after the fact. */
+  const fast = await post(nadia, '/tasks', {
+    title: 'Reprint the price list', departmentId: careDept.id,
+    description: 'Same as last week, new prices attached.',
+    priority: 'NORMAL', fastTrack: true,
+  });
+  check('a ticket can be raised fast-tracked', fast.body.fastTrack === true);
+
+  await post(omnia, `/tasks/${fast.body.id}/assign`, { assigneeId: youssefMe.id });
+  await post(youssef, `/tasks/${fast.body.id}/start`);
+  const fastSubmitted = await post(youssef, `/tasks/${fast.body.id}/resolve`,
+    { resolution: 'Printed and on the counter.' });
+  check('fast-tracked work skips review entirely',
+    fastSubmitted.body.status === 'IMPLEMENTATION');
 
   /* The complaint that produced this section: somebody resolved a ticket and
      then could not find it again. Access never expires -- being on a ticket is
@@ -403,7 +437,8 @@ async function main() {
   const own = await post(youssef, '/tasks',
     { title: 'Tidy the returns shelf', assignToSelf: youssefMe.id });
   check('goes straight onto you, skipping the queue',
-    own.body.status === 'ASSIGNED' && own.body.assigneeId === youssefMe.id);
+    own.body.status === 'IN_PROGRESS' && own.body.assigneeId === youssefMe.id,
+    `got ${own.body.status}`);
   check('and your manager can still see it and move it',
     (await call(omnia, `/tasks/${own.body.id}`)).body.access.canAssign === true);
   check('but a colleague still cannot',

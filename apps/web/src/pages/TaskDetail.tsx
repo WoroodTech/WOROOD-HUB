@@ -33,7 +33,16 @@ import { STATUS_LABEL, TaskStatusBadges } from './Tasks';
 /** `YYYY-MM-DDTHH:mm` in the browser's own zone, which is what a
  *  datetime-local input compares against. Rounded up to the next minute so the
  *  current minute does not become unselectable halfway through it. */
-function localNow(): string {
+/** Now, as the browser's clock reads it, for a `min` on a datetime input.
+ *
+ *  Local getters rather than `toISOString().slice(0,16)`: the input wants local
+ *  wall-clock, and the ISO form would offer UTC -- putting the floor two hours
+ *  out in Cairo, which is exactly the sort of off-by-a-timezone that looks like
+ *  the picker is broken. A minute ahead so "now" is never already invalid by
+ *  the time somebody clicks.
+ *
+ *  Exported because the board plans dates too, and two copies would drift. */
+export function localNow(): string {
   const d = new Date(Date.now() + 60_000);
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
@@ -64,6 +73,26 @@ const EVENT_SENTENCE: Record<string, (p: any) => string> = {
   UNBLOCKED: (p) => p.childStatus && p.childStatus !== 'CLOSED'
     ? `unblocked — ${p.childReference} was ${String(p.childStatus).toLowerCase()}`
     : 'unblocked, the work it waited on is done',
+  /* Every reason somebody gave is in the line, not only in a notification that
+     one person saw and the rest never will. The timeline is the record of what
+     happened and why, and a ticket that says "put on hold" without the sentence
+     is one nobody can explain three weeks later. */
+  PLANNED: (p) => p.note
+    ? `planned it for ${formatDate(p.plannedFor)} — ${p.note}`
+    : `planned it for ${formatDate(p.plannedFor)}`,
+  HELD: (p) => `put it on hold — ${p.reason ?? 'no reason given'}`,
+  ASSIGNED_AND_STARTED: (p) => `put ${p.assigneeName ?? 'somebody'} on it, and work started`,
+
+  SUBMITTED_FOR_REVIEW: (p) => `submitted it for review — ${p.resolution ?? ''}`,
+  IMPLEMENTATION_STARTED: (p) => p.fastTrack
+    ? `finished the work — ${p.resolution ?? ''} (fast-tracked, so it skipped review)`
+    : `started putting it in place — ${p.resolution ?? ''}`,
+  REVIEW_APPROVED: () => 'approved the work',
+  REVIEW_REJECTED: (p) => `sent it back — ${p.reason ?? 'no reason given'}`,
+  DONE: () => 'marked it done — it is in place',
+
+  /* The old vocabulary. Kept so tickets raised before the lifecycle changed
+     still read as sentences rather than as SHOUTING_CONSTANTS. */
   RESOLVED: (p) => `resolved it — ${p.resolution ?? ''}`,
   RESOLUTION_REJECTED: (p) => `sent it back — ${p.reason ?? ''}`,
   CLOSED: () => 'accepted the resolution and closed it',
@@ -80,6 +109,7 @@ type Dialog =
   | { kind: 'dependency' }
   | { kind: 'contributor' }
   | { kind: 'due' }
+  | { kind: 'plan' }
   | { kind: 'reason'; action: string; heading: string; verb: string; hint?: string };
 
 export function TaskDetailPage() {
@@ -149,14 +179,14 @@ export function TaskDetailPage() {
         </div>
       ) : null}
 
-      {t.status === 'RESOLVED' ? (
-        <div className={`banner ${a.canConfirmResolution ? 'banner--ok' : 'banner--quiet'}`}>
+      {t.status === 'FOR_REVIEW' ? (
+        <div className={`banner ${a.canApproveReview ? 'banner--ok' : 'banner--quiet'}`}>
           <Icon name="check" size={16} />
           <span>
-            <strong>Resolved.</strong> {t.statusReason}
-            {a.canConfirmResolution
-              ? ' Accept it to close, or send it back if it is not done.'
-              : ' Waiting for the person who raised it to accept or send it back.'}
+            <strong>Waiting for review.</strong> {t.statusReason}
+            {a.canApproveReview
+              ? ' Approve it to let the work be put in place, or send it back if it is not done.'
+              : ' Waiting for the person who raised it to approve it or send it back.'}
           </span>
         </div>
       ) : null}
@@ -240,20 +270,45 @@ export function TaskDetailPage() {
                   <Icon name="right" size={15} /> Need another department
                 </button>
               ) : null}
-              {a.canConfirmResolution ? (
+              {a.canApproveReview ? (
                 <>
+                  {/* Approving does not finish it. The work still has to be put
+                      in place, which is what IMPLEMENTATION is for -- and the
+                      button says so, because "accept and close" would promise
+                      something that has not happened. */}
                   <button type="button" className="btn btn--primary btn--block"
-                    onClick={() => act.mutate({ path: '/confirm' })}>
-                    <Icon name="check" size={15} /> Accept and close
+                    onClick={() => act.mutate({ path: '/review/approve' })}>
+                    <Icon name="check" size={15} /> Approve — go ahead
                   </button>
                   <button type="button" className="btn btn--ghost btn--block"
                     onClick={() => setDialog({
-                      kind: 'reason', action: '/reject-resolution', heading: 'Send it back', verb: 'Send back',
-                      hint: 'Say what is still missing. It goes back to the same person.',
+                      kind: 'reason', action: '/review/reject', heading: 'Send it back', verb: 'Send back',
+                      hint: 'Say what is still missing. It goes back to the same person, and their due date is cleared until they set a new one.',
                     })}>
                     <Icon name="left" size={15} /> Not done yet
                   </button>
                 </>
+              ) : null}
+              {a.canComplete ? (
+                <button type="button" className="btn btn--primary btn--block"
+                  onClick={() => act.mutate({ path: '/complete' })}>
+                  <Icon name="check" size={15} /> It is in place — done
+                </button>
+              ) : null}
+              {a.canPlan ? (
+                <button type="button" className="btn btn--ghost btn--block"
+                  onClick={() => setDialog({ kind: 'plan' })}>
+                  <Icon name="calendar" size={15} /> Plan it for a date
+                </button>
+              ) : null}
+              {a.canHold ? (
+                <button type="button" className="btn btn--ghost btn--block"
+                  onClick={() => setDialog({
+                    kind: 'reason', action: '/hold', heading: 'Put it on hold', verb: 'Hold it',
+                    hint: 'Say why. Whoever raised it is told, and anyone assigned is released.',
+                  })}>
+                  <Icon name="clock" size={15} /> Put on hold
+                </button>
               ) : null}
               {a.canManageContributors ? (
                 <button type="button" className="btn btn--ghost btn--block" onClick={() => setDialog({ kind: 'contributor' })}>
@@ -274,15 +329,7 @@ export function TaskDetailPage() {
                   <Icon name="minus" size={15} /> Not for us
                 </button>
               ) : null}
-              {a.canReopen ? (
-                <button type="button" className="btn btn--ghost btn--block"
-                  onClick={() => setDialog({
-                    kind: 'reason', action: '/reopen', heading: 'Reopen it', verb: 'Reopen',
-                    hint: 'Say what came back. It returns to whoever had it.',
-                  })}>
-                  <Icon name="refresh" size={15} /> Reopen
-                </button>
-              ) : null}
+
               {a.canCancel ? (
                 <button type="button" className="btn btn--danger btn--block"
                   onClick={() => setDialog({
@@ -292,7 +339,8 @@ export function TaskDetailPage() {
                   <Icon name="minus" size={15} /> Cancel it
                 </button>
               ) : null}
-              {!a.canAssign && !a.canWork && !a.canAddDependency && !a.canConfirmResolution && !a.canCancel && !a.canReopen ? (
+              {!a.canAssign && !a.canWork && !a.canAddDependency && !a.canApproveReview
+                && !a.canComplete && !a.canPlan && !a.canHold && !a.canCancel ? (
                 <p className="hint">Nothing to do from here — you are on this ticket to follow it.</p>
               ) : null}
             </div>
@@ -362,7 +410,10 @@ function BlockedStrip({ deps }: { deps: TaskDependency[] }) {
      correct, and it is useless unless the screen says so and takes them
      there: this banner used to name the department and stop, leaving somebody
      looking at a blocked ticket with nothing to click. */
-  const answered = deps.filter((d) => d.status === 'RESOLVED' && d.readable);
+  /* A dependency is answered when it is DONE. FOR_REVIEW means the other
+     department has submitted their work and their own requester is looking at
+     it -- not that it has come back. */
+  const answered = deps.filter((d) => d.status === 'DONE' && d.readable);
 
   return (
     <div className={`banner ${answered.length > 0 ? 'banner--ok' : 'banner--stale'}`}>
@@ -419,7 +470,7 @@ function DependencyRow({ dep }: { dep: TaskDependency }) {
           {dep.dueAt ? ` · expected ${formatDate(dep.dueAt)}` : ''}
         </span>
       </span>
-      {dep.status === 'RESOLVED' && dep.readable && !dep.releasedAt
+      {dep.status === 'DONE' && dep.readable && !dep.releasedAt
         ? <Badge tone="good" icon="check">Needs your nod</Badge>
         : <Badge tone={dep.releasedAt ? 'neutral' : 'warning'}>
             {STATUS_LABEL[dep.status] ?? dep.status}
@@ -503,14 +554,16 @@ function TaskDialog({ dialog, task, busy, onClose, onSubmit }: {
         : dialog.kind === 'dependency' ? 'Ask another department'
           : dialog.kind === 'contributor' ? 'Bring in a colleague'
             : dialog.kind === 'due' ? 'When will it be done?'
-              : dialog.heading;
+              : dialog.kind === 'plan' ? 'When should this be worked on?'
+                : dialog.heading;
 
   const ready =
     dialog.kind === 'assign' || dialog.kind === 'contributor' ? !!choice
       : dialog.kind === 'transfer' ? !!choice && text.trim().length >= 3
         : dialog.kind === 'dependency' ? !!choice && title.trim().length >= 3
           : dialog.kind === 'due' ? true
-            : text.trim().length >= 3;
+            : dialog.kind === 'plan' ? !!dueAt
+              : text.trim().length >= 3;
 
   const submit = () => {
     if (dialog.kind === 'assign') onSubmit('/assign', { assigneeId: choice, note: text.trim() || undefined });
@@ -523,6 +576,11 @@ function TaskDialog({ dialog, task, busy, onClose, onSubmit }: {
       });
     } else if (dialog.kind === 'due') {
       onSubmit('/due', { dueAt: dueAt ? new Date(dueAt).toISOString() : null });
+    } else if (dialog.kind === 'plan') {
+      /* Reusing the due-date field. Both are "pick a moment", and a second
+         piece of state holding a datetime would only be a second thing to
+         forget to clear. */
+      onSubmit('/plan', { plannedFor: new Date(dueAt).toISOString(), note: text.trim() || undefined });
     } else {
       /* One field, chosen by the route. Sending both "just in case" is what
          broke /cancel: the ValidationPipe runs with forbidNonWhitelisted, so a
@@ -547,7 +605,26 @@ function TaskDialog({ dialog, task, busy, onClose, onSubmit }: {
         </header>
 
         <div className="modal__body">
-          {dialog.kind === 'assign' || dialog.kind === 'contributor' ? (
+          {dialog.kind === 'plan' ? (
+            <>
+              <p className="modal__sub">
+                Planning holds a date, not a person. Whoever is free on the day
+                picks it up — naming somebody a fortnight early usually means
+                reassigning them when the fortnight arrives.
+              </p>
+              <div className="field field--wide">
+                <span className="field__label">Planned for</span>
+                <input className="input" type="datetime-local" value={dueAt}
+                       min={localNow()}
+                       onChange={(e) => setDueAt(e.target.value)} autoFocus />
+              </div>
+              <div className="field field--wide">
+                <span className="field__label">Note (optional)</span>
+                <input className="input" value={text} onChange={(e) => setText(e.target.value)}
+                       placeholder="After the Eid orders clear…" />
+              </div>
+            </>
+          ) : dialog.kind === 'assign' || dialog.kind === 'contributor' ? (
             <div className="field field--wide">
               <span className="field__label">
                 {dialog.kind === 'assign' ? `In ${task.department}` : `From ${task.department}`}
