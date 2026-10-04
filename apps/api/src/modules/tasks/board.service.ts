@@ -23,9 +23,15 @@ import { TASK_PERMISSIONS } from './permissions';
    real one and teaching people to scroll past it. Rows that still hold the
    status from before are shown under In progress, which is where they are in
    substance. */
+/* Work in flight, and nothing else.
+ *
+ * Planning and On hold left this board when the Backlog screen took them. They
+ * are states where nobody is holding the ticket, and mixing "not started" into
+ * a board about progress meant two columns that never moved sitting in front of
+ * the ones that do. The backlog is where parked work is decided; this is where
+ * live work is watched. */
 export const BOARD_COLUMNS = [
-  'PLANNING', 'ON_HOLD', 'IN_PROGRESS',
-  'BLOCKED', 'FOR_REVIEW', 'IMPLEMENTATION', 'DONE',
+  'IN_PROGRESS', 'BLOCKED', 'FOR_REVIEW', 'IMPLEMENTATION', 'DONE',
 ] as const;
 
 export type BoardColumn = typeof BOARD_COLUMNS[number] | 'DELAYED';
@@ -67,6 +73,10 @@ export interface BoardCard {
   /** Needed by the assign dialog on the board: who may be picked depends on
    *  which department is doing the work. */
   departmentId: string;
+  /** Raised inside the department that is doing it, rather than asked for by
+   *  another. The two are read differently -- an external ticket is a promise
+   *  to somebody outside, and worth seeing at a glance on a card. */
+  internal: boolean;
   waitingOn: number;
   /** False on the requesting department's view: they may look, not steer. */
   draggable: boolean;
@@ -87,6 +97,10 @@ const toCard = (r: any, draggable: boolean): BoardCard => ({
   departmentName: r.department_name,
   requesterDepartmentName: r.requester_department_name ?? null,
   departmentId: r.department_id,
+  /* Null requester department means a person with no department raised it;
+     treated as external, because it certainly did not come from inside the
+     team doing the work. */
+  internal: !!r.requester_department_id && r.requester_department_id === r.department_id,
   waitingOn: r.waiting_on ?? 0,
   draggable,
 });
@@ -129,7 +143,7 @@ export class BoardService {
           /* Cancelled and refused tickets are not on a board. They are
              answers, not work, and a column of them would grow for ever
              without anybody ever acting on one. */
-          AND t.status NOT IN ('CANCELLED','REJECTED')
+          AND t.status NOT IN ('CANCELLED','REJECTED','NEW','PLANNING','ON_HOLD')
           /* Done is kept for a fortnight. Long enough to see what shipped this
              week, short enough that the column does not become an archive
              nobody scrolls. */
@@ -197,7 +211,11 @@ export class BoardService {
       `SELECT ${CARD_COLUMNS} ${CARD_JOINS}
         WHERE ($1::boolean OR t.department_id = ANY($2::uuid[]))
           AND ($3::uuid IS NULL OR t.department_id = $3::uuid)
-          AND t.status IN ('NEW','PLANNING','ON_HOLD')
+          AND t.status IN ('NEW','PLANNING','ON_HOLD','CANCELLED')
+          /* Cancelled work is kept for a month. Long enough that somebody who
+             changes their mind can find it, short enough that the section does
+             not become a graveyard nobody reads past. */
+          AND (t.status <> 'CANCELLED' OR t.status_changed_at > now() - interval '30 days')
         ORDER BY
           CASE t.priority WHEN 'URGENT' THEN 0 WHEN 'HIGH' THEN 1
                           WHEN 'NORMAL' THEN 2 ELSE 3 END,
@@ -219,6 +237,7 @@ export class BoardService {
         { key: 'NEW', cards: cards.filter((c) => c.status === 'NEW') },
         { key: 'PLANNING', cards: cards.filter((c) => c.status === 'PLANNING') },
         { key: 'ON_HOLD', cards: cards.filter((c) => c.status === 'ON_HOLD') },
+        { key: 'CANCELLED', cards: cards.filter((c) => c.status === 'CANCELLED') },
       ],
     };
   }

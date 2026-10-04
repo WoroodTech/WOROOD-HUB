@@ -138,7 +138,7 @@ export function Tasks({ fixedScope }: { fixedScope?: Scope }) {
     ...(managesSomething ? ([['queue', 'Awaiting assignment', counts?.queue]] as Array<[Scope, string, number | undefined]>) : []),
     ['assigned', 'Assigned to me', counts?.assigned],
     ['requested', 'My requests', counts?.requested],
-    ['contributing', "I'm on it", undefined],
+    ['contributing', "My contributions", undefined],
     ...(managesSomething ? ([['department', 'My department', undefined]] as Array<[Scope, string, number | undefined]>) : []),
   ];
 
@@ -159,6 +159,14 @@ export function Tasks({ fixedScope }: { fixedScope?: Scope }) {
           </p>
         </div>
         <div className="pagehead__tools">
+          {/* Managers land here first and then look for the queue. The link is
+              in front of them rather than in the sidebar they have stopped
+              reading. Shown only to people who have a backlog to open. */}
+          {(principal?.managedDepartmentIds?.length ?? 0) > 0 ? (
+            <Link to="/tasks/backlog" className="btn btn--ghost btn--sm">
+              <Icon name="list" size={15} /> <span className="btn__label">Backlog</span>
+            </Link>
+          ) : null}
           <button type="button" className="btn btn--primary btn--sm" onClick={() => setComposing(true)}>
             <Icon name="plus" size={15} /> <span className="btn__label">New ticket</span>
           </button>
@@ -247,6 +255,25 @@ export function Tasks({ fixedScope }: { fixedScope?: Scope }) {
 }
 
 /* --------------------------------------------------------------- compose -- */
+
+/**
+ * The raise-a-ticket control, for any screen in the module.
+ *
+ * Exported with its own button rather than left on one page: every ticket
+ * screen is somewhere a person might realise they need to raise one, and
+ * sending them back to a list first is a detour the thought does not survive.
+ */
+export function NewTicketButton({ label = 'New ticket' }: { label?: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" className="btn btn--primary btn--sm" onClick={() => setOpen(true)}>
+        <Icon name="plus" size={15} /> <span className="btn__label">{label}</span>
+      </button>
+      {open ? <NewTicket onClose={() => setOpen(false)} /> : null}
+    </>
+  );
+}
 
 function NewTicket({ onClose }: { onClose: () => void }) {
   const { principal } = useAuth();

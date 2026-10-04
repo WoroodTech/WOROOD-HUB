@@ -13,8 +13,8 @@ import { Departments } from './pages/Departments';
 import { AllTasks, TaskQueue, Tasks } from './pages/Tasks';
 import { TaskDetailPage } from './pages/TaskDetail';
 import { TicketBoardPage } from './pages/TicketBoardPage';
+import { TicketBacklog } from './pages/TicketBacklog';
 import { TicketDashboard } from './pages/TicketDashboard';
-import { TicketDecisions } from './pages/TicketDecisions';
 import { Roles } from './pages/Roles';
 import { SalesIndex } from './pages/SalesIndex';
 import { SalesDashboard } from './pages/SalesDashboard';
@@ -66,7 +66,7 @@ export function App() {
         {/* Ahead of /tasks/:id — the router matches in order, and "board"
             would otherwise be read as a ticket id. */}
         <Route path="/tasks/board" element={<TicketBoardPage />} />
-        <Route path="/tasks/decisions" element={<TicketDecisions />} />
+        <Route path="/tasks/backlog" element={<TicketBacklog />} />
         <Route path="/tasks/department" element={<TicketDashboard />} />
         <Route path="/tasks/:id" element={<TaskDetailPage />} />
 

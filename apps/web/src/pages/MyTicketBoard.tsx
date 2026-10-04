@@ -21,6 +21,7 @@ import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { MyBoardResponse } from '../contract';
 import { api } from '../lib/api';
+import { NewTicketButton } from './Tasks';
 import { useToast } from '../lib/toast';
 import { BoardColumn } from '../components/TicketBoard';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
@@ -78,6 +79,7 @@ export function MyTicketBoard() {
                 : `${total} ticket${total === 1 ? '' : 's'}, all within their dates.`}
           </p>
         </div>
+        <div className="pagehead__tools"><NewTicketButton /></div>
       </header>
 
       {/* Tickets this person raised that are now sitting in review are waiting

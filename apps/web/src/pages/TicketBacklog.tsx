@@ -20,43 +20,70 @@ import { Badge } from '../components/Card';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import { Icon } from '../components/Icon';
 import { formatDate } from '../lib/format';
-import { PRIORITY_TONE } from './Tasks';
+import { PRIORITY_TONE, NewTicketButton } from './Tasks';
 import { localNow } from './TaskDetail';
 
-interface DecisionsResponse {
+interface BacklogResponse {
   empty: 'notAManager' | null;
   departments: Array<{ id: string; name: string }>;
-  groups: Array<{ key: 'NEW' | 'PLANNING' | 'ON_HOLD'; cards: BoardCard[] }>;
+  groups: Array<{ key: 'NEW' | 'PLANNING' | 'ON_HOLD' | 'CANCELLED'; cards: BoardCard[] }>;
 }
 
+/* The four states a ticket rests in before anybody is working on it, and what
+   a manager can do to each. The actions differ by section because the decision
+   differs: a new ticket needs a decision, a planned one needs starting, a held
+   one needs reviving or re-dating, a cancelled one needs reviving or nothing.
+
+   Assign is not among them. Choosing who does the work happens when the work
+   starts, not when it is scheduled -- naming somebody for next Tuesday only
+   means reassigning them on Tuesday. */
 const GROUP = {
   NEW: {
-    title: 'Waiting on you',
-    hint: 'Nobody has looked at these yet. Plan one, hold it, or give it to somebody.',
+    title: 'New tickets',
+    hint: 'Nobody has looked at these yet. Plan one, park it, or cancel it.',
     icon: 'bell',
-    empty: 'Nothing new has come in.',
+    actions: ['plan', 'hold', 'cancel'] as const,
   },
   PLANNING: {
-    title: 'Planned',
-    hint: 'A date, no person yet. They leave here when somebody picks them up.',
+    title: 'Planning',
+    hint: 'A date, no person yet. Starting one is where you choose who does it.',
     icon: 'calendar',
-    empty: 'Nothing is planned for later.',
+    actions: ['start', 'cancel'] as const,
   },
   ON_HOLD: {
     title: 'On hold',
-    hint: 'Parked with a reason. Nothing moves until you assign them.',
+    hint: 'Parked with a reason. Resume puts it straight into progress.',
     icon: 'clock',
-    empty: 'Nothing is parked.',
+    actions: ['plan', 'resume', 'cancel'] as const,
   },
+  CANCELLED: {
+    title: 'Cancelled',
+    hint: 'Dropped in the last month. Planning one brings it back.',
+    icon: 'minus',
+    actions: ['plan'] as const,
+  },
+} as const;
+
+const ACTION_LABEL = {
+  plan: { label: 'Plan', icon: 'calendar' },
+  hold: { label: 'Hold', icon: 'clock' },
+  cancel: { label: 'Cancel', icon: 'minus' },
+  start: { label: 'Start', icon: 'right' },
+  resume: { label: 'Resume', icon: 'refresh' },
 } as const;
 
 type Dialog =
   | null
   | { kind: 'plan'; card: BoardCard }
   | { kind: 'hold'; card: BoardCard }
-  | { kind: 'assign'; card: BoardCard };
+  | { kind: 'cancel'; card: BoardCard }
+  /* Starting asks two things at once -- who, and by when -- because they are
+     one decision. Picking somebody without a date leaves a commitment nobody
+     made; picking a date without somebody leaves it on nobody. */
+  | { kind: 'start'; card: BoardCard }
+  | { kind: 'resume'; card: BoardCard };
 
-export function TicketDecisions() {
+export function TicketBacklog() {
   const [departmentId, setDepartmentId] = useState('');
   const [dialog, setDialog] = useState<Dialog>(null);
   const [value, setValue] = useState('');
@@ -64,16 +91,18 @@ export function TicketDecisions() {
   const queryClient = useQueryClient();
 
   const { data, isPending, error, refetch } = useQuery({
-    queryKey: ['tasks', 'decisions', departmentId],
-    queryFn: () => api<DecisionsResponse>(
-      `/tasks/decisions${departmentId ? `?departmentId=${departmentId}` : ''}`),
+    queryKey: ['tasks', 'backlog', departmentId],
+    queryFn: () => api<BacklogResponse>(
+      `/tasks/backlog${departmentId ? `?departmentId=${departmentId}` : ''}`),
     refetchInterval: 60_000,
   });
+
+  const [due, setDue] = useState('');
 
   const { data: people } = useQuery({
     queryKey: ['tasks', 'people', dialog?.card.departmentId],
     queryFn: () => api<TaskPerson[]>(`/tasks/departments/${dialog!.card.departmentId}/people`),
-    enabled: dialog?.kind === 'assign',
+    enabled: dialog?.kind === 'start' || dialog?.kind === 'resume',
   });
 
   const act = useMutation({
@@ -95,10 +124,17 @@ export function TicketDecisions() {
       act.mutate({ id, path: '/plan', body: { plannedFor: new Date(value).toISOString() } });
     } else if (dialog.kind === 'hold') {
       act.mutate({ id, path: '/hold', body: { reason: value.trim() } });
+    } else if (dialog.kind === 'cancel') {
+      act.mutate({ id, path: '/cancel', body: { reason: value.trim() } });
     } else {
-      act.mutate({ id, path: '/assign', body: { assigneeId: value } });
-    }
+  // start و resume: الـ assign بيبدأ الشغل، والـ due بيروح معاه
+  act.mutate({
+    id, path: '/assign',
+    body: { assigneeId: value, ...(due ? { dueAt: new Date(due).toISOString() } : {}) },
+  });
+}
   };
+
 
   if (isPending) return <div className="page"><LoadingState label="Gathering what needs deciding" lines={4} /></div>;
   if (error) return <div className="page"><ErrorState error={error} onRetry={() => void refetch()} /></div>;
@@ -121,13 +157,16 @@ export function TicketDecisions() {
     <div className="page">
       <header className="pagehead">
         <div>
-          <h1 className="pagehead__title">Decisions</h1>
+          <h1 className="pagehead__title">Backlog</h1>
           <p className="pagehead__sub">
             {waiting === 0
-              ? 'Nothing is waiting on you. Everything raised has somebody on it.'
+              ? 'Nothing waiting. Everything raised has somebody on it.'
               : `${waiting} ticket${waiting === 1 ? '' : 's'} with nobody on ${waiting === 1 ? 'it' : 'them'}.`}
           </p>
         </div>
+        <span className="pagehead__tools">
+          <NewTicketButton />
+        </span>
         {data.departments.length > 1 ? (
           <select className="input" value={departmentId}
                   onChange={(e) => setDepartmentId(e.target.value)} aria-label="Department">
@@ -149,19 +188,7 @@ export function TicketDecisions() {
             </header>
 
             {group.cards.length === 0 ? (
-              /* A shape where the rows would be, rather than a sentence saying
-                 there are none. It reads as "this is a list and it is empty" at
-                 a glance, and keeps the three containers a similar height while
-                 a manager scans down them. */
-              <div className="dskeleton" aria-label={`No tickets in ${g.title}`}>
-                {[0, 1].map((i) => (
-                  <div key={i} className="dskeleton__row" aria-hidden="true">
-                    <span className="dskeleton__bar dskeleton__bar--title" />
-                    <span className="dskeleton__bar dskeleton__bar--meta" />
-                  </div>
-                ))}
-                <p className="dskeleton__note">{g.empty}</p>
-              </div>
+              <p className="dgroup__empty">Nothing here.</p>
             ) : (
               <ul className="drows">
                 {group.cards.map((c) => (
@@ -192,22 +219,21 @@ export function TicketDecisions() {
                     </Link>
 
                     <span className="drow__actions">
-                      <button type="button" className="btn btn--ghost btn--sm"
-                              onClick={() => { setDialog({ kind: 'assign', card: c }); setValue(''); }}>
-                        <Icon name="user" size={14} /> Assign
-                      </button>
-                      {group.key !== 'PLANNING' ? (
-                        <button type="button" className="btn btn--ghost btn--sm"
-                                onClick={() => { setDialog({ kind: 'plan', card: c }); setValue(''); }}>
-                          <Icon name="calendar" size={14} /> Plan
-                        </button>
-                      ) : null}
-                      {group.key !== 'ON_HOLD' ? (
-                        <button type="button" className="btn btn--ghost btn--sm"
-                                onClick={() => { setDialog({ kind: 'hold', card: c }); setValue(''); }}>
-                          <Icon name="clock" size={14} /> Hold
-                        </button>
-                      ) : null}
+                      {g.actions.map((a) => {
+                        const meta = ACTION_LABEL[a];
+                        return (
+                          <button
+                            key={a} type="button" className="btn btn--ghost btn--sm"
+                            disabled={act.isPending}
+                            onClick={() => {
+  setValue(''); setDue('');
+  setDialog({ kind: a, card: c } as Dialog);
+}}
+                          >
+                            <Icon name={meta.icon} size={14} /> {meta.label}
+                          </button>
+                        );
+                      })}
                     </span>
                   </li>
                 ))}
@@ -225,7 +251,9 @@ export function TicketDecisions() {
               <h2 className="modal__title">
                 {dialog.kind === 'plan' ? 'When should this be worked on?'
                   : dialog.kind === 'hold' ? 'Why is it on hold?'
-                    : 'Who should do this?'}
+                    : dialog.kind === 'cancel' ? 'Why is it being cancelled?'
+                      : dialog.kind === 'resume' ? 'Who picks it back up, and by when?'
+                        : 'Who starts it, and by when?'}
               </h2>
             </header>
 
@@ -237,9 +265,9 @@ export function TicketDecisions() {
                   <input className="input" type="datetime-local" value={value}
                          min={localNow()} onChange={(e) => setValue(e.target.value)} autoFocus />
                   <p className="hint">
-                    A date, not a person. Whoever is free on the day picks it up —
-                    naming somebody a fortnight early usually means reassigning
-                    them when the fortnight arrives.
+                    A date, not a person. Who does it is decided when it starts —
+                    naming somebody for next Tuesday usually means reassigning
+                    them on Tuesday.
                   </p>
                 </>
               ) : dialog.kind === 'hold' ? (
@@ -248,24 +276,42 @@ export function TicketDecisions() {
                             onChange={(e) => setValue(e.target.value)}
                             placeholder="Waiting on the supplier to confirm stock…" />
                   <p className="hint">
-                    Whoever raised it is told, with your reason. A ticket on hold
-                    with no sentence is one nobody can explain later.
+                    Whoever raised it is told, with your reason. The reason shows
+                    on the ticket's history, so anybody can see it later.
+                  </p>
+                </>
+              ) : dialog.kind === 'cancel' ? (
+                <>
+                  <textarea className="input" rows={3} value={value} autoFocus
+                            onChange={(e) => setValue(e.target.value)}
+                            placeholder="The campaign was dropped…" />
+                  <p className="hint">
+                    It stays in Cancelled for a month, and can be planned back
+                    into life from there. The reason stays on the record.
                   </p>
                 </>
               ) : (
                 <>
-                  <select className="input" value={value} autoFocus
-                          onChange={(e) => setValue(e.target.value)}>
-                    <option value="">Choose somebody…</option>
-                    {(people ?? []).map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.name}{u.jobTitle ? ` — ${u.jobTitle}` : ''}{u.isManager ? ' (manager)' : ''}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="field field--wide">
+                    <span className="field__label">Who does it</span>
+                    <select className="input" value={value} autoFocus
+                            onChange={(e) => setValue(e.target.value)}>
+                      <option value="">Choose somebody…</option>
+                      {(people ?? []).map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.name}{u.jobTitle ? ` — ${u.jobTitle}` : ''}{u.isManager ? ' (manager)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field field--wide">
+                    <span className="field__label">Due by (optional)</span>
+                    <input className="input" type="datetime-local" value={due}
+                           min={localNow()} onChange={(e) => setDue(e.target.value)} />
+                  </div>
                   <p className="hint">
-                    You are on the list — a manager can take a ticket themselves.
-                    They are emailed either way.
+                    Work starts the moment you choose somebody, and they are
+                    emailed. Leave the date blank and they will set their own.
                   </p>
                 </>
               )}

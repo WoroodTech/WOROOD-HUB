@@ -15,6 +15,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { TicketDashboardResponse } from '../contract';
 import { api } from '../lib/api';
+import { NewTicketButton } from './Tasks';
 import { Card } from '../components/Card';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import { Icon } from '../components/Icon';
@@ -89,6 +90,7 @@ export function TicketDashboard() {
               : 'Work your department has asked other departments for.'}
           </p>
         </div>
+        <div className="pagehead__tools"><NewTicketButton /></div>
       </header>
 
       <div className="board__controls">
