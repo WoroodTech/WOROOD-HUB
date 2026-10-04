@@ -424,7 +424,7 @@ export class TasksService {
     }
 
     await this.tell([target.id], p, `Assigned to you: ${await reference(id)}`,
-      dto.note ?? `${p.fullName} gave you this one.`, id);
+      dto.note ?? `${p.fullName} gave you this one.`, id,'INFO', true);
     await this.tellParticipants(id, p, `Ticket assigned: ${await reference(id)}`,
       `${p.fullName} assigned it to ${target.full_name}.`, [target.id]);
     /* The other manager of the department needs to stop looking at it. */
