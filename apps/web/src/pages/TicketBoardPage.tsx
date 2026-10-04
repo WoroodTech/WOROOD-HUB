@@ -18,8 +18,7 @@ import { api } from '../lib/api';
 import { useToast } from '../lib/toast';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import { BoardColumn } from '../components/TicketBoard';
-import { Icon } from '../components/Icon';
-import { STATUS_SHORT } from './Tasks';
+import { STATUS_SHORT, NewTicketButton } from './Tasks';
 import { localNow } from './TaskDetail';
 import { useAuth } from '../lib/auth';
 import { MyTicketBoard } from './MyTicketBoard';
@@ -53,7 +52,6 @@ export function TicketBoardPage() {
 }
 
 function ManagerBoard() {
-  const [side, setSide] = useState<'doing' | 'requested'>('doing');
   const [departmentId, setDepartmentId] = useState<string>('');
   const [pending, setPending] = useState<Pending>(null);
   const [value, setValue] = useState('');
@@ -61,9 +59,14 @@ function ManagerBoard() {
   const queryClient = useQueryClient();
 
   const { data, isPending, error, refetch } = useQuery({
-    queryKey: ['tasks', 'board', side, departmentId],
+    queryKey: ['tasks', 'board', departmentId],
+    /* Only work this department is carrying out. Watching another
+       department's pipeline was a read-only board whose cards refused to move
+       -- which reads as broken rather than as deliberate. Work we asked for is
+       followed on the ticket itself, where there is room to say what is
+       happening. */
     queryFn: () => api<BoardResponse>(
-      `/tasks/board?side=${side}${departmentId ? `&departmentId=${departmentId}` : ''}`),
+      `/tasks/board?side=doing${departmentId ? `&departmentId=${departmentId}` : ''}`),
     refetchInterval: 60_000,
   });
 
@@ -151,29 +154,13 @@ function ManagerBoard() {
         <div>
           <h1 className="pagehead__title">Board</h1>
           <p className="pagehead__sub">
-            {side === 'doing'
-              ? 'Work your department is carrying out. Drag a card to move it.'
-              : 'Work your department asked another department for. You can follow it here; moving it is theirs to do.'}
+            Work your department is carrying out. Drag a card to move it along.
           </p>
         </div>
+        <div className="pagehead__tools"><NewTicketButton /></div>
       </header>
 
       <div className="board__controls">
-        <div className="ranges" role="group" aria-label="Which tickets">
-          <button
-            type="button" className={`ranges__btn${side === 'doing' ? ' is-active' : ''}`}
-            aria-pressed={side === 'doing'} onClick={() => setSide('doing')}
-          >
-            We are doing
-          </button>
-          <button
-            type="button" className={`ranges__btn${side === 'requested' ? ' is-active' : ''}`}
-            aria-pressed={side === 'requested'} onClick={() => setSide('requested')}
-          >
-            We asked for
-          </button>
-        </div>
-
         {data.departments.length > 1 ? (
           <select
             className="input" value={departmentId}
@@ -185,17 +172,6 @@ function ManagerBoard() {
           </select>
         ) : null}
       </div>
-
-      {side === 'requested' ? (
-        <p className="notice notice--lock">
-          <Icon name="lock" size={15} />
-          <span>
-            These are being worked on by other departments, so their cards do not
-            move. You can open any of them, comment, and cancel if it is no
-            longer needed.
-          </span>
-        </p>
-      ) : null}
 
       {/* Horizontal scroll rather than wrapping. A board that wraps stops being
           a board -- the left-to-right order is the lifecycle, and reading it

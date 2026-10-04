@@ -55,7 +55,7 @@ export const TASKS_MODULE = registerHubModule({
        The old 'Department Queue' is gone: deciding what to do with a new
        ticket is what the first of these is for, and two screens for one job
        meant neither was the place to look. */
-    { label: 'Decisions', labelAr: 'قرارات', path: '/tasks/decisions', icon: 'list',
+    { label: 'Backlog', labelAr: 'قائمة الانتظار', path: '/tasks/backlog', icon: 'list',
       requiresAnyPermission: [TASK_PERMISSIONS.ASSIGN] },
     { label: 'Department', labelAr: 'الإدارة', path: '/tasks/department', icon: 'activity',
       requiresAnyPermission: [TASK_PERMISSIONS.ASSIGN] },
@@ -128,8 +128,8 @@ export class TasksController {
     return this.boards.managerBoard(p, side === 'requested' ? 'requested' : 'doing', departmentId);
   }
 
-  @Get('decisions')
-  decisions(@CurrentUser() p: Principal, @Query('departmentId') departmentId?: string) {
+  @Get('backlog')
+  backlog(@CurrentUser() p: Principal, @Query('departmentId') departmentId?: string) {
     return this.boards.decisions(p, departmentId);
   }
 

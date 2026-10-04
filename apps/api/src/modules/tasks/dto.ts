@@ -55,6 +55,7 @@ export class UpdateRequest {
 export class AssignTask {
   @IsUUID() assigneeId!: string;
   @IsOptional() @IsString() @MaxLength(500) note?: string;
+  @IsOptional() @IsISO8601() dueAt?: string;
 }
 
 export class TransferTask {
@@ -137,13 +138,19 @@ export class PlanTask {
  * rather than the board holding its own copy of which columns need what.
  */
 export class MoveTask {
-  /* Where a card may be dropped.
+  /* Every state a card can be dropped on.
   
-     IMPLEMENTATION and DONE are absent on purpose and not for want of a
-     dialog: approval is the requester's judgement of work they asked for, and
-     "it is in place" is something only the person who put it there can say.
-     Neither is a manager's to declare by moving a card. */
-  @IsIn(['PLANNING', 'ON_HOLD', 'ASSIGNED', 'IN_PROGRESS', 'FOR_REVIEW'])
+     This list used to stop short of IMPLEMENTATION and DONE, which made the
+     DTO the gatekeeper -- and a validation error is the wrong way to say "not
+     yours to do". An administrator dragging a card to Done got a 400 listing
+     allowed values, when the real answer is that `canComplete` decides and for
+     them it is true.
+  
+     Validation now says what the lifecycle *has*; the capability checks say who
+     may do it. One of those is a vocabulary and the other is a rule, and they
+     were tangled. */
+  @IsIn(['PLANNING', 'ON_HOLD', 'ASSIGNED', 'IN_PROGRESS', 'FOR_REVIEW',
+         'IMPLEMENTATION', 'DONE', 'CANCELLED'])
   to!: string;
 
   @IsOptional() @IsISO8601() plannedFor?: string;
@@ -151,4 +158,5 @@ export class MoveTask {
   @IsOptional() @IsUUID() assigneeId?: string;
   /** What was done, when dropping on For review. */
   @IsOptional() @IsString() @MinLength(3) @MaxLength(2000) resolution?: string;
+  @IsOptional() @IsISO8601() dueAt?: string;
 }

@@ -567,6 +567,8 @@ export interface BoardCard {
   requesterName: string; assigneeName: string | null; assigneeId: string | null;
   departmentName: string; requesterDepartmentName: string | null;
   departmentId: string;
+  /** Raised inside the department doing it, rather than asked for by another. */
+  internal: boolean;
   waitingOn: number;
   /** False on the requesting department's view: they may look, not steer. */
   draggable: boolean;

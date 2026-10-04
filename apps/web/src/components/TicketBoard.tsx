@@ -55,8 +55,21 @@ export function TicketCard({ card }: { card: BoardCard }) {
       {/* Signals, not sentences. Each is a fact somebody checks before
           clicking, and an icon with a number reads faster than a phrase. */}
       <span className="tcard__signals">
-        <span className="tcard__signal" title={`Raised by ${card.requesterName}`}>
-          <Icon name="receipt" size={12} /> {card.reference.replace(/^[A-Z]+-/, '')}
+        {/* Where it came from, at a glance.
+        
+            An external ticket is a promise to somebody outside the team, and it
+            is read differently from one the team raised for itself -- so it is
+            on the card rather than two clicks away. The tooltip names the
+            department, because the icon alone says "elsewhere" and not
+            "where". */}
+        <span
+          className={`tcard__signal${card.internal ? '' : ' tcard__signal--ext'}`}
+          title={card.internal
+            ? 'Raised inside this department'
+            : `From ${card.requesterDepartmentName ?? 'another department'} — ${card.requesterName}`}
+        >
+          <Icon name={card.internal ? 'home' : 'globe'} size={12} />
+          {card.internal ? 'internal' : (card.requesterDepartmentName ?? 'external')}
         </span>
         {card.waitingOn > 0 ? (
           <span className="tcard__signal tcard__signal--warn"

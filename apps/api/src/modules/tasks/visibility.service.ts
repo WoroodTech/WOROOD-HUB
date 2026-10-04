@@ -71,7 +71,10 @@ export const ALLOWED_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
   IMPLEMENTATION: ['DONE', 'IN_PROGRESS', 'CANCELLED'],
   DONE:           [],
   REJECTED:       [],
-  CANCELLED:      [],
+  /* A cancelled ticket can be planned back to life. It is the one way out:
+     the work was dropped and somebody has decided it matters after all, and
+     planning it says when rather than pretending it was never cancelled. */
+  CANCELLED:      ['PLANNING'],
 };
 
 /** Where work goes when the assignee says it is finished. Fast-tracked tickets

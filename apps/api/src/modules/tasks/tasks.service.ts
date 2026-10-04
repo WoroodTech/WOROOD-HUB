@@ -85,7 +85,7 @@ export class TasksService {
     private readonly notifications: NotificationsService,
     private readonly mailer: NotificationMailer,
     private readonly audit: AuditService,
-  ) {}
+  ) { }
 
   /* ------------------------------------------------------------- reads -- */
 
@@ -250,7 +250,7 @@ export class TasksService {
               d.name AS department_name,
               ${vis.sql} AS may_see
          ${ITEM_JOINS.replace('FROM tk_items t', 'FROM tk_links l JOIN tk_items t ON t.id = ' +
-            (direction === 'blocked-by' ? 'l.depends_on_item_id' : 'l.item_id'))}
+        (direction === 'blocked-by' ? 'l.depends_on_item_id' : 'l.item_id'))}
         WHERE ${direction === 'blocked-by' ? 'l.item_id' : 'l.depends_on_item_id'} = $1
           AND l.link_type = 'BLOCKED_BY'
         ORDER BY l.created_at`,
@@ -295,13 +295,13 @@ export class TasksService {
          VALUES ($1,$2,COALESCE($3,'NORMAL'),$4,$5,$6,$7,$8,$9,$10,$4,$11)
          RETURNING id, reference, status, fast_track`,
         [dto.title, dto.description ?? null, dto.priority ?? null, p.id,
-         p.departmentId ?? null, departmentId,
-         selfAssigned ? p.id : null, selfAssigned ? new Date() : null,
-         /* A ticket raised for yourself is work you are already doing -- you
-            wrote it down because it is on your plate. Starting it in a separate
-            gesture would be admitting to yourself what you just typed. */
-         selfAssigned ? p.id : null, selfAssigned ? 'IN_PROGRESS' : 'NEW',
-         dto.fastTrack === true]);
+        p.departmentId ?? null, departmentId,
+        selfAssigned ? p.id : null, selfAssigned ? new Date() : null,
+        /* A ticket raised for yourself is work you are already doing -- you
+           wrote it down because it is on your plate. Starting it in a separate
+           gesture would be admitting to yourself what you just typed. */
+        selfAssigned ? p.id : null, selfAssigned ? 'IN_PROGRESS' : 'NEW',
+        dto.fastTrack === true]);
       const created = rows[0];
 
       await addParticipant(c, created.id, p.id, 'REQUESTER', p.id);
@@ -359,6 +359,11 @@ export class TasksService {
       throw new ConflictException(`${target.full_name} already has this one.`);
     }
 
+    const dueAt = dto.dueAt ? new Date(dto.dueAt) : null;
+    if (dueAt && (Number.isNaN(dueAt.getTime()) || dueAt.getTime() < Date.now() - 60_000)) {
+      throw new BadRequestException('A commitment in the past is not a commitment.');
+    }
+
     /* Two managers on one department is deliberate -- it is how cover during
        leave works -- so two of them can reach for the same ticket in the same
        moment. The one who gets there second is told it has gone rather than
@@ -385,6 +390,9 @@ export class TasksService {
                    history, and a hold reason left on an assigned ticket reads
                    as though it is still held. */
                 planned_for = NULL, status_reason = NULL,
+                due_at = CASE WHEN $5::timestamptz IS NOT NULL THEN $5::timestamptz ELSE due_at END,
+                sla_state = CASE WHEN $5::timestamptz IS NOT NULL THEN 'ON_TIME' ELSE sla_state END,
+                overdue_since = CASE WHEN $5::timestamptz IS NOT NULL THEN NULL ELSE overdue_since END,
                 status_changed_at = now(), status_changed_by = $3
           /* PLANNING and ON_HOLD belong here: assigning is exactly how a parked
              ticket comes back to life, and leaving them out meant the UPDATE
@@ -394,7 +402,7 @@ export class TasksService {
           WHERE id = $1
             AND status IN ('NEW','PLANNING','ON_HOLD','ASSIGNED','IN_PROGRESS','BLOCKED')
             AND assignee_id IS NOT DISTINCT FROM $4`,
-        [id, target.id, p.id, previous]);
+        [id, target.id, p.id, previous, dueAt]);
       if (rowCount === 0) return false;
 
       if (previous) {
@@ -404,7 +412,7 @@ export class TasksService {
       }
       await addParticipant(c, id, target.id, 'ASSIGNEE', p.id);
       await writeEvent(c, id, p.id, previous ? 'REASSIGNED' : 'ASSIGNED_AND_STARTED',
-        { assigneeId: target.id, assigneeName: target.full_name, previousAssigneeId: previous, note: dto.note });
+        { assigneeId: target.id, assigneeName: target.full_name, previousAssigneeId: previous, note: dto.note , dueAt: dueAt ? dueAt.toISOString() : null});
       return true;
     });
 
@@ -578,7 +586,7 @@ export class TasksService {
         if (!dto.assigneeId) {
           throw new BadRequestException('Choose who it goes to.');
         }
-        return this.assign(p, id, { assigneeId: dto.assigneeId });
+        return this.assign(p, id, { assigneeId: dto.assigneeId, dueAt: dto.dueAt });
 
       case 'IN_PROGRESS':
         /* A parked ticket has no assignee, so starting it means choosing one.
@@ -589,7 +597,7 @@ export class TasksService {
           if (!dto.assigneeId) {
             throw new BadRequestException('Nobody is on this yet. Choose who starts it.');
           }
-          return this.assign(p, id, { assigneeId: dto.assigneeId });
+          return this.assign(p, id, { assigneeId: dto.assigneeId, dueAt: dto.dueAt });
         }
         return this.start(p, id);
 
@@ -602,11 +610,24 @@ export class TasksService {
         }
         return this.resolve(p, id, { resolution: dto.resolution });
 
+      case 'IMPLEMENTATION':
+        /* Approving is the requester's judgement of work they asked for. The
+           capability says whether this person holds it; the board is allowed
+           to offer the gesture and be told no. */
+        return this.approveReview(p, id);
+
+      case 'DONE':
+        return this.complete(p, id);
+
+      case 'CANCELLED':
+        if (!dto.reason?.trim()) {
+          throw new BadRequestException('Say why it is being cancelled.');
+        }
+        return this.cancel(p, id, { reason: dto.reason });
+
       default:
         throw new ConflictException(
-          `${readableStatus(to)} is not something anybody sets by moving a card. `
-          + 'Approval is the requester\'s, and a ticket is done when the person '
-          + 'carrying it out says it is in place.');
+          `${readableStatus(to)} is not a state a card can be moved to.`);
     }
   }
 
@@ -941,7 +962,7 @@ export class TasksService {
                                requester_department_id, department_id, status_changed_by)
          VALUES ($1,$2,COALESCE($3,'NORMAL'),$4,$5,$6,$4) RETURNING id, reference`,
         [dto.title, dto.description ?? null, dto.priority ?? null, p.id,
-         item.department_id, dto.departmentId]);
+        item.department_id, dto.departmentId]);
       const created = rows[0];
 
       await addParticipant(c, created.id, p.id, 'REQUESTER', p.id);
@@ -1165,9 +1186,9 @@ export class TasksService {
    * message is filtered away with the rest, and the filter is permanent.
    */
   private async tell(targets: string[] | Promise<string[]>, actor: Principal,
-                     title: string, body: string | undefined, id: string,
-                     severity: 'INFO' | 'WARNING' = 'INFO',
-                     alsoEmail = false) {
+    title: string, body: string | undefined, id: string,
+    severity: 'INFO' | 'WARNING' = 'INFO',
+    alsoEmail = false) {
     const list = (await targets).filter((u) => u !== actor.id);
     if (!list.length) return;
 
@@ -1224,7 +1245,7 @@ export class TasksService {
   /** Returns what it wrote, so the caller can attach an email to each row and
    *  record whether that email arrived. */
   private async tellRaw(userIds: string[], title: string, body: string, id: string,
-                        severity: 'INFO' | 'WARNING' | 'CRITICAL' = 'INFO') {
+    severity: 'INFO' | 'WARNING' | 'CRITICAL' = 'INFO') {
     const written: Array<{ userId: string; notificationId: string | null }> = [];
     for (const userId of new Set(userIds)) {
       try {
@@ -1260,14 +1281,14 @@ async function coManagers(departmentId: string, exceptUserId: string): Promise<s
 }
 
 async function addParticipant(c: any, itemId: string, userId: string,
-                              role: ParticipantRole, addedBy: string) {
+  role: ParticipantRole, addedBy: string) {
   await c.query(
     `INSERT INTO tk_participants (item_id, user_id, role, added_by)
      VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`, [itemId, userId, role, addedBy]);
 }
 
 async function writeEvent(c: any, itemId: string, actorId: string | null,
-                          type: string, payload: unknown) {
+  type: string, payload: unknown) {
   await c.query(
     `INSERT INTO tk_events (item_id, actor_id, type, payload) VALUES ($1,$2,$3,$4)`,
     [itemId, actorId, type, JSON.stringify(payload ?? {})]);
