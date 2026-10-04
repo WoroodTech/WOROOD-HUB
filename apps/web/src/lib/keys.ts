@@ -22,5 +22,10 @@ export const qk = {
   adminPermissions: ['admin', 'permissions'] as const,
   adminDepartments: ['admin', 'departments'] as const,
   adminDashboards: ['admin', 'dashboards'] as const,
+  tasks: (filters: string) => ['tasks', 'list', filters] as const,
+  task: (id: string) => ['tasks', 'item', id] as const,
+  taskDepartments: ['tasks', 'departments'] as const,
+  taskPeople: (departmentId: string) => ['tasks', 'people', departmentId] as const,
+
   roomCalendar: (roomId: string, date: string) => ['mr', 'room-calendar', roomId, date] as const,
 };

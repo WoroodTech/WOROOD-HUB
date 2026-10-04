@@ -71,16 +71,35 @@ export function Shell() {
                   {module.name}
                   {module.comingSoon ? <span className="navgroup__soon">soon</span> : null}
                 </p>
-                {module.navigation.map((item) => (
+                {module.navigation.map((item) => {
+                  /* Exact match, unless this entry is the only one for its
+                     module.
+                  
+                     NavLink highlights on prefix by default, which is right for
+                     a module with a single entry -- /sales stays lit while you
+                     are three pages into it. It is wrong the moment a module
+                     has several: /tasks is a prefix of every ticket page, so
+                     "Tasks & Tickets" stayed lit whichever tab you chose, and
+                     /tasks/board is a prefix of /tasks/board/mine, so the
+                     manager's board lit up when you opened your own.
+                  
+                     `end` was hardcoded to /sales, which fixed that one module
+                     and left the rule wrong everywhere else. Deciding from the
+                     shape of the navigation means a module that grows a second
+                     entry gets the right behaviour without anybody
+                     remembering. */
+                  const exact = module.navigation.length > 1;
+                  return (
                   <NavLink
                     key={item.path}
                     to={item.path}
-                    end={item.path === '/sales'}
+                    end={exact}
                     className={({ isActive }) => `navitem${isActive ? ' navitem--active' : ''}`}
                   >
                     <Icon name={item.icon} size={17} /> <span>{item.label}</span>
                   </NavLink>
-                ))}
+                  );
+                })}
               </div>
             ) : null
           ))}

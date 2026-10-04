@@ -26,8 +26,28 @@ export interface Principal {
   fullNameAr?: string | null;
   jobTitle?: string | null;
   department?: string | null;
+  /**
+   * The department *identifier*, alongside the display name that was already
+   * here. Module 3 addresses work to a department rather than to a person, so
+   * the name is no longer enough -- and a module that had to re-query for it
+   * on every request would be asking the database a question the guard has
+   * already answered.
+   */
+  departmentId?: string | null;
   timezone: string;
   locale: string;
+  /**
+   * Every department this person may act on: the ones they manage, plus
+   * everything underneath those in the tree.
+   *
+   * Authority over a department is a POSITION, not a role. A role would be
+   * company-wide, and the Marketing manager would be able to assign work
+   * inside Customer Care. So core_department_managers decides the scope, and
+   * the derived permission below only decides whether the button exists at
+   * all. This is the same separation Module 1 already makes between holding
+   * `reservation.manage-any` and owning the reservation you are editing.
+   */
+  managedDepartmentIds: string[];
   roles: string[];
   permissions: string[];
 }
@@ -39,6 +59,16 @@ export const REQUIRED_PERMISSIONS = 'requiredPermissions';
 /** ANY semantics: the caller needs at least one of the listed keys. */
 export const Permissions = (...keys: string[]) => SetMetadata(REQUIRED_PERMISSIONS, keys);
 
+/**
+ * Granted by managing a department rather than by a role assignment, which is
+ * why it is added here rather than seeded into core_role_permissions. Note
+ * that holding it says nothing about WHERE it applies -- every call site must
+ * still check the target department against `managedDepartmentIds`. It exists
+ * so the registry can filter navigation and portlets, which is a yes/no
+ * question and cannot express scope.
+ */
+export const DERIVED_DEPARTMENT_MANAGER_PERMISSION = 'tasks.item.assign';
+
 export const CurrentUser = createParamDecorator(
   (_d: unknown, ctx: ExecutionContext): Principal =>
     ctx.switchToHttp().getRequest().principal,
@@ -48,9 +78,12 @@ export const CurrentUser = createParamDecorator(
 export async function loadPrincipal(userId: string): Promise<Principal | null> {
   const rows = await query(
     `SELECT u.id, u.email, u.full_name, u.full_name_ar, u.job_title,
-            u.timezone, u.locale, u.status, u.deleted_at, d.name AS department,
+            u.timezone, u.locale, u.status, u.deleted_at,
+            u.department_id, d.name AS department,
             COALESCE(ARRAY_AGG(DISTINCT r.key) FILTER (WHERE r.key IS NOT NULL), '{}') AS roles,
-            COALESCE(ARRAY_AGG(DISTINCT p.key) FILTER (WHERE p.key IS NOT NULL), '{}') AS permissions
+            COALESCE(ARRAY_AGG(DISTINCT p.key) FILTER (WHERE p.key IS NOT NULL), '{}') AS permissions,
+            COALESCE(ARRAY(SELECT md.department_id
+                             FROM core_user_managed_departments(u.id) md), '{}') AS managed_department_ids
        FROM core_users u
        LEFT JOIN core_departments d       ON d.id = u.department_id
        LEFT JOIN core_user_roles ur       ON ur.user_id = u.id
@@ -63,10 +96,24 @@ export async function loadPrincipal(userId: string): Promise<Principal | null> {
   );
   const r = rows[0];
   if (!r || r.deleted_at || r.status !== 'ACTIVE') return null;
+
+  const permissions: string[] = r.permissions ?? [];
+  const managedDepartmentIds: string[] = r.managed_department_ids ?? [];
+
+  /* Managing a department is what makes somebody able to hand work out, so the
+     permission is derived from the org chart rather than granted through a
+     role. Union rather than push: an administrator may hold the key outright
+     and must not end up with it twice. */
+  if (managedDepartmentIds.length > 0
+      && !permissions.includes(DERIVED_DEPARTMENT_MANAGER_PERMISSION)) {
+    permissions.push(DERIVED_DEPARTMENT_MANAGER_PERMISSION);
+  }
+
   return {
     id: r.id, email: r.email, fullName: r.full_name, fullNameAr: r.full_name_ar,
-    jobTitle: r.job_title, department: r.department, timezone: r.timezone,
-    locale: r.locale, roles: r.roles ?? [], permissions: r.permissions ?? [],
+    jobTitle: r.job_title, department: r.department, departmentId: r.department_id,
+    timezone: r.timezone, locale: r.locale,
+    roles: r.roles ?? [], permissions, managedDepartmentIds,
   };
 }
 
@@ -119,3 +166,10 @@ export class PermissionsGuard implements CanActivate {
 
 export const can = (p: Principal | null | undefined, key: string): boolean =>
   !!p && p.permissions.includes(key);
+
+/** Does this person run the given department, or something above it? */
+export const managesDepartment = (
+  p: Principal | null | undefined,
+  departmentId: string | null | undefined,
+): boolean =>
+  !!p && !!departmentId && p.managedDepartmentIds.includes(departmentId);

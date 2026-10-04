@@ -94,3 +94,10 @@ export class UpsertRole {
 export class SetRolePermissions {
   @IsArray() @ArrayMaxSize(200) @IsString({ each: true }) permissionKeys!: string[];
 }
+
+
+/** Who runs a department. One person per call; a department may have several,
+ *  which is how cover during leave works without a company-wide role. */
+export class SetDepartmentManager {
+  @IsUUID() userId!: string;
+}

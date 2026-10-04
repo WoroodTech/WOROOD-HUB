@@ -36,6 +36,15 @@ const PERMISSIONS: [string, string, string][] = [
   ['sales.order.view', 'sales-dashboard', 'Browse individual orders (no customer identity)'],
   ['sales.customer.view', 'sales-dashboard', 'See customer name, e-mail, phone and address'],
   ['sales.sync.manage', 'sales-dashboard', 'Trigger backfills, inspect sync health, re-register webhooks'],
+  ['tasks.item.view-any', 'tasks', 'Read every ticket in the company'],
+  ['tasks.item.manage-any', 'tasks', 'Act on any ticket regardless of department'],
+  ['tasks.report.view', 'tasks', 'Ticket reporting by department and ageing'],
+  /* tasks.item.assign is deliberately absent. It is derived in loadPrincipal
+     from core_department_managers, because authority over a department is a
+     position rather than a role -- granting it here would make it
+     company-wide and let the Marketing manager assign work inside Customer
+     Care. The permission row itself is registered from the module descriptor
+     so the Roles screen can explain it; it is simply never granted. */
   ['meeting-rooms.room.manage', 'meeting-rooms', 'Create, edit and retire rooms'],
   ['meeting-rooms.reservation.manage-any', 'meeting-rooms', 'Modify or cancel any reservation'],
   ['core.user.manage', 'core', 'Create employee accounts, change their details and password, assign roles and dashboards'],
@@ -54,11 +63,17 @@ const PERMISSIONS: [string, string, string][] = [
  * the administrator can open the administration console.
  */
 const ROLES: Record<string, { name: string; nameAr: string; perms: string[] }> = {
+  /* Nothing from the tasks module: raising a ticket and reading your own are
+     not privileges, so they carry no key at all. The bare employee can use the
+     module fully, which is the point. */
   'employee': { name: 'Employee', nameAr: 'موظف', perms: [] },
 
+  /* view-any, not manage-any. The widest reading permission still does not
+     imply an operational one -- the same line this cast already draws with
+     Data & Sync and the administration console. */
   'executive': {
     name: 'Executive', nameAr: 'الإدارة التنفيذية',
-    perms: ['sales.dashboard.view', 'sales.order.view', 'sales.customer.view']
+    perms: ['tasks.item.view-any', 'sales.dashboard.view', 'sales.order.view', 'sales.customer.view']
   },
 
   'finance': {
@@ -107,15 +122,29 @@ const ROLES: Record<string, { name: string; nameAr: string; perms: string[] }> =
   },
 };
 
-const USERS: [string, string, string, string, string, string][] = [
-  // email, name, name_ar, job title, department, role
-  ['Admin@worood.co', 'Khalid Hesham', 'خالد هشام', 'IT & Systems Administrator', 'Technology', 'admin'],
-  ['Kandil@worood.co', 'Mohamed Kandil', 'محمد قنديل', 'Chief Executive Officer', 'Executive', 'executive'],
-  ['heba.fayed@worood.co', 'Heba Fayed', 'هبة فايد', 'Operations Manager', 'Operations', 'operations'],
-  ['omnia.osama@worood.co', 'Omnia Osama', 'أمنية أسامة', 'Customer Care', 'Customer Care', 'customer-care'],
-  ['nadia@worood.co', 'Nadia', 'نادية', 'Marketing Director', 'Marketing', 'marketing'],
-  ['Yousry@worood.co', 'Mohamed Yousry', 'محمد يسري', 'Financial Manager', 'Finance', 'finance'],
-];
+/* This seeder creates no people.
+ *
+ * It used to create six named staff accounts, thirteen invented colleagues,
+ * and a hard-coded list of who runs which department. All of it was useful
+ * while the portal had no real users and is a liability now: the seeder gets
+ * run on a live database more often than anybody plans -- to register a new
+ * module's permissions, to repair a role, or by reflex after a deploy -- and
+ * every one of those runs would have recreated deleted accounts with a
+ * published password, overwritten real people's names and roles, and reset
+ * the org chart.
+ *
+ * People, their roles and their departments are the administrator's, made in
+ * Administration -> People and Administration -> Departments. Nothing in this
+ * file needs a person's name to exist.
+ *
+ * A brand-new installation still needs one account to sign in with, so that
+ * one is created from the environment when asked for -- see the bootstrap
+ * block in main(). It does nothing at all on a database that already has
+ * somebody in it.
+ *
+ * What remains below is reference data the product cannot invent for itself:
+ * roles, permissions, departments, rooms, widgets and dashboard definitions.
+ */
 
 /* --------------------------------------------------------------- widgets -- */
 
@@ -443,7 +472,9 @@ async function main() {
                           mr_equipment, mr_locations,
                           core_notifications, core_audit_logs, core_refresh_tokens,
                           core_user_roles, core_role_permissions, core_users,
-                          core_roles, core_permissions, core_departments CASCADE`);
+                          core_roles, core_permissions, core_department_managers,
+                          tk_events, tk_links, tk_comments, tk_participants, tk_items,
+                          core_departments CASCADE`);
     console.log('  reset: all seeded tables truncated');
   }
 
@@ -491,25 +522,42 @@ async function main() {
     }
   }
 
-  // bcrypt at cost 12 is deliberately slow. Every demo account shares one
-  // password, so the digest is computed once and reused -- hashing it seven
-  // times would add seconds to every seed run for no benefit.
-  const digest = await bcrypt.hash('Worood@2026', config.security.bcryptRounds);
-  const userIds: Record<string, string> = {};
-  for (const [email, name, nameAr, title, dept, role] of USERS) {
-    const u = await one(
-      `INSERT INTO core_users (email, password_hash, full_name, full_name_ar, job_title, department_id, timezone)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
-       ON CONFLICT (email) DO UPDATE SET full_name = EXCLUDED.full_name,
-         full_name_ar = EXCLUDED.full_name_ar, job_title = EXCLUDED.job_title,
-         department_id = EXCLUDED.department_id
-       RETURNING id`,
-      [email, digest, name, nameAr, title, deptIds[dept], TZ]);
-    userIds[email] = u.id;
-    await query(`DELETE FROM core_user_roles WHERE user_id = $1`, [u.id]);
-    await query(`INSERT INTO core_user_roles (user_id, role_id) VALUES ($1,$2)
-                 ON CONFLICT DO NOTHING`, [u.id, roleIds[role]]);
+  /* ------------------------------------------------ the first account --
+   *
+   * Only ever the FIRST one, and only when asked for. A brand-new database
+   * has nobody to sign in as, and the bcrypt cost lives in this process, so
+   * creating that account by hand means writing a hash by hand. This does it:
+   *
+   *   SEED_ADMIN_EMAIL=you@worood.co SEED_ADMIN_PASSWORD='…' npm run seed
+   *
+   * Two guards, either of which is enough to make it a no-op. Without the
+   * variables it does nothing. With them, it still does nothing if any active
+   * account already exists -- so it cannot resurrect a deleted colleague, and
+   * it cannot overwrite a live one, whatever anybody types.
+   */
+  const bootstrapEmail = process.env.SEED_ADMIN_EMAIL?.trim();
+  const bootstrapPassword = process.env.SEED_ADMIN_PASSWORD;
+  if (bootstrapEmail && bootstrapPassword) {
+    const populated = await one(
+      `SELECT count(*)::int AS n FROM core_users WHERE deleted_at IS NULL`);
+    if (populated.n > 0) {
+      console.log(`  first account  skipped — ${populated.n} account(s) already exist`);
+    } else {
+      const digest = await bcrypt.hash(bootstrapPassword, config.security.bcryptRounds);
+      const u = await one(
+        `INSERT INTO core_users (email, password_hash, full_name, job_title, timezone)
+         VALUES ($1,$2,'Administrator','System Administrator',$3) RETURNING id`,
+        [bootstrapEmail, digest, TZ]);
+      await query(`INSERT INTO core_user_roles (user_id, role_id) VALUES ($1,$2)
+                   ON CONFLICT DO NOTHING`, [u.id, roleIds['admin']]);
+      console.log(`  first account  ${bootstrapEmail} — change the password after signing in`);
+    }
   }
+
+  /* core_department_managers is deliberately untouched here. Who runs a
+     department is an operational fact that changes with leave, promotions and
+     people joining -- it is maintained in Administration, and a seeder that
+     rewrote it would undo the administrator's work every time it ran. */
 
   /* meeting rooms */
   const loc = await one(
@@ -737,7 +785,10 @@ async function main() {
        ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name, name_ar = EXCLUDED.name_ar,
          description = EXCLUDED.description, is_system = EXCLUDED.is_system
        RETURNING id`,
-      [d.key, d.name, d.nameAr, d.description, d.system, userIds['Admin@worood.co']]);
+      /* No creator: these are the product's own dashboards, not one person's.
+         The column stayed pointing at a seeded account, which is part of why
+         that account could not be deleted afterwards. */
+      [d.key, d.name, d.nameAr, d.description, d.system, null]);
     dashIds[d.key] = row.id;
 
     await query(`DELETE FROM sd_dashboard_widgets WHERE dashboard_id = $1`, [row.id]);
@@ -812,34 +863,14 @@ async function main() {
   await grantRole('executive', 'customer-insights');
   await grantRole('finance', 'customer-insights');
 
-  /* One dashboard beyond what her role carries. Deliberately *not* given to
-     Customer Care: that role holds no dashboard permission at all, so a grant
-     there would be inert -- an access row that looks like access and is not. */
-  await query(
-    `INSERT INTO sd_user_dashboard_access (user_id, dashboard_id, effect, granted_by)
-     VALUES ($1,$2,'GRANT',$3) ON CONFLICT (user_id, dashboard_id) DO UPDATE SET effect = 'GRANT'`,
-    [userIds['heba.fayed@worood.co'], dashIds['executive-daily'], userIds['Admin@worood.co']]);
-
-  // ...and the other direction: something her role grants, withheld from her.
-  await query(
-    `INSERT INTO sd_user_dashboard_access (user_id, dashboard_id, effect, granted_by)
-     VALUES ($1,$2,'REVOKE',$3) ON CONFLICT (user_id, dashboard_id) DO UPDATE SET effect = 'REVOKE'`,
-    [userIds['nadia@worood.co'], dashIds['combined-sales-marketing'], userIds['Admin@worood.co']]);
-
-  /* notifications, so my-alerts is not empty */
-  await query(`DELETE FROM core_notifications WHERE module_key = 'sales-dashboard'`);
-  const notify = (email: string, sev: string, title: string, body: string, read = false) => query(
-    `INSERT INTO core_notifications (user_id, module_key, severity, title, body, read_at)
-     VALUES ($1,'sales-dashboard',$2,$3,$4,$5)`,
-    [userIds[email], sev, title, body, read ? new Date() : null]);
-  await notify('heba.fayed@worood.co', 'INFO', 'Executive Daily assigned to you',
-    'Khalid Hesham gave you individual access to this dashboard.');
-  await notify('Yousry@worood.co', 'WARNING', 'Collected is 62% below ordered',
-    'Cash on delivery float is unusually high for the last 7 days.');
-  await notify('heba.fayed@worood.co', 'CRITICAL', 'Webhook subscription missing',
-    'orders/updated was not present at the last watchdog run and has been re-registered.');
-  await notify('Kandil@worood.co', 'INFO', 'Executive Daily refreshed',
-    'Nightly snapshot completed for the trailing 13 months.', true);
+  /* The per-person dashboard grants and the sample alerts that used to sit
+     here are gone with the accounts they were written for. They existed to
+     demonstrate two things -- an individual GRANT on top of a role, and an
+     individual REVOKE against one -- which the Administration screens now do
+     with real people, against real dashboards, in front of whoever is asking.
+     Sample alerts addressed to named colleagues are worse: they arrive in a
+     real inbox, look like the system reporting a fact, and say something that
+     was never true. */
 
   /* ------------------------------------------------- the Shopify mirror --
    *
@@ -929,7 +960,7 @@ async function report() {
       LEFT JOIN core_user_roles ur ON ur.user_id = u.id
       LEFT JOIN core_roles r ON r.id = ur.role_id
      GROUP BY u.id, u.email, u.full_name ORDER BY u.full_name`);
-  console.log('\n  expected access matrix (password for every account: Worood@2026)');
+  console.log('\n  who can reach what (accounts are yours; this seeder creates none)');
   console.log(`    ${'employee'.padEnd(26)} ${'role'.padEnd(15)} dashboards`);
   for (const m of matrix) {
     console.log(`    ${(m.full_name + ' <' + m.email + '>').padEnd(26).slice(0, 26)} ${String(m.roles).padEnd(15)} ${m.dashboards}`);

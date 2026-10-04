@@ -33,7 +33,7 @@ const cairoDay = (offset = 0): string => {
 export function SalesDashboard() {
   const { key = '' } = useParams();
   const [params, setParams] = useSearchParams();
-  const range = params.get('range') ?? '30d';
+  const range = params.get('range') ?? 'today';
   /* Held in the URL beside the range, so a comparison can be shared or
      bookmarked the way a range already can. */
   const primary = params.get('primary') ?? cairoDay(-1);
