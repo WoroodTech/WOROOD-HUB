@@ -63,7 +63,7 @@ const ITEM_COLUMNS = `
   t.due_at, t.sla_state, t.overdue_since, t.assigned_at, t.resolved_at,
   t.closed_at, t.reopened_count, t.created_at, t.updated_at,
   t.fast_track, t.planned_for, t.review_rejected_reason, t.review_rejection_count,
-  t.blocked_at, t.implementation_started_at, t.done_at, t.held_assignee_id,
+  t.blocked_at, t.implementation_started_at, t.done_at,
   d.name AS department_name, d.name_ar AS department_name_ar,
   t.requester_department_id, rd.name AS requester_department_name,
   ru.full_name AS requester_name, ru.job_title AS requester_title,
@@ -404,7 +404,7 @@ export class TasksService {
                 /* The parking is over. A planned date that has been acted on is
                    history, and a hold reason left on an assigned ticket reads
                    as though it is still held. */
-                planned_for = NULL, status_reason = NULL, held_assignee_id = NULL,
+                planned_for = NULL, status_reason = NULL,
                 status_changed_at = now(), status_changed_by = $3
           /* PLANNING and ON_HOLD belong here: assigning is exactly how a parked
              ticket comes back to life, and leaving them out meant the UPDATE
@@ -496,23 +496,19 @@ export class TasksService {
     this.assertMove(item.status, 'ON_HOLD');
 
     await tx(async (c) => {
-      /* The assignee is released, but remembered.
+      /* The assignee is released.
       
          Released because a held ticket has nobody working on it by definition,
          and a name left on it counts against that person's load for as long as
-         it sits there. Remembered because resuming almost always means the same
-         person picking up where they left off -- asking who should take a
-         ticket that was already somebody's is a question with an obvious answer,
-         and the obvious answer should be the default rather than a form. */
+         it sits there. */
       await c.query(
         `UPDATE tk_items SET status='ON_HOLD', status_reason=$2,
-                             held_assignee_id = assignee_id,
                              assignee_id=NULL, assigned_at=NULL,
                              due_at=NULL, sla_state='ON_TIME', overdue_since=NULL,
                              status_changed_at=now(), status_changed_by=$3
           WHERE id=$1`, [id, dto.reason, p.id]);
       await writeEvent(c, id, p.id, 'HELD',
-        { reason: dto.reason, heldAssigneeId: item.assignee_id });
+        { reason: dto.reason, releasedAssigneeId: item.assignee_id });
     });
 
     const told = [item.requester_id, ...(item.assignee_id ? [item.assignee_id] : [])];
@@ -613,12 +609,9 @@ export class TasksService {
            telling somebody to go and assign it first -- which was a refusal
            that named the next step instead of taking it. */
         if (!item.assignee_id) {
-          /* Resuming a held ticket goes back to whoever had it. They were taken
-             off it by the hold, not by a decision that it was not theirs, so
-             making somebody choose again is asking a question that has already
-             been answered. An explicit assigneeId still wins, for the case
-             where it really should change hands. */
-          const back = dto.assigneeId ?? item.held_assignee_id;
+          /* A parked ticket has nobody on it, so starting it means choosing
+             somebody -- the board and the backlog both ask before they call. */
+          const back = dto.assigneeId;
           if (!back) {
             throw new BadRequestException('Nobody is on this yet. Choose who starts it.');
           }
