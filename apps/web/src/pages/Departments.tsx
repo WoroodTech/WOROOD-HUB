@@ -35,6 +35,7 @@ export function Departments() {
   const toast = useToast();
   const queryClient = useQueryClient();
   const [picking, setPicking] = useState<Department | null>(null);
+  const [creating, setCreating] = useState(false);
 
   const overview = useQuery({
     queryKey: ['admin', 'departments', 'overview'],
@@ -64,13 +65,12 @@ export function Departments() {
       <header className="pagehead">
         <div>
           <h1 className="pagehead__title">Departments</h1>
-          <p className="pagehead__sub">
-            Who runs each department. This is a position in the org chart, not a role:
-            a manager here can hand out work in this department and everything below it,
-            and nowhere else. More than one is allowed on purpose — it is how cover during
-            leave works without giving anybody company-wide authority.
-          </p>
         </div>
+        <span className="pagehead__tools">
+          <button type="button" className="btn btn--primary" onClick={() => setCreating(true)}>
+            <Icon name="plus" size={14} /> New department
+          </button>
+        </span>
       </header>
 
       {unreachable.length > 0 ? (
@@ -139,6 +139,9 @@ export function Departments() {
 
       {picking ? (
         <ManagerPicker department={picking} onClose={() => setPicking(null)} />
+      ) : null}
+      {creating ? (
+        <NewDepartment departments={departments} onClose={() => setCreating(false)} />
       ) : null}
     </div>
   );
@@ -219,6 +222,94 @@ function ManagerPicker({ department, onClose }: {
             disabled={!chosen || add.isPending}
             onClick={() => add.mutate()}>
             {add.isPending ? 'Adding…' : 'Make them a manager'}
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+
+function NewDepartment({ departments, onClose }: {
+  departments: Department[];
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [name, setName] = useState('');
+  const [nameAr, setNameAr] = useState('');
+  const [parentId, setParentId] = useState('');
+
+  const create = useMutation({
+    mutationFn: () => api<{ departments: Department[] }>('/admin/departments', {
+      method: 'POST',
+      body: {
+        name: name.trim(),
+        ...(nameAr.trim() ? { nameAr: nameAr.trim() } : {}),
+        ...(parentId ? { parentId } : {}),
+      },
+    }),
+    onSuccess: (data) => {
+      queryClient.setQueryData(['admin', 'departments', 'overview'], data);
+      void queryClient.invalidateQueries({ queryKey: ['hub'] });
+      void queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      onClose();
+    },
+  });
+
+  return (
+    <div className="modal" role="dialog" aria-modal="true" aria-label="New department">
+      <button type="button" className="modal__scrim" onClick={onClose} aria-label="Close" />
+      <div className="modal__panel">
+        <header className="modal__head">
+          <h2 className="modal__title">New department</h2>
+        </header>
+
+        <div className="modal__body">
+          <div className="field field--wide">
+            <span className="field__label">Name</span>
+            <input className="input" value={name} autoFocus
+                   onChange={(e) => setName(e.target.value)} placeholder="Human Resources" />
+          </div>
+          <div className="field field--wide">
+            <span className="field__label">
+              Arabic name <span className="field__opt">(optional)</span>
+            </span>
+            <input className="input" value={nameAr} dir="rtl"
+                   onChange={(e) => setNameAr(e.target.value)} />
+          </div>
+          <div className="field field--wide">
+            <span className="field__label">
+              Under <span className="field__opt">(optional)</span>
+            </span>
+            <select className="input" value={parentId}
+                    onChange={(e) => setParentId(e.target.value)}>
+              <option value="">Top level</option>
+              {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          </div>
+
+          <p className="hint">
+            The department starts with no manager, so it will be hidden from the ticket
+            picker until you add one. Create the people who belong to it first, then
+            use "Add a manager" on its card.
+          </p>
+
+          {/* Shown inside the dialog: a toast would sit behind the scrim. */}
+          {create.isError ? (
+            <div className="notice notice--error">
+              <span>
+                {create.error instanceof Error ? create.error.message : 'Could not create it.'}
+              </span>
+            </div>
+          ) : null}
+        </div>
+
+        <footer className="modal__foot">
+          <button type="button" className="btn btn--ghost" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn btn--primary"
+                  disabled={name.trim().length < 2 || create.isPending}
+                  onClick={() => create.mutate()}>
+            {create.isPending ? 'Creating…' : 'Create department'}
           </button>
         </footer>
       </div>

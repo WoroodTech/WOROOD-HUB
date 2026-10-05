@@ -2370,16 +2370,34 @@ button, input, select, textarea { font: inherit; color: inherit; }
   background: var(--surface); overflow: hidden;
   margin-block-end: 16px;
 }
+
+/* A coloured edge rather than a coloured header: it marks the section down its
+   whole length, so a manager scrolling knows which one they are in without
+   the heading being in view. The colours are the lifecycle's own, so a planned
+   ticket is the same blue here as on the board. */
 .dgroup__head {
-  padding: 13px 16px; border-block-end: 1px solid var(--line);
+  padding: 13px 16px 13px 14px;
+  border-block-end: 1px solid var(--line);
+  border-inline-start: 3px solid var(--dg, var(--line));
   background: var(--surface-2);
 }
+/* Set on the container, not the header, so the rows inherit it and a hovered
+   row is marked in its own section's colour. */
+.dgroup--NEW       { --dg: #b4552d; }
+.dgroup--PLANNING  { --dg: #4b6b8a; }
+.dgroup--ON_HOLD   { --dg: #8a7250; }
+.dgroup--CANCELLED { --dg: #8a8079; }
+
 .dgroup__title {
   display: flex; align-items: center; gap: 8px;
   font-size: 14.5px; font-weight: 650; color: var(--ink);
 }
-/* No count beside the title. The rows are right there and countable, and a
-   number next to a heading is one more thing competing with the heading. */
+/* The count only appears when there is something to count. A grey zero beside
+   a heading is a fact nobody needed and a shape the eye still stops on. */
+.dgroup__n {
+  font-size: 12px; font-weight: 600; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
 .dgroup__hint {
   display: block; margin-block-start: 3px;
   font-size: 12.5px; color: var(--muted); line-height: 1.45;
@@ -2392,7 +2410,14 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .drow:last-child { border-block-end: 0; }
 /* The whole row lifts, not just the link: the row is what somebody aims at. */
-.drow:hover { background: var(--surface-2); }
+.drow {
+  border-inline-start: 3px solid transparent;
+  transition: background 90ms ease, border-color 90ms ease;
+}
+.drow:hover {
+  background: var(--surface-2);
+  border-inline-start-color: var(--dg, var(--accent));
+}
 
 .drow__main {
   flex: 1; min-inline-size: 0;
@@ -2458,3 +2483,92 @@ button, input, select, textarea { font: inherit; color: inherit; }
   .bcol { flex-basis: 80vw; max-block-size: none; }
   .board__controls .input { max-inline-size: none; flex: 1; }
 }
+
+/* ============================================================ attachments = */
+
+.apick { display: flex; flex-direction: column; gap: 8px; }
+.apick__drop {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px; cursor: pointer;
+  border: 1px dashed var(--line); border-radius: 10px;
+  background: var(--surface-2); color: var(--ink-2); font-size: 13px;
+}
+.apick__drop:hover, .apick__drop:focus-visible { border-color: var(--accent); outline: none; }
+/* Lit while a file is held over it: without that, a drop is a guess. */
+.apick__drop--over {
+  border-color: var(--accent); border-style: solid;
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface-2));
+}
+.apick__sub { color: var(--muted); }
+.apick__problems { margin: 0; padding-inline-start: 18px; font-size: 12px; color: var(--danger); }
+
+.apick__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.apick__item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--surface);
+}
+.apick__thumb {
+  inline-size: 36px; block-size: 36px; border-radius: 6px; object-fit: cover; flex-shrink: 0;
+}
+.apick__thumb--pdf {
+  display: grid; place-items: center; background: var(--surface-2); color: var(--muted);
+}
+.apick__name { flex: 1; min-inline-size: 0; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.apick__size { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.apick__remove {
+  inline-size: 24px; block-size: 24px; border-radius: 6px;
+  border: 0; background: transparent; color: var(--muted); font-size: 17px; cursor: pointer;
+}
+.apick__remove:hover { background: var(--surface-2); color: var(--danger); }
+
+/* Square tiles from the thumbnail, cropped to fill. The full image opens in
+   the lightbox; the grid is for recognising, not reading. */
+.agallery {
+  list-style: none; margin: 10px 0 0; padding: 0;
+  display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+}
+.agallery li { position: relative; }
+.agallery__tile {
+  display: block; inline-size: 100%; aspect-ratio: 1; padding: 0;
+  border: 1px solid var(--line); border-radius: 9px; overflow: hidden;
+  background: var(--surface-2); cursor: zoom-in;
+}
+.agallery__tile img { inline-size: 100%; block-size: 100%; object-fit: cover; display: block; }
+.agallery__tile:hover { border-color: var(--accent); }
+.agallery__tile--pdf {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  padding: 8px; text-decoration: none; color: var(--ink-2); cursor: pointer; text-align: center;
+}
+.agallery__pdfname {
+  font-size: 11px; max-inline-size: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.agallery__pdfsize { font-size: 10px; color: var(--muted); }
+
+/* The remove control sits on the tile's corner and is always visible to the
+   people allowed to use it -- a hover-only control does not exist on a phone. */
+.agallery__del {
+  position: absolute; inset-block-start: 4px; inset-inline-end: 4px;
+  inline-size: 22px; block-size: 22px; border-radius: 50%;
+  border: 0; cursor: pointer; font-size: 15px; line-height: 1;
+  background: rgba(0, 0, 0, 0.55); color: #fff;
+}
+.agallery__del:hover { background: var(--danger); }
+
+.lightbox {
+  position: fixed; inset: 0; z-index: 80;
+  display: grid; place-items: center; padding: 24px;
+  background: rgba(0, 0, 0, 0.78);
+}
+.lightbox__fig { margin: 0; max-inline-size: min(1100px, 100%); display: flex; flex-direction: column; gap: 10px; }
+.lightbox__fig img {
+  max-inline-size: 100%; max-block-size: calc(100vh - 140px);
+  object-fit: contain; border-radius: 8px; background: #111;
+}
+.lightbox__fig figcaption {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 10px 12px; border-radius: 8px;
+  background: var(--surface); font-size: 13px;
+}
+.lightbox__fig figcaption .btn { margin-inline-start: auto; }

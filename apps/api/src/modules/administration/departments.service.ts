@@ -76,6 +76,41 @@ export class AdminDepartmentsService {
         WHERE u.department_id = $1 AND u.deleted_at IS NULL AND u.status = 'ACTIVE'
         ORDER BY is_manager DESC, u.full_name`, [departmentId]);
   }
+  /** A department starts empty. It is hidden from the ticket picker and flagged
+   *  "No manager" on the Departments screen until somebody who actually belongs
+   *  to it is made its manager with `addManager`. */
+  async create(actor: Principal, dto: { name: string; nameAr?: string; parentId?: string }) {
+    const name = dto.name.trim();
+    if (name.length < 2) throw new BadRequestException('Give the department a name.');
+
+    if (dto.parentId) {
+      const parent = await one<any>(
+        `SELECT id FROM core_departments WHERE id = $1`, [dto.parentId]);
+      if (!parent) throw new NotFoundException('The parent department does not exist.');
+    }
+
+    let created: { id: string };
+    try {
+      const row = await one<{ id: string }>(
+        `INSERT INTO core_departments (name, name_ar, parent_id)
+         VALUES ($1,$2,$3) RETURNING id`,
+        [name, dto.nameAr?.trim() || null, dto.parentId ?? null]);
+      created = row!;
+    } catch (e: any) {
+      /* core_departments_name_key, from migration 0015. */
+      if (e?.code === '23505') {
+        throw new ConflictException(`A department called "${name}" already exists.`);
+      }
+      throw e;
+    }
+
+    await this.audit.write({
+      actorId: actor.id, moduleKey: 'core', action: 'core.department.created',
+      entityType: 'department', entityId: created.id,
+      payload: { name, parentId: dto.parentId ?? null },
+    });
+    return this.list();
+  }
 
   async addManager(actor: Principal, departmentId: string, userId: string) {
     const department = await one<any>(

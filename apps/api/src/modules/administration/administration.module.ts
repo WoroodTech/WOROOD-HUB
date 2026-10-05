@@ -23,7 +23,7 @@ import { CoreModule } from '../../core/core.module';
 import { CORE_PERMISSIONS } from './permissions';
 import {
   CreateUser, ListUsersQuery, SetPassword, SetRolePermissions,
-  SetDepartmentManager, SetUserDashboards, UpdateUser, UpsertRole,
+  SetDepartmentManager, SetUserDashboards, UpdateUser, UpsertRole,CreateDepartment
 } from './dto';
 import { AdminUsersService } from './users.service';
 import { AdminRolesService } from './roles.service';
@@ -127,6 +127,12 @@ export class AdministrationController {
   @Get('departments/overview')
   @Permissions(CORE_PERMISSIONS.USER_MANAGE)
   departmentOverview() { return this.depts.list(); }
+  
+  @Post('departments')
+  @Permissions(CORE_PERMISSIONS.USER_MANAGE)
+  createDepartment(@CurrentUser() p: Principal, @Body() dto: CreateDepartment) {
+    return this.depts.create(p, dto);
+  }
 
   @Get('departments/:id/candidates')
   @Permissions(CORE_PERMISSIONS.USER_MANAGE)

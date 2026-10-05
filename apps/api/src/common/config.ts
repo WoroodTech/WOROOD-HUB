@@ -48,6 +48,22 @@ export const config = {
    * No credentials here. The instance carries an IAM role and the SDK reads it
    * from the metadata service -- nothing to leak, nothing to rotate.
    */
+  /**
+   * Ticket attachments, in S3.
+   *
+   * Empty bucket name is a working state: the upload endpoints answer that
+   * attachments are not configured, and tickets load without them. A developer
+   * machine has no instance role and should not need an AWS account to raise a
+   * ticket. Credentials come from the instance role, never from here.
+   */
+  attachments: {
+    bucket: process.env.S3_ATTACHMENTS_BUCKET || '',
+    /* Its own variable, falling back to AWS_REGION. SES and the bucket do not
+       have to live in the same region, and one shared value would make
+       whichever was set second silently wrong for the other. */
+    region: process.env.S3_ATTACHMENTS_REGION || process.env.AWS_REGION || 'eu-west-1',
+  },
+
   mail: {
     enabled: process.env.MAIL_ENABLED === 'true',
     region: process.env.AWS_REGION || 'eu-west-1',

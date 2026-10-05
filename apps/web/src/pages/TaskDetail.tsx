@@ -19,9 +19,11 @@ import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   TaskDepartmentOption, TaskDetail as TaskDetailPayload, TaskDependency,
-  TaskPerson, TaskPriority,
+  TaskAttachment, TaskPerson, TaskPriority,
 } from '../contract';
 import { api } from '../lib/api';
+import { uploadAll } from '../lib/upload';
+import { AttachmentGallery, AttachmentPicker } from '../components/Attachments';
 import { qk } from '../lib/keys';
 import { useToast } from '../lib/toast';
 import { Badge, Card } from '../components/Card';
@@ -90,6 +92,9 @@ const EVENT_SENTENCE: Record<string, (p: any) => string> = {
   REVIEW_APPROVED: () => 'approved the work',
   REVIEW_REJECTED: (p) => `sent it back — ${p.reason ?? 'no reason given'}`,
   DONE: () => 'marked it done — it is in place',
+  ATTACHMENT_REMOVED: (p) => p.byAdmin
+    ? `removed the file ${p.name} as an administrator`
+    : `removed the file ${p.name}`,
 
   /* The old vocabulary. Kept so tickets raised before the lifecycle changed
      still read as sentences rather than as SHOUTING_CONSTANTS. */
@@ -118,6 +123,7 @@ export function TaskDetailPage() {
   const queryClient = useQueryClient();
   const [dialog, setDialog] = useState<Dialog>(null);
   const [comment, setComment] = useState('');
+  const [commentFiles, setCommentFiles] = useState<File[]>([]);
 
   const task = useQuery({
     queryKey: qk.task(id),
@@ -134,6 +140,36 @@ export function TaskDetailPage() {
       void queryClient.invalidateQueries({ queryKey: ['portlet'] });
       setDialog(null);
       setComment('');
+    },
+    onError: (e) => toast.push(e instanceof Error ? e.message : 'That did not go through.', 'warning'),
+  });
+
+  /* Its own mutation rather than `act`: a comment with files is two steps --
+     write the words, then attach to the comment they created -- and the box
+     must stay busy until both are done, or somebody posts the next comment
+     while the photos for the last are still uploading. */
+  const postComment = useMutation({
+    mutationFn: async () => {
+      /* Files without words go on the ticket itself.
+      
+         Requiring a sentence before a photograph could be shared meant people
+         typed "photo" to get past the form, which tells the next reader
+         nothing. Either is enough on its own: words, files, or both. */
+      if (!comment.trim()) {
+        return { failed: await uploadAll(id, commentFiles) };
+      }
+      const posted = await api<TaskDetailPayload>(`/tasks/${id}/comments`,
+        { method: 'POST', body: { body: comment.trim() } });
+      const failed = posted.createdCommentId && commentFiles.length
+        ? await uploadAll(id, commentFiles, posted.createdCommentId)
+        : [];
+      return { failed };
+    },
+    onSuccess: ({ failed }) => {
+      setComment(''); setCommentFiles([]);
+      if (failed.length) toast.push(`${failed.length} file${failed.length === 1 ? '' : 's'} did not attach: ${failed[0]}`, 'warning');
+      void queryClient.invalidateQueries({ queryKey: qk.task(id) });
+      void queryClient.invalidateQueries({ queryKey: ['tasks'] });
     },
     onError: (e) => toast.push(e instanceof Error ? e.message : 'That did not go through.', 'warning'),
   });
@@ -209,6 +245,7 @@ export function TaskDetailPage() {
             {t.description
               ? <p className="taskdesc">{t.description}</p>
               : <p className="hint">No detail was given beyond the title.</p>}
+            <AttachmentGallery items={t.attachments ?? []} />
           </Card>
 
           <Card title="What has happened" subtitle={`${t.comments.length} comment${t.comments.length === 1 ? '' : 's'}`}>
@@ -220,10 +257,17 @@ export function TaskDetailPage() {
                   placeholder="Add something the others on this ticket should know"
                   onChange={(e) => setComment(e.target.value)}
                 />
+                <AttachmentPicker files={commentFiles} onChange={setCommentFiles} max={5} />
+                {/* Either is enough. The label follows what is actually about
+                    to happen, so the button never promises a comment nobody
+                    wrote. */}
                 <button type="button" className="btn btn--primary btn--sm"
-                  disabled={!comment.trim() || act.isPending}
-                  onClick={() => act.mutate({ path: '/comments', body: { body: comment.trim() } })}>
-                  Comment
+                  disabled={(!comment.trim() && !commentFiles.length) || postComment.isPending}
+                  onClick={() => postComment.mutate()}>
+                  {postComment.isPending ? 'Sending…'
+                    : !comment.trim()
+                      ? `Attach ${commentFiles.length} file${commentFiles.length === 1 ? '' : 's'}`
+                      : 'Comment'}
                 </button>
               </div>
             ) : (
@@ -492,10 +536,14 @@ function Timeline({ task }: { task: TaskDetailPayload }) {
         at: e.createdAt, key: `e-${e.id}`, kind: 'event' as const,
         who: e.actorName ?? 'The system',
         text: (EVENT_SENTENCE[e.type] ?? (() => e.type.toLowerCase().replace(/_/g, ' ')))(e.payload ?? {}),
+        files: [] as TaskAttachment[],
       })),
     ...task.comments.map((c) => ({
       at: c.createdAt, key: `c-${c.id}`, kind: 'comment' as const,
       who: c.authorName, text: c.body,
+      /* Files sit under the comment that brought them, so a photo is always
+         next to the sentence explaining it. */
+      files: c.attachments ?? [],
     })),
   ].sort((a, b) => a.at.localeCompare(b.at));
 
@@ -514,6 +562,7 @@ function Timeline({ task }: { task: TaskDetailPayload }) {
               </span>
             </p>
             <p className="timeline__text">{e.text}</p>
+            <AttachmentGallery items={e.files} />
           </div>
         </li>
       ))}

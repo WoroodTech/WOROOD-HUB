@@ -96,6 +96,8 @@ export interface TaskRowForAccess {
   fast_track?: boolean;
   due_at?: Date | string | null;
   review_rejected_at?: Date | string | null;
+  /** Who held it before it was parked, so resuming can put it back on them. */
+  held_assignee_id?: string | null;
 }
 
 export interface TaskAccess {
@@ -323,7 +325,8 @@ export async function loadWithAccess(
        would be silently undefined and the screen would offer the wrong
        buttons. */
     `SELECT t.id, t.status, t.requester_id, t.assignee_id, t.department_id,
-            t.requester_department_id, t.fast_track, t.due_at, t.review_rejected_at
+            t.requester_department_id, t.fast_track, t.due_at, t.review_rejected_at,
+            t.held_assignee_id
        FROM tk_items t
       WHERE t.id = $${vis.params.length + 1} AND ${vis.sql}`,
     [...vis.params, itemId],

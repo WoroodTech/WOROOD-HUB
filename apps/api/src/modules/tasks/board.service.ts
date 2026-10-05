@@ -43,7 +43,7 @@ export type BoardColumn = typeof BOARD_COLUMNS[number] | 'DELAYED';
 const CARD_COLUMNS = `
   t.id, t.reference, t.title, t.status, t.priority, t.sla_state,
   t.due_at, t.planned_for, t.created_at, t.overdue_since,
-  t.fast_track, t.review_rejection_count,
+  t.fast_track, t.review_rejection_count, t.held_assignee_id,
   t.department_id, t.requester_department_id,
   rq.full_name  AS requester_name,
   asg.full_name AS assignee_name,
@@ -77,6 +77,8 @@ export interface BoardCard {
    *  another. The two are read differently -- an external ticket is a promise
    *  to somebody outside, and worth seeing at a glance on a card. */
   internal: boolean;
+  /** Who had it before it went on hold -- the default when it resumes. */
+  heldAssigneeId: string | null;
   waitingOn: number;
   /** False on the requesting department's view: they may look, not steer. */
   draggable: boolean;
@@ -101,6 +103,7 @@ const toCard = (r: any, draggable: boolean): BoardCard => ({
      treated as external, because it certainly did not come from inside the
      team doing the work. */
   internal: !!r.requester_department_id && r.requester_department_id === r.department_id,
+  heldAssigneeId: r.held_assignee_id ?? null,
   waitingOn: r.waiting_on ?? 0,
   draggable,
 });
