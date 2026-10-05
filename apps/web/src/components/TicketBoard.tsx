@@ -117,17 +117,21 @@ export function TicketCard({ card }: { card: BoardCard }) {
 /* ------------------------------------------------------------- the column -- */
 
 export function BoardColumn({
-  column, onDrop,
+  column, onDrop, collapsed, onToggle,
 }: {
   column: BoardColumnData;
   onDrop?: (ticketId: string, from: string, to: string) => void;
+  /** A collapsed column is a narrow strip with its name and count. It still
+   *  accepts drops -- folding a column away should not make it unreachable. */
+  collapsed?: boolean;
+  onToggle?: () => void;
 }) {
   const [over, setOver] = useState(false);
   const droppable = column.droppable && !!onDrop;
 
   return (
     <section
-      className={`bcol bcol--${column.key}${over ? ' bcol--over' : ''}`}
+      className={`bcol bcol--${column.key}${over ? ' bcol--over' : ''}${collapsed ? ' bcol--collapsed' : ''}`}
       onDragOver={(e) => {
         if (!droppable) return;
         /* preventDefault is what makes an element a drop target at all --
@@ -148,6 +152,13 @@ export function BoardColumn({
       }}
     >
       <header className="bcol__head">
+        {onToggle ? (
+          <button type="button" className="bcol__fold" onClick={onToggle}
+                  aria-expanded={!collapsed}
+                  aria-label={collapsed ? 'Expand column' : 'Collapse column'}>
+            <Icon name={collapsed ? 'right' : 'down'} size={13} />
+          </button>
+        ) : null}
         <span className="bcol__pill">
           <span className="bcol__dot" aria-hidden="true" />
           {STATUS_SHORT[column.key] ?? column.key}
@@ -155,11 +166,11 @@ export function BoardColumn({
         <span className="bcol__count">{column.cards.length}</span>
       </header>
 
-      <div className="bcol__cards">
+      {collapsed ? null : <div className="bcol__cards">
         {column.cards.length === 0 ? (
           <p className="bcol__empty">Nothing here</p>
         ) : column.cards.map((c) => <TicketCard key={c.id} card={c} />)}
-      </div>
+      </div>}
     </section>
   );
 }

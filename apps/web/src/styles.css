@@ -2572,3 +2572,194 @@ button, input, select, textarea { font: inherit; color: inherit; }
   background: var(--surface); font-size: 13px;
 }
 .lightbox__fig figcaption .btn { margin-inline-start: auto; }
+/* ====================================================== board: list + add = */
+
+.bcol__fold {
+  display: grid; place-items: center; inline-size: 22px; block-size: 22px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer;
+}
+.bcol__fold:hover { background: color-mix(in srgb, var(--st, var(--accent)) 14%, transparent); color: var(--ink); }
+
+/* Folded to a strip that still says what it is and how many it holds, and
+   still takes a drop -- folding a column away must not make it unreachable. */
+.bcol--collapsed { flex: 0 0 52px; min-block-size: 220px; }
+.bcol--collapsed .bcol__head { flex-direction: column; gap: 10px; padding: 10px 6px; }
+.bcol--collapsed .bcol__pill {
+  writing-mode: vertical-rl; transform: rotate(180deg); padding: 10px 4px;
+}
+.bcol--collapsed .bcol__dot { display: none; }
+
+/* The way in for parked work: transparent, so it never reads as a status. */
+.bcol--add {
+  background: transparent; border: 1px dashed var(--line);
+  flex-basis: 220px; min-block-size: 120px; justify-content: flex-start;
+}
+.bcol__addbtn {
+  display: flex; align-items: center; gap: 7px; margin: 10px;
+  padding: 9px 12px; border: 0; border-radius: 9px;
+  background: transparent; color: var(--muted); font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.bcol__addbtn:hover { background: var(--surface-2); color: var(--ink); }
+
+.addtask__list { list-style: none; margin: 12px 0 0; padding: 0; max-block-size: 50vh; overflow-y: auto;
+  border: 1px solid var(--line); border-radius: 10px; }
+.addtask__item {
+  display: flex; flex-direction: column; gap: 2px; inline-size: 100%;
+  padding: 10px 12px; border: 0; border-block-end: 1px solid var(--line);
+  background: transparent; text-align: start; cursor: pointer;
+}
+.addtask__list li:last-child .addtask__item { border-block-end: 0; }
+.addtask__item:hover { background: var(--surface-2); }
+.addtask__title { font-size: 13.5px; font-weight: 600; color: var(--ink); }
+.addtask__meta { font-size: 11.5px; color: var(--muted); }
+.addtask__empty { margin: 14px 0 0; text-align: center; }
+
+/* ---------------------------------------------------------------- list -- */
+
+.tlist { display: flex; flex-direction: column; gap: 22px; }
+.tlist__ghead { display: flex; align-items: center; gap: 8px; margin-block-end: 6px; }
+.tlist__gcount { font-size: 13px; color: var(--muted); font-weight: 600; }
+.tlist__empty { margin: 4px 0 0 30px; font-size: 12.5px; color: var(--muted); }
+
+/* One grid template shared by the header and every row, so the columns line
+   up without a <table> -- and the whole row stays one click target. */
+.tlist__row {
+  display: grid; align-items: center; gap: 12px;
+  grid-template-columns: minmax(220px, 3fr) minmax(150px, 1.4fr) 110px 110px 140px 90px;
+  padding: 9px 12px 9px 30px; border-block-end: 1px solid var(--line);
+  font-size: 13px; cursor: pointer;
+}
+.tlist__row:hover { background: var(--surface-2); }
+.tlist__row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tlist__row--head {
+  cursor: default; padding-block: 6px; font-size: 11.5px; color: var(--muted); font-weight: 550;
+  border-block-end: 1px solid var(--line);
+}
+.tlist__row--head:hover { background: transparent; }
+
+.tlist__name { display: flex; align-items: center; gap: 8px; min-inline-size: 0; }
+.tlist__dot { inline-size: 9px; block-size: 9px; border-radius: 50%; background: var(--st); flex-shrink: 0; }
+.tlist__title { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tlist__ref { font-size: 11px; color: var(--muted); flex-shrink: 0; }
+.tlist__ext { color: var(--info-ink); display: inline-flex; }
+.tlist__who { display: inline-flex; align-items: center; gap: 7px; min-inline-size: 0; }
+.tlist__whoname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tlist__muted { color: var(--muted); }
+.tlist__status {
+  display: inline-block; padding: 3px 9px; border-radius: 6px;
+  background: var(--st); color: #fff;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+}
+.tlist__row .tcard__flag { margin-inline-start: 0; }
+
+@media (max-width: 900px) {
+  /* Name, status and date survive; the rest is one tap away on the ticket. */
+  .tlist__row { grid-template-columns: minmax(0, 1fr) 100px 110px; }
+  .tlist__row > :nth-child(2), .tlist__row > :nth-child(4), .tlist__row > :nth-child(6) { display: none; }
+}
+
+/* ======================================================== ticket detail === */
+
+/* The facts, in labelled cells. Two columns, label then value, the way the
+   reference reads -- each answer in the same place on every ticket. */
+.tprops {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 32px; row-gap: 4px;
+  padding: 14px 18px; margin-block-end: var(--gap);
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface);
+}
+.tprops__cell {
+  display: grid; grid-template-columns: 130px minmax(0, 1fr); align-items: center;
+  gap: 10px; min-block-size: 38px; font-size: 13.5px;
+}
+.tprops__label { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+.tprops__who { display: inline-flex; align-items: center; gap: 8px; }
+.tprops__dates { display: inline-flex; align-items: center; gap: 8px; }
+.tprops__value {
+  justify-self: start; padding: 4px 8px; margin-inline-start: -8px;
+  border: 0; border-radius: 6px; background: transparent; font: inherit; color: inherit; cursor: pointer;
+}
+.tprops__value:hover:not(:disabled) { background: var(--surface-2); }
+.tprops__value:disabled { cursor: default; }
+.tprops__edit { display: inline-flex; gap: 6px; align-items: center; }
+.tprops__edit .input { inline-size: 100px; }
+
+.taskcols--activity { grid-template-columns: minmax(0, 1fr) 400px; }
+
+/* The action cards sit under the request in a grid that fills the width. */
+.taskactions { display: grid; gap: var(--gap); grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); align-items: start; }
+
+/* Activity: a panel the height of the screen, the stream scrolling inside it
+   and the composer fixed at its foot -- so writing a comment never means
+   scrolling past the conversation to find the box. */
+.taskcols__activity {
+  position: sticky; inset-block-start: 12px;
+  display: flex; flex-direction: column;
+  max-block-size: calc(100vh - 110px);
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2);
+  overflow: hidden;
+}
+
+.activity__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-block-end: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.activity__stream {
+  padding: 12px 14px;
+  max-block-size: 60vh;
+  overflow-y: auto;
+  background: var(--surface);
+}
+
+.activity__compose {
+  padding: 12px 14px;
+  border-block-start: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.activity__compose .commentbox {
+  margin: 0;
+}
+.activity__title { margin: 0; font-size: 15px; font-weight: 650; }
+
+/* No connecting line in the panel; comments are cards, events are quiet. */
+.taskcols__activity .timeline { gap: 4px; }
+.taskcols__activity .timeline__row { padding: 0; }
+.taskcols__activity .timeline__row::before { display: none; }
+
+.taskcols__activity .timeline__row--comment {
+  display: flex; gap: 10px; padding: 12px 14px; margin-block: 6px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+}
+.timeline__avatar { flex-shrink: 0; inline-size: 30px; block-size: 30px; font-size: 11px; }
+.taskcols__activity .timeline__row--comment .timeline__who { display: flex; gap: 8px; align-items: baseline; margin: 0 0 6px; }
+.taskcols__activity .timeline__row--comment .timeline__text { font-size: 13.5px; line-height: 1.55; white-space: pre-wrap; margin: 0; }
+
+.taskcols__activity .timeline__row--event {
+  display: flex; gap: 8px; align-items: baseline;
+  padding: 4px 6px; font-size: 12px; color: var(--muted);
+}
+.taskcols__activity .timeline__row--event .timeline__dot {
+  inline-size: 5px; block-size: 5px; border: 0; background: var(--muted); margin-block-start: 6px; flex-shrink: 0;
+}
+.taskcols__activity .timeline__row--event .timeline__body { display: flex; flex-wrap: wrap; gap: 0 6px; }
+.taskcols__activity .timeline__row--event .timeline__who,
+.taskcols__activity .timeline__row--event .timeline__text { margin: 0; display: inline; font-size: 12px; }
+.taskcols__activity .timeline__row--event .timeline__who strong { font-weight: 600; color: var(--ink-2); }
+.taskcols__activity .timeline__row--event .timeline__when { order: 3; margin-inline-start: auto; }
+
+@media (max-width: 1100px) {
+  /* Stacked: properties, request and actions first, the conversation after. */
+  .taskcols--activity { grid-template-columns: minmax(0, 1fr); }
+  .taskcols__activity { position: static; max-block-size: none; }
+  .activity__stream { max-block-size: 70vh; }
+}
+@media (max-width: 720px) {
+  .tprops { grid-template-columns: minmax(0, 1fr); }
+  .tprops__cell { grid-template-columns: 110px minmax(0, 1fr); }
+}

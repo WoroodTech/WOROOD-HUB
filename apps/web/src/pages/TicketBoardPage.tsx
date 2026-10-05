@@ -18,6 +18,9 @@ import { api } from '../lib/api';
 import { useToast } from '../lib/toast';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import { BoardColumn } from '../components/TicketBoard';
+import { Icon } from '../components/Icon';
+import { TicketListView, ViewToggle, useTicketView } from '../components/TicketViews';
+import { AddTaskDialog } from '../components/AddTaskDialog';
 import { STATUS_SHORT, NewTicketButton } from './Tasks';
 import { localNow } from './TaskDetail';
 import { useAuth } from '../lib/auth';
@@ -52,6 +55,12 @@ export function TicketBoardPage() {
 }
 
 function ManagerBoard() {
+  const [view, setView] = useTicketView();
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [adding, setAdding] = useState(false);
+  const toggleColumn = (k: string) => setCollapsed((s) => {
+    const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n;
+  });
   const [departmentId, setDepartmentId] = useState<string>('');
   const [pending, setPending] = useState<Pending>(null);
   const [value, setValue] = useState('');
@@ -161,6 +170,15 @@ function ManagerBoard() {
       </header>
 
       <div className="board__controls">
+        <ViewToggle view={view} onChange={setView} />
+        {view === 'board' ? (
+          <button type="button" className="btn btn--ghost btn--sm"
+                  onClick={() => setCollapsed(collapsed.size ? new Set()
+                    : new Set(data.columns.map((c) => c.key)))}>
+            <Icon name={collapsed.size ? 'expand' : 'shrink'} size={14} />
+            {collapsed.size ? 'Expand all' : 'Collapse all'}
+          </button>
+        ) : null}
         {data.departments.length > 1 ? (
           <select
             className="input" value={departmentId}
@@ -176,14 +194,32 @@ function ManagerBoard() {
       {/* Horizontal scroll rather than wrapping. A board that wraps stops being
           a board -- the left-to-right order is the lifecycle, and reading it
           across two rows loses that. */}
-      <div className="board__scroll">
-        {data.columns.map((c) => (
-          <BoardColumn
-            key={c.key} column={c}
-            onDrop={c.droppable ? onDrop : undefined}
-          />
-        ))}
-      </div>
+      {view === 'list' ? (
+        <TicketListView columns={data.columns} />
+      ) : (
+        <div className="board__scroll">
+          {data.columns.map((c) => (
+            <BoardColumn
+              key={c.key} column={c}
+              onDrop={c.droppable ? onDrop : undefined}
+              collapsed={collapsed.has(c.key)}
+              onToggle={() => toggleColumn(c.key)}
+            />
+          ))}
+          {/* The way onto the board for parked work. A column of its own at the
+              end, so it is where the eye arrives after reading the lifecycle,
+              and transparent so it never reads as a status. */}
+          <section className="bcol bcol--add">
+            <button type="button" className="bcol__addbtn" onClick={() => setAdding(true)}>
+              <Icon name="plus" size={15} /> Add task
+            </button>
+          </section>
+        </div>
+      )}
+
+      {adding ? (
+        <AddTaskDialog departmentId={departmentId || undefined} onClose={() => setAdding(false)} />
+      ) : null}
 
       {pending ? (
         <div className="modal" role="dialog" aria-modal="true">
