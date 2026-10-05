@@ -591,8 +591,6 @@ export interface BoardCard {
   departmentId: string;
   /** Raised inside the department doing it, rather than asked for by another. */
   internal: boolean;
-  /** Who had it before it went on hold -- the default when it resumes. */
-  heldAssigneeId: string | null;
   waitingOn: number;
   /** False on the requesting department's view: they may look, not steer. */
   draggable: boolean;

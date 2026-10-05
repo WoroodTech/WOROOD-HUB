@@ -85,7 +85,7 @@ export function AddTaskDialog({ departmentId, onClose }: { departmentId?: string
                     {list.map((c) => (
                       <li key={c.id}>
                         <button type="button" className="addtask__item"
-                                onClick={() => { setPicked(c); setWho(c.heldAssigneeId ?? ''); }}>
+                                onClick={() => { setPicked(c); setWho(''); }}>
                           <span className="addtask__title">{c.title}</span>
                           <span className="addtask__meta">
                             <span className="mono">{c.reference}</span>

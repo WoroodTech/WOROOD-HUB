@@ -241,7 +241,7 @@ export function TicketBacklog() {
                                  the hold already chosen. Usually that is the
                                  answer; the dialog is there for when it is not. */
                               const startsWork = a === 'start' || a === 'resume';
-                              setValue(a === 'resume' ? (c.heldAssigneeId ?? '') : '');
+                              setValue('');
                               setDue('');
                               setDialog({ kind: startsWork ? 'start' : a, card: c } as Dialog);
                             }}
