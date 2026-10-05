@@ -24,9 +24,10 @@ import { TASK_PERMISSIONS } from './permissions';
 import { TasksService } from './tasks.service';
 import { TasksScheduler } from './scheduler.service';
 import { BoardService } from './board.service';
+import { AttachmentsService } from './attachments.service';
 import {
   AddComment, AddDependency, AssignTask, CreateTask, ListTasksQuery,
-  ManageContributor, MoveTask, PlanTask, ReasonOnly, ResolveTask, SetDue, TransferTask,
+  ManageContributor, MoveTask, PlanTask, ReasonOnly, RequestUpload, ResolveTask, SetDue, TransferTask,
   UpdateRequest,
 } from './dto';
 
@@ -95,7 +96,7 @@ export class TasksPortletsController {
 
 @Controller('tasks')
 export class TasksController {
-  constructor(private readonly tasks: TasksService, private readonly scheduler: TasksScheduler, private readonly boards: BoardService) {}
+  constructor(private readonly tasks: TasksService, private readonly scheduler: TasksScheduler, private readonly boards: BoardService, private readonly files: AttachmentsService) {}
 
   /* Pickers. Departments with no manager are filtered out at source rather
      than shown and refused: offering a destination nothing can come back from
@@ -208,6 +209,26 @@ export class TasksController {
   /* Drag and drop. One route rather than the board choosing between plan,
      hold and assign -- which would put a second copy of the lifecycle in the
      browser. */
+  /* Files. Asking for an upload URL is scoped to a ticket; confirming and
+     removing are scoped to the attachment, which knows its ticket. */
+  @Post(':id/attachments')
+  requestUpload(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string,
+                @Body() dto: RequestUpload) {
+    return this.files.requestUpload(p, id, dto);
+  }
+
+  @Post('attachments/:attachmentId/confirm')
+  confirmUpload(@CurrentUser() p: Principal,
+                @Param('attachmentId', ParseUUIDPipe) attachmentId: string) {
+    return this.files.confirm(p, attachmentId);
+  }
+
+  @Delete('attachments/:attachmentId')
+  removeAttachment(@CurrentUser() p: Principal,
+                   @Param('attachmentId', ParseUUIDPipe) attachmentId: string) {
+    return this.files.remove(p, attachmentId);
+  }
+
   @Post(':id/move')
   move(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: MoveTask) {
     return this.tasks.move(p, id, dto);
@@ -268,6 +289,6 @@ export class TasksController {
 @Module({
   imports: [CoreModule],
   controllers: [TasksPortletsController, TasksController],
-  providers: [BoardService, TasksService, TasksScheduler],
+  providers: [AttachmentsService, BoardService, TasksService, TasksScheduler],
 })
 export class TasksModule {}

@@ -19,9 +19,11 @@ import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   TaskDepartmentOption, TaskDetail as TaskDetailPayload, TaskDependency,
-  TaskPerson, TaskPriority,
+  TaskAttachment, TaskPerson, TaskPriority,
 } from '../contract';
 import { api } from '../lib/api';
+import { uploadAll } from '../lib/upload';
+import { AttachmentGallery, AttachmentPicker } from '../components/Attachments';
 import { qk } from '../lib/keys';
 import { useToast } from '../lib/toast';
 import { Badge, Card } from '../components/Card';
@@ -90,6 +92,9 @@ const EVENT_SENTENCE: Record<string, (p: any) => string> = {
   REVIEW_APPROVED: () => 'approved the work',
   REVIEW_REJECTED: (p) => `sent it back — ${p.reason ?? 'no reason given'}`,
   DONE: () => 'marked it done — it is in place',
+  ATTACHMENT_REMOVED: (p) => p.byAdmin
+    ? `removed the file ${p.name} as an administrator`
+    : `removed the file ${p.name}`,
 
   /* The old vocabulary. Kept so tickets raised before the lifecycle changed
      still read as sentences rather than as SHOUTING_CONSTANTS. */
@@ -118,6 +123,7 @@ export function TaskDetailPage() {
   const queryClient = useQueryClient();
   const [dialog, setDialog] = useState<Dialog>(null);
   const [comment, setComment] = useState('');
+  const [commentFiles, setCommentFiles] = useState<File[]>([]);
 
   const task = useQuery({
     queryKey: qk.task(id),
@@ -134,6 +140,36 @@ export function TaskDetailPage() {
       void queryClient.invalidateQueries({ queryKey: ['portlet'] });
       setDialog(null);
       setComment('');
+    },
+    onError: (e) => toast.push(e instanceof Error ? e.message : 'That did not go through.', 'warning'),
+  });
+
+  /* Its own mutation rather than `act`: a comment with files is two steps --
+     write the words, then attach to the comment they created -- and the box
+     must stay busy until both are done, or somebody posts the next comment
+     while the photos for the last are still uploading. */
+  const postComment = useMutation({
+    mutationFn: async () => {
+      /* Files without words go on the ticket itself.
+      
+         Requiring a sentence before a photograph could be shared meant people
+         typed "photo" to get past the form, which tells the next reader
+         nothing. Either is enough on its own: words, files, or both. */
+      if (!comment.trim()) {
+        return { failed: await uploadAll(id, commentFiles) };
+      }
+      const posted = await api<TaskDetailPayload>(`/tasks/${id}/comments`,
+        { method: 'POST', body: { body: comment.trim() } });
+      const failed = posted.createdCommentId && commentFiles.length
+        ? await uploadAll(id, commentFiles, posted.createdCommentId)
+        : [];
+      return { failed };
+    },
+    onSuccess: ({ failed }) => {
+      setComment(''); setCommentFiles([]);
+      if (failed.length) toast.push(`${failed.length} file${failed.length === 1 ? '' : 's'} did not attach: ${failed[0]}`, 'warning');
+      void queryClient.invalidateQueries({ queryKey: qk.task(id) });
+      void queryClient.invalidateQueries({ queryKey: ['tasks'] });
     },
     onError: (e) => toast.push(e instanceof Error ? e.message : 'That did not go through.', 'warning'),
   });
@@ -163,6 +199,8 @@ export function TaskDetailPage() {
           <p className="taskbadges"><TaskStatusBadges task={t} /></p>
         </div>
       </header>
+
+      <TaskProperties task={t} />
 
       {blocking.length > 0 ? <BlockedStrip deps={blocking} /> : null}
 
@@ -209,10 +247,20 @@ export function TaskDetailPage() {
             {t.description
               ? <p className="taskdesc">{t.description}</p>
               : <p className="hint">No detail was given beyond the title.</p>}
+            <AttachmentGallery items={t.attachments ?? []} />
           </Card>
 
-          <Card title="What has happened" subtitle={`${t.comments.length} comment${t.comments.length === 1 ? '' : 's'}`}>
-            <Timeline task={t} />
+          {/* Activity: comments as cards, events as quiet lines between them,
+              and the composer at the foot. One stream, because the comments and
+              the events are one story and two lists make the reader rebuild the
+              order in their head. */}
+          <section className="activity">
+            <header className="activity__head">
+            <h2 className="activity__title">Activity</h2>
+            <span className="muted">{t.comments.length} comment{t.comments.length === 1 ? '' : 's'}</span>
+          </header>
+          <div className="activity__stream"><Timeline task={t} /></div>
+          <div className="activity__compose">
             {a.canComment ? (
               <div className="commentbox">
                 <textarea
@@ -220,10 +268,17 @@ export function TaskDetailPage() {
                   placeholder="Add something the others on this ticket should know"
                   onChange={(e) => setComment(e.target.value)}
                 />
+                <AttachmentPicker files={commentFiles} onChange={setCommentFiles} max={5} />
+                {/* Either is enough. The label follows what is actually about
+                    to happen, so the button never promises a comment nobody
+                    wrote. */}
                 <button type="button" className="btn btn--primary btn--sm"
-                  disabled={!comment.trim() || act.isPending}
-                  onClick={() => act.mutate({ path: '/comments', body: { body: comment.trim() } })}>
-                  Comment
+                  disabled={(!comment.trim() && !commentFiles.length) || postComment.isPending}
+                  onClick={() => postComment.mutate()}>
+                  {postComment.isPending ? 'Sending…'
+                    : !comment.trim()
+                      ? `Attach ${commentFiles.length} file${commentFiles.length === 1 ? '' : 's'}`
+                      : 'Comment'}
                 </button>
               </div>
             ) : (
@@ -231,12 +286,13 @@ export function TaskDetailPage() {
                 You can read this ticket but not add to it.
               </p>
             )}
-          </Card>
+          </div>
+          </section>
         </div>
 
         <aside className="taskcols__side">
           <Card title="What you can do">
-            <div className="taskactions">
+              <div className="taskactions">
               {a.canAssign ? (
                 <button type="button" className="btn btn--primary btn--block" onClick={() => setDialog({ kind: 'assign' })}>
                   <Icon name="users" size={15} /> {t.assigneeId ? 'Move it to somebody else' : 'Assign it'}
@@ -343,7 +399,7 @@ export function TaskDetailPage() {
                 && !a.canComplete && !a.canPlan && !a.canHold && !a.canCancel ? (
                 <p className="hint">Nothing to do from here — you are on this ticket to follow it.</p>
               ) : null}
-            </div>
+              </div>
           </Card>
 
           <Card title="Who is on it" subtitle="Nobody else in the department can see this ticket">
@@ -387,6 +443,7 @@ export function TaskDetailPage() {
             </Card>
           ) : null}
         </aside>
+
       </div>
 
       {dialog ? (
@@ -481,6 +538,60 @@ function DependencyRow({ dep }: { dep: TaskDependency }) {
 
 /* -------------------------------------------------------------- timeline -- */
 
+/* ------------------------------------------------------------ properties -- */
+
+const PRIORITY_WORD: Record<string, string> = { LOW: 'Low', NORMAL: 'Normal', HIGH: 'High', URGENT: 'Urgent' };
+
+/**
+ * The facts of the ticket in one panel, each on its own labelled line.
+ *
+ * These were a sentence under the title -- "asked Design on 3 Oct · Karim is
+ * on it · due 9 Oct" -- which had all of them and made every one of them hard
+ * to find. Labelled cells answer "who, when, how urgent, how long" at a glance,
+ * and are where somebody looks first.
+ */
+function TaskProperties({ task: t }: { task: TaskDetailPayload }) {
+  const late = t.slaState === 'OVERDUE';
+
+  return (
+    <section className="tprops">
+      <div className="tprops__cell">
+        <span className="tprops__label"><Icon name="dot" size={13} /> Status</span>
+        <span><TaskStatusBadges task={t} /></span>
+      </div>
+      <div className="tprops__cell">
+        <span className="tprops__label"><Icon name="user" size={13} /> Assignee</span>
+        <span>{t.assigneeName
+          ? <span className="tprops__who"><span className="tcard__who">{t.assigneeName.split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase()}</span>{t.assigneeName}</span>
+          : <span className="muted">Nobody yet</span>}</span>
+      </div>
+
+      <div className="tprops__cell">
+        <span className="tprops__label"><Icon name="calendar" size={13} /> Dates</span>
+        <span className="tprops__dates">
+          <span className={t.assignedAt ? '' : 'muted'}>{t.assignedAt ? formatDate(t.assignedAt) : 'Start'}</span>
+          <Icon name="right" size={12} />
+          <span className={late ? 'tcard__date--late' : t.dueAt ? '' : 'muted'}>
+            {t.dueAt ? formatDate(t.dueAt) : 'Due'}
+          </span>
+        </span>
+      </div>
+      <div className="tprops__cell">
+        <span className="tprops__label"><Icon name="warning" size={13} /> Priority</span>
+        <span className={`tcard__flag tcard__flag--${t.priority}`} style={{ marginInlineStart: 0 }}>
+          {PRIORITY_WORD[t.priority] ?? t.priority}
+        </span>
+      </div>
+
+      <div className="tprops__cell">
+        <span className="tprops__label"><Icon name="users" size={13} /> Raised by</span>
+        <span>{t.requesterName}{t.requesterDepartment ? <span className="muted"> · {t.requesterDepartment}</span> : null}
+          <span className="muted"> → {t.department}</span></span>
+      </div>
+    </section>
+  );
+}
+
 function Timeline({ task }: { task: TaskDetailPayload }) {
   /* Comments and events are one stream, because they are one story. An event
      list beside a comment list makes the reader reconstruct the order in their
@@ -492,10 +603,14 @@ function Timeline({ task }: { task: TaskDetailPayload }) {
         at: e.createdAt, key: `e-${e.id}`, kind: 'event' as const,
         who: e.actorName ?? 'The system',
         text: (EVENT_SENTENCE[e.type] ?? (() => e.type.toLowerCase().replace(/_/g, ' ')))(e.payload ?? {}),
+        files: [] as TaskAttachment[],
       })),
     ...task.comments.map((c) => ({
       at: c.createdAt, key: `c-${c.id}`, kind: 'comment' as const,
       who: c.authorName, text: c.body,
+      /* Files sit under the comment that brought them, so a photo is always
+         next to the sentence explaining it. */
+      files: c.attachments ?? [],
     })),
   ].sort((a, b) => a.at.localeCompare(b.at));
 
@@ -505,7 +620,13 @@ function Timeline({ task }: { task: TaskDetailPayload }) {
     <ol className="timeline">
       {entries.map((e) => (
         <li key={e.key} className={`timeline__row timeline__row--${e.kind}`}>
-          <span className="timeline__dot" aria-hidden="true" />
+          {/* A face for people talking, a dot for things happening -- so the
+              eye can skip the log and read the conversation. */}
+          {e.kind === 'comment'
+            ? <span className="tcard__who timeline__avatar" aria-hidden="true">
+                {e.who.split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase()}
+              </span>
+            : <span className="timeline__dot" aria-hidden="true" />}
           <div className="timeline__body">
             <p className="timeline__who">
               <strong>{e.who}</strong>
@@ -514,6 +635,7 @@ function Timeline({ task }: { task: TaskDetailPayload }) {
               </span>
             </p>
             <p className="timeline__text">{e.text}</p>
+            <AttachmentGallery items={e.files} />
           </div>
         </li>
       ))}

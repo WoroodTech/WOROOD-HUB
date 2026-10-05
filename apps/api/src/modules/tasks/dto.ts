@@ -55,6 +55,10 @@ export class UpdateRequest {
 export class AssignTask {
   @IsUUID() assigneeId!: string;
   @IsOptional() @IsString() @MaxLength(500) note?: string;
+  /* The date travels with the assignment. Sent as a second request it was
+     refused -- setting a date is the assignee's, and the manager is not the
+     assignee -- and the refusal was swallowed, so a manager picked a date in
+     the Start dialog and it silently never existed. */
   @IsOptional() @IsISO8601() dueAt?: string;
 }
 
@@ -158,5 +162,13 @@ export class MoveTask {
   @IsOptional() @IsUUID() assigneeId?: string;
   /** What was done, when dropping on For review. */
   @IsOptional() @IsString() @MinLength(3) @MaxLength(2000) resolution?: string;
-  @IsOptional() @IsISO8601() dueAt?: string;
+}
+
+/** What the browser says it is about to upload. Claims only -- the size is
+ *  re-read from S3 and the type from the file's first bytes on confirmation. */
+export class RequestUpload {
+  @IsString() @MinLength(1) @MaxLength(255) name!: string;
+  @IsIn(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']) type!: string;
+  @IsInt() @Min(1) size!: number;
+  @IsOptional() @IsUUID() commentId?: string;
 }

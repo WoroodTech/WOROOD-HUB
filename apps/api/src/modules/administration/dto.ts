@@ -101,3 +101,9 @@ export class SetRolePermissions {
 export class SetDepartmentManager {
   @IsUUID() userId!: string;
 }
+
+export class CreateDepartment {
+  @IsString() @MinLength(2) @MaxLength(100) name!: string;
+  @IsOptional() @IsString() @MaxLength(100) nameAr?: string;
+  @IsOptional() @IsUUID() parentId?: string;
+}

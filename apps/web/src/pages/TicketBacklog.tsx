@@ -43,24 +43,28 @@ const GROUP = {
     hint: 'Nobody has looked at these yet. Plan one, park it, or cancel it.',
     icon: 'bell',
     actions: ['plan', 'hold', 'cancel'] as const,
+    empty: 'Nothing new has come in.',
   },
   PLANNING: {
     title: 'Planning',
     hint: 'A date, no person yet. Starting one is where you choose who does it.',
     icon: 'calendar',
     actions: ['start', 'cancel'] as const,
+    empty: 'Nothing is scheduled.',
   },
   ON_HOLD: {
     title: 'On hold',
     hint: 'Parked with a reason. Resume puts it straight into progress.',
     icon: 'clock',
     actions: ['plan', 'resume', 'cancel'] as const,
+    empty: 'Nothing is parked.',
   },
   CANCELLED: {
     title: 'Cancelled',
     hint: 'Dropped in the last month. Planning one brings it back.',
     icon: 'minus',
     actions: ['plan'] as const,
+    empty: 'Nothing has been cancelled this month.',
   },
 } as const;
 
@@ -80,8 +84,7 @@ type Dialog =
   /* Starting asks two things at once -- who, and by when -- because they are
      one decision. Picking somebody without a date leaves a commitment nobody
      made; picking a date without somebody leaves it on nobody. */
-  | { kind: 'start'; card: BoardCard }
-  | { kind: 'resume'; card: BoardCard };
+  | { kind: 'start'; card: BoardCard };
 
 export function TicketBacklog() {
   const [departmentId, setDepartmentId] = useState('');
@@ -102,7 +105,7 @@ export function TicketBacklog() {
   const { data: people } = useQuery({
     queryKey: ['tasks', 'people', dialog?.card.departmentId],
     queryFn: () => api<TaskPerson[]>(`/tasks/departments/${dialog!.card.departmentId}/people`),
-    enabled: dialog?.kind === 'start' || dialog?.kind === 'resume',
+    enabled: dialog?.kind === 'start',
   });
 
   const act = useMutation({
@@ -127,13 +130,17 @@ export function TicketBacklog() {
     } else if (dialog.kind === 'cancel') {
       act.mutate({ id, path: '/cancel', body: { reason: value.trim() } });
     } else {
-  // start و resume: الـ assign بيبدأ الشغل، والـ due بيروح معاه
-  act.mutate({
-    id, path: '/assign',
-    body: { assigneeId: value, ...(due ? { dueAt: new Date(due).toISOString() } : {}) },
-  });
-}
+      /* One call carrying both. The date used to follow as a second request,
+         which the API refused -- the date is the assignee's to set, and the
+         manager is not the assignee -- and the refusal was swallowed, so the
+         date picked here silently never existed. */
+      act.mutate({ id, path: '/assign', body: {
+        assigneeId: value,
+        dueAt: due ? new Date(due).toISOString() : undefined,
+      } });
+    }
   };
+
 
 
   if (isPending) return <div className="page"><LoadingState label="Gathering what needs deciding" lines={4} /></div>;
@@ -179,16 +186,19 @@ export function TicketBacklog() {
       {data.groups.map((group) => {
         const g = GROUP[group.key];
         return (
-          <section key={group.key} className="dgroup">
+          <section key={group.key} className={`dgroup dgroup--${group.key}`}>
             <header className="dgroup__head">
               <span className="dgroup__title">
                 <Icon name={g.icon} size={15} /> {g.title}
+                {group.cards.length > 0 ? (
+                  <span className="dgroup__n">{group.cards.length}</span>
+                ) : null}
               </span>
               <span className="dgroup__hint">{g.hint}</span>
             </header>
 
             {group.cards.length === 0 ? (
-              <p className="dgroup__empty">Nothing here.</p>
+              <p className="dgroup__empty">{g.empty}</p>
             ) : (
               <ul className="drows">
                 {group.cards.map((c) => (
@@ -226,9 +236,15 @@ export function TicketBacklog() {
                             key={a} type="button" className="btn btn--ghost btn--sm"
                             disabled={act.isPending}
                             onClick={() => {
-  setValue(''); setDue('');
-  setDialog({ kind: a, card: c } as Dialog);
-}}
+                              /* Resume asks the same two questions as Start --
+                                 who, and by when -- with whoever had it before
+                                 the hold already chosen. Usually that is the
+                                 answer; the dialog is there for when it is not. */
+                              const startsWork = a === 'start' || a === 'resume';
+                              setValue(a === 'resume' ? (c.heldAssigneeId ?? '') : '');
+                              setDue('');
+                              setDialog({ kind: startsWork ? 'start' : a, card: c } as Dialog);
+                            }}
                           >
                             <Icon name={meta.icon} size={14} /> {meta.label}
                           </button>
@@ -252,7 +268,8 @@ export function TicketBacklog() {
                 {dialog.kind === 'plan' ? 'When should this be worked on?'
                   : dialog.kind === 'hold' ? 'Why is it on hold?'
                     : dialog.kind === 'cancel' ? 'Why is it being cancelled?'
-                      : dialog.kind === 'resume' ? 'Who picks it back up, and by when?'
+                      : dialog.card.status === 'ON_HOLD'
+                        ? 'Who picks it back up, and by when?'
                         : 'Who starts it, and by when?'}
               </h2>
             </header>

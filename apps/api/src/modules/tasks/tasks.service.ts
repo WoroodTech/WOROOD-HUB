@@ -39,6 +39,8 @@ import {
 import { NotificationMailer } from '../../core/notifications.controller';
 import { config } from '../../common/config';
 import { ticketMail } from './ticket-mail';
+import { writeEvent } from './events';
+import { AttachmentsService } from './attachments.service';
 
 const MODULE_KEY = 'tasks';
 
@@ -61,7 +63,7 @@ const ITEM_COLUMNS = `
   t.due_at, t.sla_state, t.overdue_since, t.assigned_at, t.resolved_at,
   t.closed_at, t.reopened_count, t.created_at, t.updated_at,
   t.fast_track, t.planned_for, t.review_rejected_reason, t.review_rejection_count,
-  t.blocked_at, t.implementation_started_at, t.done_at,
+  t.blocked_at, t.implementation_started_at, t.done_at, t.held_assignee_id,
   d.name AS department_name, d.name_ar AS department_name_ar,
   t.requester_department_id, rd.name AS requester_department_name,
   ru.full_name AS requester_name, ru.job_title AS requester_title,
@@ -84,8 +86,9 @@ export class TasksService {
   constructor(
     private readonly notifications: NotificationsService,
     private readonly mailer: NotificationMailer,
+    private readonly attachments: AttachmentsService,
     private readonly audit: AuditService,
-  ) { }
+  ) {}
 
   /* ------------------------------------------------------------- reads -- */
 
@@ -213,9 +216,14 @@ export class TasksService {
          FROM tk_events e LEFT JOIN core_users u ON u.id = e.actor_id
         WHERE e.item_id = $1 ORDER BY e.created_at`, [id]);
 
+    /* Signed after the visibility check above, so who may see a file is the
+       rule about who may see the ticket -- written once, not twice. */
+    const files = await this.attachments.forItem(p, id);
+
     return {
       ...shapeItem(row),
       access: publicAccess(access),
+      attachments: files.filter((f) => !f.commentId),
       participants: participants.map((r) => ({
         userId: r.id, name: r.full_name, jobTitle: r.job_title,
         department: r.department, role: r.role as ParticipantRole, addedAt: r.added_at,
@@ -223,6 +231,7 @@ export class TasksService {
       comments: comments.map((c) => ({
         id: c.id, body: c.body, createdAt: c.created_at, editedAt: c.edited_at,
         authorId: c.author_id, authorName: c.author_name, authorTitle: c.author_title,
+        attachments: files.filter((f) => f.commentId === c.id),
       })),
       events: events.map((e) => ({
         id: e.id, type: e.type, payload: e.payload, createdAt: e.created_at,
@@ -250,7 +259,7 @@ export class TasksService {
               d.name AS department_name,
               ${vis.sql} AS may_see
          ${ITEM_JOINS.replace('FROM tk_items t', 'FROM tk_links l JOIN tk_items t ON t.id = ' +
-        (direction === 'blocked-by' ? 'l.depends_on_item_id' : 'l.item_id'))}
+            (direction === 'blocked-by' ? 'l.depends_on_item_id' : 'l.item_id'))}
         WHERE ${direction === 'blocked-by' ? 'l.item_id' : 'l.depends_on_item_id'} = $1
           AND l.link_type = 'BLOCKED_BY'
         ORDER BY l.created_at`,
@@ -295,13 +304,13 @@ export class TasksService {
          VALUES ($1,$2,COALESCE($3,'NORMAL'),$4,$5,$6,$7,$8,$9,$10,$4,$11)
          RETURNING id, reference, status, fast_track`,
         [dto.title, dto.description ?? null, dto.priority ?? null, p.id,
-        p.departmentId ?? null, departmentId,
-        selfAssigned ? p.id : null, selfAssigned ? new Date() : null,
-        /* A ticket raised for yourself is work you are already doing -- you
-           wrote it down because it is on your plate. Starting it in a separate
-           gesture would be admitting to yourself what you just typed. */
-        selfAssigned ? p.id : null, selfAssigned ? 'IN_PROGRESS' : 'NEW',
-        dto.fastTrack === true]);
+         p.departmentId ?? null, departmentId,
+         selfAssigned ? p.id : null, selfAssigned ? new Date() : null,
+         /* A ticket raised for yourself is work you are already doing -- you
+            wrote it down because it is on your plate. Starting it in a separate
+            gesture would be admitting to yourself what you just typed. */
+         selfAssigned ? p.id : null, selfAssigned ? 'IN_PROGRESS' : 'NEW',
+         dto.fastTrack === true]);
       const created = rows[0];
 
       await addParticipant(c, created.id, p.id, 'REQUESTER', p.id);
@@ -359,20 +368,26 @@ export class TasksService {
       throw new ConflictException(`${target.full_name} already has this one.`);
     }
 
-    const dueAt = dto.dueAt ? new Date(dto.dueAt) : null;
-    if (dueAt && (Number.isNaN(dueAt.getTime()) || dueAt.getTime() < Date.now() - 60_000)) {
-      throw new BadRequestException('A commitment in the past is not a commitment.');
-    }
-
     /* Two managers on one department is deliberate -- it is how cover during
        leave works -- so two of them can reach for the same ticket in the same
        moment. The one who gets there second is told it has gone rather than
        left believing they assigned it. */
+    const dueAt = dto.dueAt ? new Date(dto.dueAt) : null;
+    if (dueAt && (Number.isNaN(dueAt.getTime()) || dueAt.getTime() < Date.now() - 60_000)) {
+      throw new BadRequestException('The due date has to be in the future.');
+    }
+
     const previous = item.assignee_id;
     const moved = await tx(async (c) => {
       const { rowCount } = await c.query(
         `UPDATE tk_items
             SET assignee_id = $2, assigned_at = now(), assigned_by = $3,
+                /* A date given with the assignment replaces any old one; none
+                   given leaves what was there. Either way the late flag starts
+                   clean, because the commitment is new. */
+                due_at = COALESCE($5::timestamptz, due_at),
+                sla_state = CASE WHEN $5::timestamptz IS NOT NULL THEN 'ON_TIME' ELSE sla_state END,
+                overdue_since = CASE WHEN $5::timestamptz IS NOT NULL THEN NULL ELSE overdue_since END,
                 /* Straight to IN_PROGRESS.
                 
                    ASSIGNED was a state nobody acted in: a manager gave the
@@ -389,10 +404,7 @@ export class TasksService {
                 /* The parking is over. A planned date that has been acted on is
                    history, and a hold reason left on an assigned ticket reads
                    as though it is still held. */
-                planned_for = NULL, status_reason = NULL,
-                due_at = CASE WHEN $5::timestamptz IS NOT NULL THEN $5::timestamptz ELSE due_at END,
-                sla_state = CASE WHEN $5::timestamptz IS NOT NULL THEN 'ON_TIME' ELSE sla_state END,
-                overdue_since = CASE WHEN $5::timestamptz IS NOT NULL THEN NULL ELSE overdue_since END,
+                planned_for = NULL, status_reason = NULL, held_assignee_id = NULL,
                 status_changed_at = now(), status_changed_by = $3
           /* PLANNING and ON_HOLD belong here: assigning is exactly how a parked
              ticket comes back to life, and leaving them out meant the UPDATE
@@ -412,7 +424,7 @@ export class TasksService {
       }
       await addParticipant(c, id, target.id, 'ASSIGNEE', p.id);
       await writeEvent(c, id, p.id, previous ? 'REASSIGNED' : 'ASSIGNED_AND_STARTED',
-        { assigneeId: target.id, assigneeName: target.full_name, previousAssigneeId: previous, note: dto.note , dueAt: dueAt ? dueAt.toISOString() : null});
+        { assigneeId: target.id, assigneeName: target.full_name, previousAssigneeId: previous, note: dto.note });
       return true;
     });
 
@@ -424,7 +436,7 @@ export class TasksService {
     }
 
     await this.tell([target.id], p, `Assigned to you: ${await reference(id)}`,
-      dto.note ?? `${p.fullName} gave you this one.`, id,'INFO', true);
+      dto.note ?? `${p.fullName} gave you this one.`, id);
     await this.tellParticipants(id, p, `Ticket assigned: ${await reference(id)}`,
       `${p.fullName} assigned it to ${target.full_name}.`, [target.id]);
     /* The other manager of the department needs to stop looking at it. */
@@ -484,16 +496,23 @@ export class TasksService {
     this.assertMove(item.status, 'ON_HOLD');
 
     await tx(async (c) => {
-      /* The assignee is released. A held ticket has nobody working on it by
-         definition, and leaving a name on it makes it count against that
-         person's load for as long as it sits there. */
+      /* The assignee is released, but remembered.
+      
+         Released because a held ticket has nobody working on it by definition,
+         and a name left on it counts against that person's load for as long as
+         it sits there. Remembered because resuming almost always means the same
+         person picking up where they left off -- asking who should take a
+         ticket that was already somebody's is a question with an obvious answer,
+         and the obvious answer should be the default rather than a form. */
       await c.query(
         `UPDATE tk_items SET status='ON_HOLD', status_reason=$2,
+                             held_assignee_id = assignee_id,
                              assignee_id=NULL, assigned_at=NULL,
                              due_at=NULL, sla_state='ON_TIME', overdue_since=NULL,
                              status_changed_at=now(), status_changed_by=$3
           WHERE id=$1`, [id, dto.reason, p.id]);
-      await writeEvent(c, id, p.id, 'HELD', { reason: dto.reason });
+      await writeEvent(c, id, p.id, 'HELD',
+        { reason: dto.reason, heldAssigneeId: item.assignee_id });
     });
 
     const told = [item.requester_id, ...(item.assignee_id ? [item.assignee_id] : [])];
@@ -586,7 +605,7 @@ export class TasksService {
         if (!dto.assigneeId) {
           throw new BadRequestException('Choose who it goes to.');
         }
-        return this.assign(p, id, { assigneeId: dto.assigneeId, dueAt: dto.dueAt });
+        return this.assign(p, id, { assigneeId: dto.assigneeId });
 
       case 'IN_PROGRESS':
         /* A parked ticket has no assignee, so starting it means choosing one.
@@ -594,10 +613,16 @@ export class TasksService {
            telling somebody to go and assign it first -- which was a refusal
            that named the next step instead of taking it. */
         if (!item.assignee_id) {
-          if (!dto.assigneeId) {
+          /* Resuming a held ticket goes back to whoever had it. They were taken
+             off it by the hold, not by a decision that it was not theirs, so
+             making somebody choose again is asking a question that has already
+             been answered. An explicit assigneeId still wins, for the case
+             where it really should change hands. */
+          const back = dto.assigneeId ?? item.held_assignee_id;
+          if (!back) {
             throw new BadRequestException('Nobody is on this yet. Choose who starts it.');
           }
-          return this.assign(p, id, { assigneeId: dto.assigneeId, dueAt: dto.dueAt });
+          return this.assign(p, id, { assigneeId: back });
         }
         return this.start(p, id);
 
@@ -895,14 +920,19 @@ export class TasksService {
   async comment(p: Principal, id: string, dto: AddComment) {
     const { access } = await loadWithAccess(p, id);
     assertCan(access, 'canComment', 'You can read this ticket but not add to it.');
-    await tx(async (c) => {
-      await c.query(`INSERT INTO tk_comments (item_id, author_id, body) VALUES ($1,$2,$3)`,
+    const commentId = await tx(async (c) => {
+      const { rows } = await c.query(
+        `INSERT INTO tk_comments (item_id, author_id, body) VALUES ($1,$2,$3) RETURNING id`,
         [id, p.id, dto.body]);
       await writeEvent(c, id, p.id, 'COMMENTED', { preview: dto.body.slice(0, 120) });
+      return rows[0].id as string;
     });
     await this.tellParticipants(id, p, `New comment on ${await reference(id)}`,
       `${p.fullName}: ${dto.body.slice(0, 160)}`);
-    return this.detail(p, id);
+    /* The new comment's id travels back with the ticket. Files are attached to
+       a comment after it exists -- the browser posts the words, then uploads
+       against this id -- so it needs to know which comment it just wrote. */
+    return { ...(await this.detail(p, id)), createdCommentId: commentId };
   }
 
   async addContributor(p: Principal, id: string, dto: ManageContributor) {
@@ -962,7 +992,7 @@ export class TasksService {
                                requester_department_id, department_id, status_changed_by)
          VALUES ($1,$2,COALESCE($3,'NORMAL'),$4,$5,$6,$4) RETURNING id, reference`,
         [dto.title, dto.description ?? null, dto.priority ?? null, p.id,
-        item.department_id, dto.departmentId]);
+         item.department_id, dto.departmentId]);
       const created = rows[0];
 
       await addParticipant(c, created.id, p.id, 'REQUESTER', p.id);
@@ -1045,11 +1075,11 @@ export class TasksService {
   /** Departments with nobody to assign are black holes; never offer one. */
   async departments(p: Principal) {
     const rows = await query(
-      `SELECT d.id, d.name, d.name_ar,
+      `SELECT d.id, d.name, d.name_ar,d
               (SELECT count(*)::int FROM core_department_managers m WHERE m.department_id = d.id) AS managers,
               (d.id = ANY($1::uuid[])) AS i_manage,
               (d.id = $2::uuid) AS mine
-         FROM core_departments d ORDER BY d.name`,
+         FROM core_departments d WHERE ORDER BY d.name`,
       [p.managedDepartmentIds ?? [], p.departmentId ?? null]);
     return rows
       .filter((r) => r.managers > 0)
@@ -1186,9 +1216,9 @@ export class TasksService {
    * message is filtered away with the rest, and the filter is permanent.
    */
   private async tell(targets: string[] | Promise<string[]>, actor: Principal,
-    title: string, body: string | undefined, id: string,
-    severity: 'INFO' | 'WARNING' = 'INFO',
-    alsoEmail = false) {
+                     title: string, body: string | undefined, id: string,
+                     severity: 'INFO' | 'WARNING' = 'INFO',
+                     alsoEmail = false) {
     const list = (await targets).filter((u) => u !== actor.id);
     if (!list.length) return;
 
@@ -1245,7 +1275,7 @@ export class TasksService {
   /** Returns what it wrote, so the caller can attach an email to each row and
    *  record whether that email arrived. */
   private async tellRaw(userIds: string[], title: string, body: string, id: string,
-    severity: 'INFO' | 'WARNING' | 'CRITICAL' = 'INFO') {
+                        severity: 'INFO' | 'WARNING' | 'CRITICAL' = 'INFO') {
     const written: Array<{ userId: string; notificationId: string | null }> = [];
     for (const userId of new Set(userIds)) {
       try {
@@ -1281,18 +1311,12 @@ async function coManagers(departmentId: string, exceptUserId: string): Promise<s
 }
 
 async function addParticipant(c: any, itemId: string, userId: string,
-  role: ParticipantRole, addedBy: string) {
+                              role: ParticipantRole, addedBy: string) {
   await c.query(
     `INSERT INTO tk_participants (item_id, user_id, role, added_by)
      VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`, [itemId, userId, role, addedBy]);
 }
 
-async function writeEvent(c: any, itemId: string, actorId: string | null,
-  type: string, payload: unknown) {
-  await c.query(
-    `INSERT INTO tk_events (item_id, actor_id, type, payload) VALUES ($1,$2,$3,$4)`,
-    [itemId, actorId, type, JSON.stringify(payload ?? {})]);
-}
 
 function parseStatuses(value?: string): string[] | null {
   if (!value) return null;

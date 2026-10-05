@@ -24,10 +24,13 @@ import { api } from '../lib/api';
 import { NewTicketButton } from './Tasks';
 import { useToast } from '../lib/toast';
 import { BoardColumn } from '../components/TicketBoard';
+import { TicketListView, ViewToggle, useTicketView } from '../components/TicketViews';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import { Icon } from '../components/Icon';
 
 export function MyTicketBoard() {
+  const [view, setView] = useTicketView();
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [review, setReview] = useState<string | null>(null);
   const [text, setText] = useState('');
   const toast = useToast();
@@ -107,11 +110,30 @@ export function MyTicketBoard() {
           hint="When a manager gives you a ticket it appears here, and you are emailed."
         />
       ) : (
-        <div className="board__scroll">
-          {data.columns.map((c) => (
-            <BoardColumn key={c.key} column={c} onDrop={onDrop} />
-          ))}
-        </div>
+        <>
+          <div className="board__controls">
+            <ViewToggle view={view} onChange={setView} />
+            {view === 'board' ? (
+              <button type="button" className="btn btn--ghost btn--sm"
+                      onClick={() => setCollapsed(collapsed.size ? new Set()
+                        : new Set(data.columns.map((c) => c.key)))}>
+                <Icon name={collapsed.size ? 'expand' : 'shrink'} size={14} />
+                {collapsed.size ? 'Expand all' : 'Collapse all'}
+              </button>
+            ) : null}
+          </div>
+          {view === 'list' ? <TicketListView columns={data.columns} /> : (
+            <div className="board__scroll">
+              {data.columns.map((c) => (
+                <BoardColumn key={c.key} column={c} onDrop={onDrop}
+                  collapsed={collapsed.has(c.key)}
+                  onToggle={() => setCollapsed((s) => {
+                    const n = new Set(s); if (n.has(c.key)) n.delete(c.key); else n.add(c.key); return n;
+                  })} />
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       <p className="hint">

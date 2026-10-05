@@ -497,9 +497,26 @@ export interface TaskParticipant {
   department?: string | null; role: TaskParticipantRole; addedAt: string;
 }
 
+/** A file on a ticket or a comment. The links are signed for an hour and only
+ *  issued to people who can see the ticket -- a copied link stops working. */
+export interface TaskAttachment {
+  id: string;
+  kind: 'IMAGE' | 'PDF';
+  name: string;
+  bytes: number;
+  width: number | null; height: number | null;
+  url: string;
+  thumbUrl: string | null;
+  commentId: string | null;
+  uploadedBy: string; uploadedByName: string;
+  createdAt: string;
+  canDelete: boolean;
+}
+
 export interface TaskComment {
   id: string; body: string; createdAt: string; editedAt?: string | null;
   authorId: string; authorName: string; authorTitle?: string | null;
+  attachments?: TaskAttachment[];
 }
 
 export interface TaskEvent {
@@ -524,6 +541,11 @@ export interface TaskDependency {
 
 export interface TaskDetail extends TaskSummary {
   access: TaskAccessFlags;
+  /** Files added when the ticket was raised. Files added later travel with
+   *  the comment they belong to. */
+  attachments?: TaskAttachment[];
+  /** Set only on the response to posting a comment, so files can follow it. */
+  createdCommentId?: string;
   participants: TaskParticipant[];
   comments: TaskComment[];
   events: TaskEvent[];
@@ -569,6 +591,8 @@ export interface BoardCard {
   departmentId: string;
   /** Raised inside the department doing it, rather than asked for by another. */
   internal: boolean;
+  /** Who had it before it went on hold -- the default when it resumes. */
+  heldAssigneeId: string | null;
   waitingOn: number;
   /** False on the requesting department's view: they may look, not steer. */
   draggable: boolean;

@@ -28,6 +28,8 @@ import { Badge, Card } from '../components/Card';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import { Icon } from '../components/Icon';
 import { formatDate } from '../lib/format';
+import { uploadAll } from '../lib/upload';
+import { AttachmentPicker } from '../components/Attachments';
 
 type Scope = 'assigned' | 'requested' | 'contributing' | 'queue' | 'department' | 'all';
 
@@ -138,7 +140,7 @@ export function Tasks({ fixedScope }: { fixedScope?: Scope }) {
     ...(managesSomething ? ([['queue', 'Awaiting assignment', counts?.queue]] as Array<[Scope, string, number | undefined]>) : []),
     ['assigned', 'Assigned to me', counts?.assigned],
     ['requested', 'My requests', counts?.requested],
-    ['contributing', "My contributions", undefined],
+    ['contributing', "I'm on it", undefined],
     ...(managesSomething ? ([['department', 'My department', undefined]] as Array<[Scope, string, number | undefined]>) : []),
   ];
 
@@ -290,6 +292,7 @@ function NewTicket({ onClose }: { onClose: () => void }) {
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState<TaskPriority>('NORMAL');
   const [fastTrack, setFastTrack] = useState(false);
+  const [files, setFiles] = useState<File[]>([]);
   const [departmentId, setDepartmentId] = useState('');
   const [forMyself, setForMyself] = useState(false);
 
@@ -300,16 +303,29 @@ function NewTicket({ onClose }: { onClose: () => void }) {
     mutationFn: () => api<TaskDetail>('/tasks', {
       method: 'POST',
       body: {
-        title, description: description || undefined, priority,
+        title,
+        description: description,
+        priority,
         departmentId: target || undefined,
         assignToSelf: forMyself ? principal?.id : undefined,
         fastTrack: fastTrack || undefined,
       },
     }),
-    onSuccess: (t) => {
+    onSuccess: async (t) => {
       toast.push(forMyself
         ? `${t.reference} is on your own list.`
         : `${t.reference} is with ${t.department}. Their manager will put somebody on it.`, 'good');
+
+      /* Files go after the ticket exists, because they belong to it. The
+         ticket is raised either way: a photo that failed to upload is a reason
+         to try that photo again, not a reason the request should not exist. */
+      if (files.length) {
+        const failed = await uploadAll(t.id, files);
+        if (failed.length) {
+          toast.push(`${failed.length} file${failed.length === 1 ? '' : 's'} did not attach: ${failed[0]}`, 'warning');
+        }
+      }
+
       void queryClient.invalidateQueries({ queryKey: ['tasks'] });
       void queryClient.invalidateQueries({ queryKey: ['portlet'] });
       onClose();
@@ -338,7 +354,7 @@ function NewTicket({ onClose }: { onClose: () => void }) {
           </label>
 
           <label className="field field--wide">
-            <span className="field__label">Detail <span className="field__opt">optional</span></span>
+            <span className="field__label">Detail</span>
             <textarea className="input" rows={4} value={description} maxLength={8000}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Anything the person picking this up would otherwise have to come and ask you." />
@@ -387,6 +403,11 @@ function NewTicket({ onClose }: { onClose: () => void }) {
             </span>
           </div>
 
+          <div className="field field--wide">
+            <span className="field__label">Images and PDFs</span>
+            <AttachmentPicker files={files} onChange={setFiles} max={10} />
+          </div>
+
           {/* Decided here and nowhere else. The database refuses to change it
               once the ticket exists, because a review requirement that can be
               dropped mid-flight would be dropped on exactly the tickets where
@@ -408,9 +429,9 @@ function NewTicket({ onClose }: { onClose: () => void }) {
         <footer className="modal__foot">
           <button type="button" className="btn btn--ghost" onClick={onClose}>Cancel</button>
           <button type="button" className="btn btn--primary"
-            disabled={title.trim().length < 3 || create.isPending}
+            disabled={title.trim().length < 3 || description.trim().length < 10 || create.isPending}
             onClick={() => create.mutate()}>
-            {create.isPending ? 'Sending…' : 'Raise it'}
+            {create.isPending ? (files.length ? 'Raising and uploading…' : 'Sending…') : 'Raise it'}
           </button>
         </footer>
       </div>
