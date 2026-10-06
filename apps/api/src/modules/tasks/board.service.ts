@@ -105,6 +105,69 @@ const toCard = (r: any, draggable: boolean): BoardCard => ({
   draggable,
 });
 
+
+/**
+ * What "filter by department" means, which depends on who is asking.
+ *
+ * The control looks the same in both roles and asks a different question, and
+ * that is deliberate rather than sloppy: each role has one question it actually
+ * has about another department, and it is not the same question.
+ *
+ * **An administrator** oversees the whole organisation, so picking Marketing
+ * means "everything Marketing asked for" -- what they asked of other
+ * departments and what they raised for themselves, together. The useful axis is
+ * the department that *wanted* the work, because who ended up doing it is the
+ * answer rather than the question. The card then names the department doing it.
+ *
+ * **A manager** runs one department, so picking Marketing means "what Marketing
+ * asked of us". Their own department is always one side of it; the filter
+ * chooses the other. Showing them everything Marketing asked of everybody would
+ * be showing them other people's queues.
+ *
+ * Returns SQL fragments rather than a boolean, so the two readings live here
+ * instead of being rebuilt, slightly differently, in each query.
+ */
+export function departmentScope(
+  manageAny: boolean, managed: string[], departmentId?: string,
+): { sql: string; params: unknown[] } {
+  if (manageAny) {
+    return departmentId
+      // Everything that department asked for: internal and sent out alike.
+      ? { sql: 't.requester_department_id = $1::uuid', params: [departmentId] }
+      : { sql: 'TRUE', params: [] };
+  }
+
+  return departmentId
+    // What that department asked of mine.
+    ? {
+        sql: 't.department_id = ANY($1::uuid[]) AND t.requester_department_id = $2::uuid',
+        params: [managed, departmentId],
+      }
+    : { sql: 't.department_id = ANY($1::uuid[])', params: [managed] };
+}
+
+/**
+ * The departments worth offering in the filter.
+ *
+ * An administrator gets all of them. A manager gets the ones that have actually
+ * asked their department for something -- a list of every department in the
+ * company would mostly be options that return nothing, and an option that
+ * returns nothing teaches people the filter is broken.
+ */
+async function filterDepartments(manageAny: boolean, managed: string[]) {
+  if (manageAny) {
+    return query<{ id: string; name: string }>(
+      `SELECT id, name FROM core_departments ORDER BY name`);
+  }
+  return query<{ id: string; name: string }>(
+    `SELECT DISTINCT d.id, d.name
+       FROM tk_items t
+       JOIN core_departments d ON d.id = t.requester_department_id
+      WHERE t.department_id = ANY($1::uuid[])
+        AND t.requester_department_id IS NOT NULL
+      ORDER BY d.name`, [managed]);
+}
+
 @Injectable()
 export class BoardService {
 
@@ -133,13 +196,11 @@ export class BoardService {
       return { side, departments: [], columns: [], empty: 'notAManager' as const };
     }
 
-    const scope = departmentId ? [departmentId] : managed;
-    const column = side === 'doing' ? 't.department_id' : 't.requester_department_id';
+    const scope = departmentScope(manageAny, managed, departmentId);
 
     const rows = await query<any>(
       `SELECT ${CARD_COLUMNS} ${CARD_JOINS}
-        WHERE ($1::boolean OR ${column} = ANY($2::uuid[]))
-          AND ($3::uuid IS NULL OR ${column} = $3::uuid)
+        WHERE ${scope.sql}
           /* Cancelled and refused tickets are not on a board. They are
              answers, not work, and a column of them would grow for ever
              without anybody ever acting on one. */
@@ -152,7 +213,7 @@ export class BoardService {
           CASE t.priority WHEN 'URGENT' THEN 0 WHEN 'HIGH' THEN 1
                           WHEN 'NORMAL' THEN 2 ELSE 3 END,
           COALESCE(t.due_at, t.planned_for, t.created_at)`,
-      [manageAny && !departmentId, scope, departmentId ?? null]);
+      scope.params);
 
     const draggable = side === 'doing';
     const cards = rows.map((r) => toCard(r, draggable));
@@ -177,10 +238,7 @@ export class BoardService {
       })),
     ];
 
-    const departments = await query<{ id: string; name: string }>(
-      `SELECT id, name FROM core_departments
-        WHERE ($1::boolean OR id = ANY($2::uuid[])) ORDER BY name`,
-      [manageAny, managed]);
+    const departments = await filterDepartments(manageAny, managed);
 
     return { side, departments, columns, empty: null };
   }
@@ -206,11 +264,10 @@ export class BoardService {
       return { groups: [], departments: [], empty: 'notAManager' as const };
     }
 
-    const scope = departmentId ? [departmentId] : managed;
+    const scope = departmentScope(manageAny, managed, departmentId);
     const rows = await query<any>(
       `SELECT ${CARD_COLUMNS} ${CARD_JOINS}
-        WHERE ($1::boolean OR t.department_id = ANY($2::uuid[]))
-          AND ($3::uuid IS NULL OR t.department_id = $3::uuid)
+        WHERE ${scope.sql}
           AND t.status IN ('NEW','PLANNING','ON_HOLD','CANCELLED')
           /* Cancelled work is kept for a month. Long enough that somebody who
              changes their mind can find it, short enough that the section does
@@ -223,13 +280,10 @@ export class BoardService {
              The rest by age, oldest first, because a new ticket nobody has
              looked at for three days is the one that needs looking at. */
           COALESCE(t.planned_for, t.created_at)`,
-      [manageAny && !departmentId, scope, departmentId ?? null]);
+      scope.params);
 
     const cards = rows.map((r) => toCard(r, false));
-    const departments = await query<{ id: string; name: string }>(
-      `SELECT id, name FROM core_departments
-        WHERE ($1::boolean OR id = ANY($2::uuid[])) ORDER BY name`,
-      [manageAny, managed]);
+    const departments = await filterDepartments(manageAny, managed);
 
     return {
       empty: null, departments,
@@ -319,11 +373,9 @@ export class BoardService {
       return { side, totals: null, people: [], empty: 'notAManager' as const };
     }
 
-    const scope = departmentId ? [departmentId] : managed;
-    const column = side === 'doing' ? 't.department_id' : 't.requester_department_id';
-    const params = [manageAny && !departmentId, scope, departmentId ?? null];
-    const where = `($1::boolean OR ${column} = ANY($2::uuid[]))
-                   AND ($3::uuid IS NULL OR ${column} = $3::uuid)`;
+    const scope = departmentScope(manageAny, managed, departmentId);
+    const params = scope.params;
+    const where = scope.sql;
 
     const totals = await one<any>(
       `SELECT
@@ -363,18 +415,15 @@ export class BoardService {
                                    AND t.status NOT IN ('DONE','CANCELLED','REJECTED'))::int AS delayed
          FROM core_users u
     LEFT JOIN tk_items t ON t.assignee_id = u.id
-                        AND ($1::boolean OR t.department_id = ANY($2::uuid[]))
-                        AND ($3::uuid IS NULL OR t.department_id = $3::uuid)
+        /* People are listed by the department they belong to, not by the
+           filter: the filter asks whose *requests* to look at, and a person
+           does not belong to the department that asked them for something. */
         WHERE u.deleted_at IS NULL AND u.status = 'ACTIVE'
           AND ($1::boolean OR u.department_id = ANY($2::uuid[]))
-          AND ($3::uuid IS NULL OR u.department_id = $3::uuid)
         GROUP BY u.id, u.full_name
-        ORDER BY active DESC, u.full_name`, params) : [];
+        ORDER BY active DESC, u.full_name`, [manageAny, managed]) : [];
 
-    const departments = await query<{ id: string; name: string }>(
-      `SELECT id, name FROM core_departments
-        WHERE ($1::boolean OR id = ANY($2::uuid[])) ORDER BY name`,
-      [manageAny, managed]);
+    const departments = await filterDepartments(manageAny, managed);
 
     return {
       side, departments, empty: null,

@@ -1068,11 +1068,11 @@ export class TasksService {
   /** Departments with nobody to assign are black holes; never offer one. */
   async departments(p: Principal) {
     const rows = await query(
-      `SELECT d.id, d.name, d.name_ar,d
+      `SELECT d.id, d.name, d.name_ar,
               (SELECT count(*)::int FROM core_department_managers m WHERE m.department_id = d.id) AS managers,
               (d.id = ANY($1::uuid[])) AS i_manage,
               (d.id = $2::uuid) AS mine
-         FROM core_departments d WHERE ORDER BY d.name`,
+         FROM core_departments d ORDER BY d.name`,
       [p.managedDepartmentIds ?? [], p.departmentId ?? null]);
     return rows
       .filter((r) => r.managers > 0)

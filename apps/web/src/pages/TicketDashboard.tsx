@@ -15,6 +15,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { TicketDashboardResponse } from '../contract';
 import { api } from '../lib/api';
+import { useAuth } from '../lib/auth';
 import { NewTicketButton } from './Tasks';
 import { Card } from '../components/Card';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
@@ -54,6 +55,15 @@ const TILES = [
 export function TicketDashboard() {
   const [side, setSide] = useState<'doing' | 'requested'>('doing');
   const [departmentId, setDepartmentId] = useState('');
+
+  /* Which reading of the department filter applies.
+  
+     An administrator is asking "what did that department ask for"; a manager is
+     asking "what did that department ask of us". Same control, two questions,
+     so the label has to say which -- an unlabelled filter that quietly means
+     something else to the person beside you is worse than no filter. */
+  const { can } = useAuth();
+  const oversees = can('tasks.item.manage-any') || can('tasks.item.view-any');
 
   const { data, isPending, error, refetch } = useQuery({
     queryKey: ['tasks', 'dashboard', side, departmentId],
@@ -107,8 +117,11 @@ export function TicketDashboard() {
 
         {data.departments.length > 1 ? (
           <select className="input" value={departmentId}
-                  onChange={(e) => setDepartmentId(e.target.value)} aria-label="Department">
-            <option value="">All my departments</option>
+                  onChange={(e) => setDepartmentId(e.target.value)} aria-label={oversees ? 'Requested by' : 'Asked of us by'}
+                  title={oversees
+                    ? 'Everything the chosen department asked for, wherever it went'
+                    : 'What the chosen department asked of yours'}>
+            <option value="">{oversees ? 'Every department' : 'Everything we are doing'}</option>
             {data.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
           </select>
         ) : null}

@@ -122,9 +122,12 @@ function ListRow({ card, onOpen }: { card: BoardCard; onOpen: () => void }) {
         <span className="tlist__dot" aria-hidden="true" />
         <span className="tlist__title">{card.title}</span>
         <span className="mono tlist__ref">{card.reference}</span>
+        {/* Named, not just flagged: the list has room, and "which department is
+            doing this" is the thing an icon alone cannot say. */}
         {!card.internal ? (
-          <span className="tlist__ext" title={`From ${card.requesterDepartmentName ?? 'another department'}`}>
-            <Icon name="globe" size={11} />
+          <span className="tlist__ext"
+                title={`${card.requesterDepartmentName ?? 'Another department'} asked ${card.departmentName}`}>
+            <Icon name="globe" size={11} /> {card.departmentName}
           </span>
         ) : null}
       </span>

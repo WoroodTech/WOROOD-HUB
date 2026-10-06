@@ -65,11 +65,17 @@ export function TicketCard({ card }: { card: BoardCard }) {
         <span
           className={`tcard__signal${card.internal ? '' : ' tcard__signal--ext'}`}
           title={card.internal
-            ? 'Raised inside this department'
-            : `From ${card.requesterDepartmentName ?? 'another department'} — ${card.requesterName}`}
+            ? `Raised and done inside ${card.departmentName} — ${card.requesterName}`
+            : `${card.requesterDepartmentName ?? 'Another department'} asked ${card.departmentName} — ${card.requesterName}`}
         >
           <Icon name={card.internal ? 'home' : 'globe'} size={12} />
-          {card.internal ? 'internal' : (card.requesterDepartmentName ?? 'external')}
+          {/* The department *doing* the work, not the one that asked.
+          
+              An administrator filtering by Marketing is looking at everything
+              Marketing wanted, and already knows that much -- what they cannot
+              see from the filter is who ended up with each one. The tooltip
+              names both, so the direction is never a guess. */}
+          {card.internal ? 'internal' : card.departmentName}
         </span>
         {card.waitingOn > 0 ? (
           <span className="tcard__signal tcard__signal--warn"
