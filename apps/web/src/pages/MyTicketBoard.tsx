@@ -17,7 +17,6 @@
  * approving, and done is declared on the ticket.
  */
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { MyBoardResponse } from '../contract';
 import { api } from '../lib/api';
@@ -95,10 +94,8 @@ export function MyTicketBoard() {
           <span>
             {data.awaitingMyReview} ticket{data.awaitingMyReview === 1 ? '' : 's'} you
             raised {data.awaitingMyReview === 1 ? 'is' : 'are'} waiting for you to
-            approve or send back.{' '}
-            <Link to="/tasks?scope=requested&status=FOR_REVIEW" className="link">
-              Look at {data.awaitingMyReview === 1 ? 'it' : 'them'}
-            </Link>
+            approve or ask for changes — {data.awaitingMyReview === 1 ? 'it is' : 'they are'} in
+            the For review column. Open {data.awaitingMyReview === 1 ? 'it' : 'one'} to decide.
           </span>
         </p>
       ) : null}
@@ -138,8 +135,9 @@ export function MyTicketBoard() {
 
       <p className="hint">
         <Icon name="info" size={13} />{' '}
-        Drag a card to pick work back up or send it for review. Setting a date,
-        asking another department and marking it done are on the ticket itself.
+        Cards assigned to you can be dragged; tickets you raised are here to
+        follow, and to review when they reach you. Setting a date and asking
+        another department are on the ticket itself.
       </p>
 
       {review ? (

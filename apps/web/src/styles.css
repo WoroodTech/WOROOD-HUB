@@ -2209,6 +2209,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
   --st-progress: #2f6f8f;
   --st-blocked:  #a4453f;
   --st-review:   #97722a;
+  --st-changes:  #a4453f;
+  --st-approved: #4a7a5e;
   --st-impl:     #4a7a5e;
   --st-done:     #4f7a52;
   --st-delayed:  #a4453f;
@@ -2221,6 +2223,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .bcol--IN_PROGRESS    { --st: var(--st-progress); }
 .bcol--BLOCKED        { --st: var(--st-blocked); }
 .bcol--FOR_REVIEW     { --st: var(--st-review); }
+.bcol--CHANGES_REQUESTED { --st: var(--st-changes); }
+.bcol--APPROVED       { --st: var(--st-approved); }
 .bcol--IMPLEMENTATION { --st: var(--st-impl); }
 .bcol--DONE           { --st: var(--st-done); }
 .bcol--DELAYED        { --st: var(--st-delayed); }

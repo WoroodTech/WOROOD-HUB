@@ -29,7 +29,8 @@ export type ParticipantRole =
 
 export type TaskStatus =
   | 'NEW' | 'PLANNING' | 'ON_HOLD' | 'ASSIGNED' | 'IN_PROGRESS' | 'BLOCKED'
-  | 'FOR_REVIEW' | 'IMPLEMENTATION' | 'DONE' | 'REJECTED' | 'CANCELLED';
+  | 'FOR_REVIEW' | 'CHANGES_REQUESTED' | 'APPROVED' | 'IMPLEMENTATION'
+  | 'DONE' | 'REJECTED' | 'CANCELLED';
 
 /** Nothing moves from here. */
 const TERMINAL: TaskStatus[] = ['DONE', 'REJECTED', 'CANCELLED'];
@@ -65,10 +66,18 @@ export const ALLOWED_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
   /* FOR_REVIEW is skipped on a fast-tracked ticket -- see `nextAfterWork`. The
      transition is listed because it is legal; whether it applies is a property
      of the ticket, not of the table. */
-  IN_PROGRESS:    ['BLOCKED', 'FOR_REVIEW', 'IMPLEMENTATION', 'ON_HOLD', 'CANCELLED'],
+  IN_PROGRESS:    ['BLOCKED', 'FOR_REVIEW', 'APPROVED', 'ON_HOLD', 'CANCELLED'],
   BLOCKED:        ['IN_PROGRESS', 'CANCELLED'],
-  FOR_REVIEW:     ['IMPLEMENTATION', 'IN_PROGRESS', 'CANCELLED'],
-  IMPLEMENTATION: ['DONE', 'IN_PROGRESS', 'CANCELLED'],
+  /* The requester's two answers, each a state rather than a jump. Approving
+     used to land in IMPLEMENTATION, which conflated "they said yes" with "the
+     assignee has started"; rejecting landed in IN_PROGRESS, where sent-back
+     work was indistinguishable from ordinary work. */
+  FOR_REVIEW:     ['APPROVED', 'CHANGES_REQUESTED', 'CANCELLED'],
+  CHANGES_REQUESTED: ['IN_PROGRESS', 'ON_HOLD', 'CANCELLED'],
+  APPROVED:       ['IMPLEMENTATION', 'CANCELLED'],
+  /* Back to review: a requester who approved too quickly, or wants another
+     look after the work was carried out. */
+  IMPLEMENTATION: ['DONE', 'FOR_REVIEW', 'CANCELLED'],
   DONE:           [],
   REJECTED:       [],
   /* A cancelled ticket can be planned back to life. It is the one way out:
@@ -77,10 +86,25 @@ export const ALLOWED_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
   CANCELLED:      ['PLANNING'],
 };
 
-/** Where work goes when the assignee says it is finished. Fast-tracked tickets
- *  have no reviewer, so they go straight to being carried out. */
+/** Where work goes when the assignee says it is finished.
+ *
+ *  Fast-tracked tickets skip the asking, not the state: APPROVED, not
+ *  IMPLEMENTATION. What fast-track removes is the requester's judgement; the
+ *  assignee's run-up to putting the thing in place is still theirs to start,
+ *  and both kinds of ticket reach IMPLEMENTATION the same way. */
 export const nextAfterWork = (fastTrack: boolean): TaskStatus =>
-  fastTrack ? 'IMPLEMENTATION' : 'FOR_REVIEW';
+  fastTrack ? 'APPROVED' : 'FOR_REVIEW';
+
+/** How long the requester has to look, by how urgent they said it was.
+ *
+ *  Their own urgency, applied to them. A person who marks everything urgent to
+ *  jump the queue gets two hours to review it, which is the fairest possible
+ *  answer to that habit. */
+export const REVIEW_HOURS: Record<string, number> = {
+  URGENT: 2, HIGH: 4, NORMAL: 6, LOW: 8,
+};
+export const reviewDeadline = (priority: string, from = new Date()): Date =>
+  new Date(from.getTime() + (REVIEW_HOURS[priority] ?? 6) * 3600_000);
 
 export const canMove = (from: TaskStatus, to: TaskStatus): boolean =>
   ALLOWED_TRANSITIONS[from]?.includes(to) ?? false;
@@ -96,6 +120,8 @@ export interface TaskRowForAccess {
   fast_track?: boolean;
   due_at?: Date | string | null;
   review_rejected_at?: Date | string | null;
+  /** Sizes the review window when work is submitted. */
+  priority?: string;
 }
 
 export interface TaskAccess {
@@ -147,6 +173,9 @@ export interface TaskAccess {
   /** The requester accepting or refusing the resolution. */
   /** The requester approves the work and it moves to being carried out. */
   canApproveReview: boolean;
+  canStartImplementation: boolean;
+  canResumeAfterChanges: boolean;
+  canReturnToReview: boolean;
   /** The requester sends it back, with a reason. */
   canRejectReview: boolean;
   /** The assignee says the implementation is finished. */
@@ -224,6 +253,9 @@ export function accessFor(
   const status = item.status;
   const open = !TERMINAL.includes(status);
   const live = LIVE.includes(status);
+  /* Both new states are the assignee's to act on, so they count as live for
+     everything that asks "is somebody holding this". */
+  const holding = live || status === 'CHANGES_REQUESTED' || status === 'APPROVED';
   const parked = PARKED.includes(status);
 
   return {
@@ -285,6 +317,18 @@ export function accessFor(
     canApproveReview: (isRequester || manageAny) && status === 'FOR_REVIEW',
     canRejectReview: (isRequester || manageAny) && status === 'FOR_REVIEW',
 
+    /* The assignee picks the work back up, or starts carrying it out. Their
+       manager may do either on their behalf -- somebody has to be able to move
+       a ticket when the person holding it is away, and the event log records
+       who actually did it. */
+    canStartImplementation: (isAssignee || managesDepartment || manageAny)
+      && status === 'APPROVED',
+    canResumeAfterChanges: (isAssignee || managesDepartment || manageAny)
+      && status === 'CHANGES_REQUESTED',
+
+    /* A requester who wants another look after the work was carried out. */
+    canReturnToReview: (isRequester || manageAny) && status === 'IMPLEMENTATION',
+
     /* Done is the assignee's to declare, because IMPLEMENTATION is them doing
        the thing in the real world and only they know when it is finished. */
     canComplete: (isAssignee || manageAny) && status === 'IMPLEMENTATION',
@@ -323,7 +367,8 @@ export async function loadWithAccess(
        would be silently undefined and the screen would offer the wrong
        buttons. */
     `SELECT t.id, t.status, t.requester_id, t.assignee_id, t.department_id,
-            t.requester_department_id, t.fast_track, t.due_at, t.review_rejected_at
+            t.requester_department_id, t.fast_track, t.due_at, t.review_rejected_at,
+            t.priority
        FROM tk_items t
       WHERE t.id = $${vis.params.length + 1} AND ${vis.sql}`,
     [...vis.params, itemId],

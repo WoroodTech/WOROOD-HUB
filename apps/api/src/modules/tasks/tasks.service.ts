@@ -34,7 +34,7 @@ import {
 } from './dto';
 import {
   ParticipantRole, TaskAccess, accessFor, assertCan, canMove, loadWithAccess,
-  nextAfterWork, visibilityFilter, type TaskStatus,
+  nextAfterWork, reviewDeadline, visibilityFilter, type TaskStatus,
 } from './visibility.service';
 import { NotificationMailer } from '../../core/notifications.controller';
 import { config } from '../../common/config';
@@ -628,11 +628,20 @@ export class TasksService {
         }
         return this.resolve(p, id, { resolution: dto.resolution });
 
-      case 'IMPLEMENTATION':
+      case 'APPROVED':
         /* Approving is the requester's judgement of work they asked for. The
            capability says whether this person holds it; the board is allowed
            to offer the gesture and be told no. */
         return this.approveReview(p, id);
+
+      case 'CHANGES_REQUESTED':
+        if (!dto.reason?.trim()) {
+          throw new BadRequestException('Say what needs changing. It goes back with the ticket.');
+        }
+        return this.rejectReview(p, id, { reason: dto.reason });
+
+      case 'IMPLEMENTATION':
+        return this.startImplementation(p, id);
 
       case 'DONE':
         return this.complete(p, id);
@@ -733,6 +742,94 @@ export class TasksService {
     return this.detail(p, id);
   }
 
+  /**
+   * The assignee starts carrying out approved work.
+   *
+   * A separate step from the approval because they are different people on
+   * different days: the requester says yes, and the assignee begins when they
+   * begin. Collapsing them showed work as under way the moment it was
+   * approved, which is how a board comes to disagree with the room.
+   */
+  async startImplementation(p: Principal, id: string) {
+    const { item, access } = await loadWithAccess(p, id);
+    assertCan(access, 'canStartImplementation',
+      'Only the person carrying it out, or their manager, may start it.');
+    this.assertMove(item.status, 'IMPLEMENTATION');
+
+    await tx(async (c) => {
+      await c.query(
+        `UPDATE tk_items
+            SET status='IMPLEMENTATION', implementation_started_at=now(),
+                status_changed_at=now(), status_changed_by=$2
+          WHERE id=$1`, [id, p.id]);
+      await writeEvent(c, id, p.id, 'IMPLEMENTATION_STARTED', {});
+    });
+
+    await this.tell([item.requester_id], p, `Being carried out: ${await reference(id)}`,
+      `${p.fullName} started putting it in place.`, id);
+    return this.detail(p, id);
+  }
+
+  /**
+   * The assignee picks work back up after changes were asked for.
+   *
+   * The new date is required here rather than at the rejection, because the
+   * person who owes it is the one being asked for it: the requester cannot
+   * promise when somebody else will finish.
+   */
+  async resumeAfterChanges(p: Principal, id: string, dueAt: string) {
+    const { item, access } = await loadWithAccess(p, id);
+    assertCan(access, 'canResumeAfterChanges',
+      'Only the person doing the work, or their manager, may pick it back up.');
+    this.assertMove(item.status, 'IN_PROGRESS');
+
+    const due = new Date(dueAt);
+    if (Number.isNaN(due.getTime()) || due.getTime() < Date.now() - 60_000) {
+      throw new BadRequestException('Set a new due date, in the future, to carry on.');
+    }
+
+    await tx(async (c) => {
+      await c.query(
+        `UPDATE tk_items
+            SET status='IN_PROGRESS', due_at=$3,
+                sla_state='ON_TIME', sla_reason=NULL, overdue_since=NULL,
+                status_reason=NULL, status_changed_at=now(), status_changed_by=$2
+          WHERE id=$1`, [id, p.id, due]);
+      await writeEvent(c, id, p.id, 'CHANGES_PICKED_UP', { dueAt: due.toISOString() });
+    });
+
+    await this.tell([item.requester_id], p, `Back in progress: ${await reference(id)}`,
+      `${p.fullName} picked it back up, due ${due.toLocaleDateString('en-GB', { dateStyle: 'medium' })}.`,
+      id);
+    return this.detail(p, id);
+  }
+
+  /**
+   * The requester asks to look again at work already being carried out.
+   */
+  async returnToReview(p: Principal, id: string, reason?: string) {
+    const { item, access } = await loadWithAccess(p, id);
+    assertCan(access, 'canReturnToReview', 'Only the person who raised it may ask to look again.');
+    this.assertMove(item.status, 'FOR_REVIEW');
+
+    await tx(async (c) => {
+      await c.query(
+        `UPDATE tk_items
+            SET status='FOR_REVIEW', status_reason=$3, review_due_at=$4::timestamptz,
+                sla_state='ON_TIME', sla_reason=NULL, overdue_since=NULL,
+                status_changed_at=now(), status_changed_by=$2
+          WHERE id=$1`,
+        [id, p.id, reason ?? null, reviewDeadline(item.priority)]);
+      await writeEvent(c, id, p.id, 'RETURNED_TO_REVIEW', { reason });
+    });
+
+    if (item.assignee_id) {
+      await this.tell([item.assignee_id], p, `Back for review: ${await reference(id)}`,
+        reason ?? `${p.fullName} wants another look before it is finished.`, id, 'INFO', true);
+    }
+    return this.detail(p, id);
+  }
+
   async setDue(p: Principal, id: string, dto: SetDue) {
     const { access } = await loadWithAccess(p, id);
     assertCan(access, 'canWork', 'Only the person it is assigned to sets the date.');
@@ -783,9 +880,15 @@ export class TasksService {
       await c.query(
         `UPDATE tk_items
             SET status=$4, status_reason=$2, resolved_at=now(), resolved_by=$3,
-                implementation_started_at = CASE WHEN $4 = 'IMPLEMENTATION' THEN now() END,
+                /* The requester's clock starts here, sized by the urgency they
+                   themselves chose. Null on a fast-tracked ticket: nobody is
+                   being waited on, so there is nothing to be late for. */
+                review_due_at = $5::timestamptz,
+                sla_state='ON_TIME', sla_reason=NULL, overdue_since=NULL,
                 status_changed_at=now(), status_changed_by=$3
-          WHERE id=$1`, [id, dto.resolution, p.id, next]);
+          WHERE id=$1`,
+        [id, dto.resolution, p.id, next,
+         next === 'FOR_REVIEW' ? reviewDeadline(item.priority) : null]);
       await writeEvent(c, id, p.id,
         next === 'FOR_REVIEW' ? 'SUBMITTED_FOR_REVIEW' : 'IMPLEMENTATION_STARTED',
         { resolution: dto.resolution, fastTrack: !!item.fast_track });
@@ -821,7 +924,9 @@ export class TasksService {
     await tx(async (c) => {
       await c.query(
         `UPDATE tk_items
-            SET status='IMPLEMENTATION', implementation_started_at=now(),
+            SET status='APPROVED',
+                /* The review clock stops the moment somebody looks. */
+                review_due_at=NULL, sla_state='ON_TIME', sla_reason=NULL, overdue_since=NULL,
                 status_reason=NULL, status_changed_at=now(), status_changed_by=$2
           WHERE id=$1`, [id, p.id]);
       await writeEvent(c, id, p.id, 'REVIEW_APPROVED', {});
@@ -829,7 +934,8 @@ export class TasksService {
 
     if (item.assignee_id) {
       await this.tell([item.assignee_id], p, `Approved — go ahead: ${await reference(id)}`,
-        `${p.fullName} approved the work. Mark it done once it is in place.`, id, 'INFO', true);
+        `${p.fullName} approved it. Start carrying it out, then mark it done once it is in place.`,
+        id, 'INFO', true);
     }
     return this.detail(p, id);
   }
@@ -881,7 +987,8 @@ export class TasksService {
     await tx(async (c) => {
       await c.query(
         `UPDATE tk_items
-            SET status='IN_PROGRESS', status_reason=$2,
+            SET status='CHANGES_REQUESTED', status_reason=$2,
+                review_due_at=NULL, sla_reason=NULL,
                 review_rejected_reason=$2, review_rejected_at=now(),
                 review_rejection_count = review_rejection_count + 1,
                 due_at=NULL, sla_state='ON_TIME', overdue_since=NULL,
@@ -893,7 +1000,7 @@ export class TasksService {
 
     if (item.assignee_id) {
       await this.tell([item.assignee_id], p, `Sent back to you: ${await reference(id)}`,
-        `${p.fullName} did not accept the work. Reason: ${dto.reason}. Set a new due date to carry on.`,
+        `${p.fullName} asked for changes. Reason: ${dto.reason}. Pick it back up and set a new due date.`,
         id, 'WARNING', true);
     }
     return this.detail(p, id);
@@ -1354,6 +1461,12 @@ function publicAccess(a: TaskAccess) {
     canPlan: a.canPlan, canHold: a.canHold,
     canWork: a.canWork, canAddDependency: a.canAddDependency, canResolve: a.canResolve,
     canApproveReview: a.canApproveReview, canRejectReview: a.canRejectReview,
+    /* These three were computed and never sent, so the screen could not offer
+       the buttons for the two new states and the ticket looked like a dead
+       end. A capability the client cannot see may as well not exist. */
+    canStartImplementation: a.canStartImplementation,
+    canResumeAfterChanges: a.canResumeAfterChanges,
+    canReturnToReview: a.canReturnToReview,
     canComplete: a.canComplete, mustSetNewDueDate: a.mustSetNewDueDate,
     canComment: a.canComment,
   };

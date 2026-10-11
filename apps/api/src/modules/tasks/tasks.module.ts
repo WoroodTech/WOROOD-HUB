@@ -125,13 +125,16 @@ export class TasksController {
   @Get('board')
   board(@CurrentUser() p: Principal,
         @Query('side') side: 'doing' | 'requested' = 'doing',
-        @Query('departmentId') departmentId?: string) {
-    return this.boards.managerBoard(p, side === 'requested' ? 'requested' : 'doing', departmentId);
+        @Query('departmentId') departmentId?: string,
+        @Query('askedBy') askedBy?: string) {
+    return this.boards.managerBoard(p, side === 'requested' ? 'requested' : 'doing',
+      departmentId, askedBy);
   }
 
   @Get('backlog')
-  backlog(@CurrentUser() p: Principal, @Query('departmentId') departmentId?: string) {
-    return this.boards.decisions(p, departmentId);
+  backlog(@CurrentUser() p: Principal, @Query('departmentId') departmentId?: string,
+          @Query('askedBy') askedBy?: string) {
+    return this.boards.decisions(p, departmentId, askedBy);
   }
 
   @Get('board/mine')
@@ -142,8 +145,10 @@ export class TasksController {
   @Get('dashboard')
   dashboard(@CurrentUser() p: Principal,
             @Query('side') side: 'doing' | 'requested' = 'doing',
-            @Query('departmentId') departmentId?: string) {
-    return this.boards.managerDashboard(p, side === 'requested' ? 'requested' : 'doing', departmentId);
+            @Query('departmentId') departmentId?: string,
+            @Query('askedBy') askedBy?: string) {
+    return this.boards.managerDashboard(p, side === 'requested' ? 'requested' : 'doing',
+      departmentId, askedBy);
   }
 
 
@@ -227,6 +232,23 @@ export class TasksController {
   removeAttachment(@CurrentUser() p: Principal,
                    @Param('attachmentId', ParseUUIDPipe) attachmentId: string) {
     return this.files.remove(p, attachmentId);
+  }
+
+  @Post(':id/implementation')
+  startImplementation(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string) {
+    return this.tasks.startImplementation(p, id);
+  }
+
+  @Post(':id/resume')
+  resumeAfterChanges(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string,
+                     @Body() dto: SetDue) {
+    return this.tasks.resumeAfterChanges(p, id, dto.dueAt!);
+  }
+
+  @Post(':id/review/again')
+  returnToReview(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string,
+                 @Body() dto: ReasonOnly) {
+    return this.tasks.returnToReview(p, id, dto.reason);
   }
 
   @Post(':id/move')

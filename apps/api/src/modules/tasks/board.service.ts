@@ -30,8 +30,15 @@ import { TASK_PERMISSIONS } from './permissions';
  * a board about progress meant two columns that never moved sitting in front of
  * the ones that do. The backlog is where parked work is decided; this is where
  * live work is watched. */
+/* The lifecycle in order, then the two that are not stages.
+ *
+ * BLOCKED and DELAYED sit after DONE because neither is a step the work passes
+ * through -- one is waiting on somebody else, the other is a fact about the
+ * clock. Among the stages they would break the reading left to right; after
+ * DONE they are two trays of exceptions, which is what they are. */
 export const BOARD_COLUMNS = [
-  'IN_PROGRESS', 'BLOCKED', 'FOR_REVIEW', 'IMPLEMENTATION', 'DONE',
+  'IN_PROGRESS', 'FOR_REVIEW', 'CHANGES_REQUESTED', 'APPROVED',
+  'IMPLEMENTATION', 'DONE', 'BLOCKED',
 ] as const;
 
 export type BoardColumn = typeof BOARD_COLUMNS[number] | 'DELAYED';
@@ -41,7 +48,7 @@ export type BoardColumn = typeof BOARD_COLUMNS[number] | 'DELAYED';
    question somebody asks before clicking: whose is it, who is doing it, when is
    it promised, how late, and did it come from outside. */
 const CARD_COLUMNS = `
-  t.id, t.reference, t.title, t.status, t.priority, t.sla_state,
+  t.id, t.reference, t.title, t.status, t.priority, t.sla_state, t.sla_reason,
   t.due_at, t.planned_for, t.created_at, t.overdue_since,
   t.fast_track, t.review_rejection_count,
   t.department_id, t.requester_department_id,
@@ -65,6 +72,7 @@ const CARD_JOINS = `
 export interface BoardCard {
   id: string; reference: string; title: string;
   status: string; priority: string; slaState: string;
+  slaReason: 'WORK' | 'REVIEW' | null;
   dueAt: string | null; plannedFor: string | null; createdAt: string;
   overdueSince: string | null;
   fastTrack: boolean; reviewRejectionCount: number;
@@ -85,6 +93,7 @@ export interface BoardCard {
 const toCard = (r: any, draggable: boolean): BoardCard => ({
   id: r.id, reference: r.reference, title: r.title,
   status: r.status, priority: r.priority, slaState: r.sla_state,
+  slaReason: r.sla_reason ?? null,
   dueAt: r.due_at ? new Date(r.due_at).toISOString() : null,
   plannedFor: r.planned_for ? new Date(r.planned_for).toISOString() : null,
   createdAt: new Date(r.created_at).toISOString(),
@@ -128,22 +137,43 @@ const toCard = (r: any, draggable: boolean): BoardCard => ({
  * instead of being rebuilt, slightly differently, in each query.
  */
 export function departmentScope(
-  manageAny: boolean, managed: string[], departmentId?: string,
+  manageAny: boolean, managed: string[], userId: string,
+  standingIn?: string, askedBy?: string,
 ): { sql: string; params: unknown[] } {
+  const ps: unknown[] = [];
+  const bind = (v: unknown) => { ps.push(v); return `$${ps.length}`; };
+
+  /* Which department am I looking from.
+   *
+   * An administrator picks one and sees what its manager sees. Picking nobody
+   * shows the whole company, which is the only view nobody else has and the
+   * reason the role exists. */
+  let base: string;
   if (manageAny) {
-    return departmentId
-      // Everything that department asked for: internal and sent out alike.
-      ? { sql: 't.requester_department_id = $1::uuid', params: [departmentId] }
-      : { sql: 'TRUE', params: [] };
+    base = standingIn
+      ? `(t.department_id = ${bind(standingIn)}::uuid
+          OR t.requester_department_id = $${ps.length}::uuid)`
+      : 'TRUE';
+  } else {
+    /* A manager sees their department's work, and the work their department
+       asked of others.
+    
+       The second half is the change: a ticket Marketing raised against Design
+       belongs on Marketing's board too. They cannot move it -- the card says so
+       -- but not showing it at all meant the only way to find out how your own
+       request was going was to ask somebody. */
+    const mine = bind(managed);
+    base = `(t.department_id = ANY(${mine}::uuid[])
+             OR t.requester_department_id = ANY(${mine}::uuid[])
+             OR t.requester_id = ${bind(userId)}::uuid)`;
   }
 
-  return departmentId
-    // What that department asked of mine.
-    ? {
-        sql: 't.department_id = ANY($1::uuid[]) AND t.requester_department_id = $2::uuid',
-        params: [managed, departmentId],
-      }
-    : { sql: 't.department_id = ANY($1::uuid[])', params: [managed] };
+  /* And then: narrowed to what one other department asked of it. Applies to
+     both roles, because "who asked us for this" is the same question whether
+     you manage the department or are standing in it. */
+  if (askedBy) base += ` AND t.requester_department_id = ${bind(askedBy)}::uuid`;
+
+  return { sql: base, params: ps };
 }
 
 /**
@@ -160,12 +190,34 @@ async function filterDepartments(manageAny: boolean, managed: string[]) {
       `SELECT id, name FROM core_departments ORDER BY name`);
   }
   return query<{ id: string; name: string }>(
+    `SELECT id, name FROM core_departments WHERE id = ANY($1::uuid[]) ORDER BY name`,
+    [managed]);
+}
+
+/**
+ * The departments that have actually asked this one for something.
+ *
+ * Offered as the second filter, and built from the tickets rather than from the
+ * org chart: a list of every department in the company would mostly be options
+ * that return nothing, and an option that returns nothing teaches people the
+ * filter is broken.
+ */
+async function requestingDepartments(
+  manageAny: boolean, managed: string[], standingIn?: string,
+) {
+  const target = standingIn ? [standingIn] : managed;
+  if (manageAny && !standingIn) {
+    return query<{ id: string; name: string }>(
+      `SELECT DISTINCT d.id, d.name
+         FROM tk_items t JOIN core_departments d ON d.id = t.requester_department_id
+        WHERE t.requester_department_id IS NOT NULL ORDER BY d.name`);
+  }
+  return query<{ id: string; name: string }>(
     `SELECT DISTINCT d.id, d.name
-       FROM tk_items t
-       JOIN core_departments d ON d.id = t.requester_department_id
+       FROM tk_items t JOIN core_departments d ON d.id = t.requester_department_id
       WHERE t.department_id = ANY($1::uuid[])
         AND t.requester_department_id IS NOT NULL
-      ORDER BY d.name`, [managed]);
+      ORDER BY d.name`, [target]);
 }
 
 @Injectable()
@@ -185,7 +237,8 @@ export class BoardService {
    *               anyway, so offering the gesture would only teach the board
    *               cannot be trusted.
    */
-  async managerBoard(p: Principal, side: 'doing' | 'requested', departmentId?: string) {
+  async managerBoard(p: Principal, side: 'doing' | 'requested',
+                     departmentId?: string, askedBy?: string) {
     const manageAny = can(p, TASK_PERMISSIONS.MANAGE_ANY)
       || can(p, TASK_PERMISSIONS.VIEW_ANY);
     const managed = p.managedDepartmentIds ?? [];
@@ -193,10 +246,11 @@ export class BoardService {
     /* A manager of nothing has no board. Said plainly rather than returning
        empty columns, which reads like "no work" rather than "not for you". */
     if (!manageAny && managed.length === 0) {
-      return { side, departments: [], columns: [], empty: 'notAManager' as const };
+      return { side, departments: [], requesters: [], standingIn: null,
+               columns: [], empty: 'notAManager' as const };
     }
 
-    const scope = departmentScope(manageAny, managed, departmentId);
+    const scope = departmentScope(manageAny, managed, p.id, departmentId, askedBy);
 
     const rows = await query<any>(
       `SELECT ${CARD_COLUMNS} ${CARD_JOINS}
@@ -215,14 +269,29 @@ export class BoardService {
           COALESCE(t.due_at, t.planned_for, t.created_at)`,
       scope.params);
 
+    /* Draggable only where the viewer's department is the one doing the work.
+    
+       The board now also carries tickets this department *asked for*, which
+       another department is carrying out. Those are visible and not movable --
+       and the card is marked individually rather than the whole board, because
+       after this change one board holds both kinds. */
+    const doingHere = (r: any) => manageAny
+      ? (!departmentId || r.department_id === departmentId)
+      : managed.includes(r.department_id);
+    const cards = rows.map((r) => toCard(r, side === 'doing' && doingHere(r)));
     const draggable = side === 'doing';
-    const cards = rows.map((r) => toCard(r, draggable));
 
     /* Delayed is drawn from sla_state, not from status, so a ticket appears
        there *and* keeps its real status on the card. A manager who sees only
        "delayed" asks the assignee why they have stopped; the answer is often
        that they have not -- they are waiting on another department. */
     const columns = [
+      ...BOARD_COLUMNS.map((key) => ({
+        key: key as BoardColumn,
+        cards: cards.filter((c) => c.status === key
+          || (key === 'IN_PROGRESS' && c.status === 'ASSIGNED')),
+        droppable: draggable,
+      })),
       {
         key: 'DELAYED' as BoardColumn,
         cards: cards.filter((c) => c.slaState === 'OVERDUE'),
@@ -230,17 +299,14 @@ export class BoardService {
            the clock, not a decision anybody makes. */
         droppable: false,
       },
-      ...BOARD_COLUMNS.map((key) => ({
-        key: key as BoardColumn,
-        cards: cards.filter((c) => c.status === key
-          || (key === 'IN_PROGRESS' && c.status === 'ASSIGNED')),
-        droppable: draggable,
-      })),
     ];
 
-    const departments = await filterDepartments(manageAny, managed);
+    const [departments, requesters] = await Promise.all([
+      filterDepartments(manageAny, managed),
+      requestingDepartments(manageAny, managed, departmentId),
+    ]);
 
-    return { side, departments, columns, empty: null };
+    return { side, departments, requesters, standingIn: departmentId ?? null, columns, empty: null };
   }
 
   /**
@@ -256,15 +322,16 @@ export class BoardService {
    * is about work that has not started, and a manager opens it once a morning
    * to clear it.
    */
-  async decisions(p: Principal, departmentId?: string) {
+  async decisions(p: Principal, departmentId?: string, askedBy?: string) {
     const manageAny = can(p, TASK_PERMISSIONS.MANAGE_ANY)
       || can(p, TASK_PERMISSIONS.VIEW_ANY);
     const managed = p.managedDepartmentIds ?? [];
     if (!manageAny && managed.length === 0) {
-      return { groups: [], departments: [], empty: 'notAManager' as const };
+      return { groups: [], departments: [], requesters: [], standingIn: null,
+               empty: 'notAManager' as const };
     }
 
-    const scope = departmentScope(manageAny, managed, departmentId);
+    const scope = departmentScope(manageAny, managed, p.id, departmentId, askedBy);
     const rows = await query<any>(
       `SELECT ${CARD_COLUMNS} ${CARD_JOINS}
         WHERE ${scope.sql}
@@ -283,10 +350,13 @@ export class BoardService {
       scope.params);
 
     const cards = rows.map((r) => toCard(r, false));
-    const departments = await filterDepartments(manageAny, managed);
+    const [departments, requesters] = await Promise.all([
+      filterDepartments(manageAny, managed),
+      requestingDepartments(manageAny, managed, departmentId),
+    ]);
 
     return {
-      empty: null, departments,
+      empty: null, departments, requesters, standingIn: departmentId ?? null,
       groups: [
         { key: 'NEW', cards: cards.filter((c) => c.status === 'NEW') },
         { key: 'PLANNING', cards: cards.filter((c) => c.status === 'PLANNING') },
@@ -307,7 +377,13 @@ export class BoardService {
   async myBoard(p: Principal) {
     const rows = await query<any>(
       `SELECT ${CARD_COLUMNS} ${CARD_JOINS}
-        WHERE t.assignee_id = $1
+        /* Mine to do, or mine because I asked for it.
+        
+           A ticket you raised is yours to watch -- and once it reaches review
+           it is yours to act on, because approving is the requester's. Leaving
+           it off this board meant the one screen a person checks never showed
+           the thing that was waiting for them. */
+        WHERE (t.assignee_id = $1 OR t.requester_id = $1)
           AND t.status NOT IN ('CANCELLED','REJECTED')
           /* Everything finished stays. An employee's own record of what they
              have done is worth more than a tidy column, and the volume is one
@@ -319,36 +395,42 @@ export class BoardService {
           COALESCE(t.due_at, t.created_at)`,
       [p.id]);
 
-    /* Cards drag here too. It is their work, and saying where it has got to
-       should not require opening the ticket.
+    /* Drag is per card, not per board. This board now carries work somebody
+       else is doing on your behalf, and moving another person's ticket through
+       their states is not yours -- so only the ones assigned to you move.
     
        What they cannot do is park it: planning and on hold are the manager's
        decisions, and letting somebody put their own ticket on hold is letting
        them stop their own clock. Those columns are not on this board at all,
        so the question does not arise. */
-    const cards = rows.map((r) => toCard(r, true));
+    const cards = rows.map((r) => toCard(r, r.assignee_id === p.id));
 
     const columns = [
-      /* Never droppable. Lateness is a fact about the clock, not a move. */
-      { key: 'DELAYED' as BoardColumn, cards: cards.filter((c) => c.slaState === 'OVERDUE'), droppable: false },
-      ...(['IN_PROGRESS', 'BLOCKED', 'FOR_REVIEW', 'IMPLEMENTATION', 'DONE'] as const)
+      ...(['IN_PROGRESS', 'FOR_REVIEW', 'CHANGES_REQUESTED', 'APPROVED',
+           'IMPLEMENTATION', 'DONE', 'BLOCKED'] as const)
         .map((key) => ({
           key: key as BoardColumn,
           cards: cards.filter((c) => c.status === key
             || (key === 'IN_PROGRESS' && c.status === 'ASSIGNED')),
           /* Only the two they can actually reach by moving a card. Blocked
              happens when a dependency is raised, implementation when the
-             requester approves, and done is declared on the ticket -- offering
-             those as drop targets would be offering a gesture that is refused.
-             FOR_REVIEW asks for an account of the work, which the board
-             collects the same way it collects a date. */
-          droppable: key === 'IN_PROGRESS' || key === 'FOR_REVIEW',
+             done is declared on the ticket -- offering those as drop targets
+             would be offering a gesture that is refused. FOR_REVIEW asks for an
+             account of the work and IMPLEMENTATION needs nothing, which is why
+             both are here and APPROVED is not: approving is the requester's. */
+          /* Done is reachable by dragging: "it is in place" is the assignee's
+             own statement and needs nothing else from them. APPROVED is not --
+             that is the requester's judgement, taken on the ticket. */
+          droppable: key === 'IN_PROGRESS' || key === 'FOR_REVIEW'
+            || key === 'IMPLEMENTATION' || key === 'DONE',
         })),
+      /* Never droppable. Lateness is a fact about the clock, not a move. */
+      { key: 'DELAYED' as BoardColumn, cards: cards.filter((c) => c.slaState === 'OVERDUE'), droppable: false },
     ];
 
-    /* What is waiting on this person specifically, which is not the same as
-       what is assigned to them: a ticket they raised and that is now sitting in
-       review is waiting on them too, and it is not on this board at all. */
+    /* How many of the cards above are waiting on *this* person to review.
+       They are on the board now, in the For review column -- this is the count
+       that tells them to look there. */
     const awaitingMyReview = await one<{ n: string }>(
       `SELECT count(*)::int AS n FROM tk_items
         WHERE requester_id = $1 AND status = 'FOR_REVIEW'`, [p.id]);
@@ -365,7 +447,8 @@ export class BoardService {
    * what good looks like is how a team ends up managed by a number nobody
    * chose.
    */
-  async managerDashboard(p: Principal, side: 'doing' | 'requested', departmentId?: string) {
+  async managerDashboard(p: Principal, side: 'doing' | 'requested',
+                         departmentId?: string, askedBy?: string) {
     const manageAny = can(p, TASK_PERMISSIONS.MANAGE_ANY)
       || can(p, TASK_PERMISSIONS.VIEW_ANY);
     const managed = p.managedDepartmentIds ?? [];
@@ -373,7 +456,7 @@ export class BoardService {
       return { side, totals: null, people: [], empty: 'notAManager' as const };
     }
 
-    const scope = departmentScope(manageAny, managed, departmentId);
+    const scope = departmentScope(manageAny, managed, p.id, departmentId, askedBy);
     const params = scope.params;
     const where = scope.sql;
 

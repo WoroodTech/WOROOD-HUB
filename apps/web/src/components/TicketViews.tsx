@@ -127,7 +127,7 @@ function ListRow({ card, onOpen }: { card: BoardCard; onOpen: () => void }) {
         {!card.internal ? (
           <span className="tlist__ext"
                 title={`${card.requesterDepartmentName ?? 'Another department'} asked ${card.departmentName}`}>
-            <Icon name="globe" size={11} /> {card.departmentName}
+            <Icon name="globe" size={11} /> external
           </span>
         ) : null}
       </span>
