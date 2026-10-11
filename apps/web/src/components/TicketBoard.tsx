@@ -55,28 +55,29 @@ export function TicketCard({ card }: { card: BoardCard }) {
       {/* Signals, not sentences. Each is a fact somebody checks before
           clicking, and an icon with a number reads faster than a phrase. */}
       <span className="tcard__signals">
-        {/* Where it came from, at a glance.
+        {/* Internal or external, and nothing more.
         
-            An external ticket is a promise to somebody outside the team, and it
-            is read differently from one the team raised for itself -- so it is
-            on the card rather than two clicks away. The tooltip names the
-            department, because the icon alone says "elsewhere" and not
-            "where". */}
+            The department name used to be here, which on a board already
+            filtered by department was repeating what the filter said. Whether
+            the work came from outside is the part that changes how it is read;
+            which outside department is on the ticket. */}
         <span
           className={`tcard__signal${card.internal ? '' : ' tcard__signal--ext'}`}
           title={card.internal
-            ? `Raised and done inside ${card.departmentName} — ${card.requesterName}`
-            : `${card.requesterDepartmentName ?? 'Another department'} asked ${card.departmentName} — ${card.requesterName}`}
+            ? `Raised and done inside ${card.departmentName}`
+            : `${card.requesterDepartmentName ?? 'Another department'} asked ${card.departmentName}`}
         >
           <Icon name={card.internal ? 'home' : 'globe'} size={12} />
-          {/* The department *doing* the work, not the one that asked.
-          
-              An administrator filtering by Marketing is looking at everything
-              Marketing wanted, and already knows that much -- what they cannot
-              see from the filter is who ended up with each one. The tooltip
-              names both, so the direction is never a guess. */}
-          {card.internal ? 'internal' : card.departmentName}
+          {card.internal ? 'internal' : 'external'}
         </span>
+
+        {/* A late review is late for a different reason and a different person,
+            so the Delayed column has to say which it is. */}
+        {card.slaReason === 'REVIEW' ? (
+          <span className="tcard__signal tcard__signal--bad" title="Nobody has reviewed it yet">
+            <Icon name="eye" size={12} /> review overdue
+          </span>
+        ) : null}
         {card.waitingOn > 0 ? (
           <span className="tcard__signal tcard__signal--warn"
                 title={`Waiting on ${card.waitingOn} other ticket(s)`}>

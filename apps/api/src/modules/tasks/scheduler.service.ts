@@ -93,43 +93,62 @@ export class TasksScheduler implements OnModuleInit, OnModuleDestroy {
 
   /** Recompute ON_TIME / DUE_SOON / OVERDUE from due_at, and announce crossings. */
   async sweep(): Promise<{ overdue: number; dueSoon: number }> {
-    const crossed = await query<{ id: string; reference: string; assignee_id: string | null; state: string }>(
+    const crossed = await query<{ id: string; reference: string; assignee_id: string | null; requester_id: string; state: string; reason: string | null }>(
       `UPDATE tk_items t
           SET sla_state = s.next,
+              sla_reason = CASE WHEN s.next = 'ON_TIME' THEN NULL ELSE s.why END,
               overdue_since = CASE WHEN s.next = 'OVERDUE'
                                    THEN COALESCE(t.overdue_since, now()) ELSE NULL END
          FROM (
            SELECT i.id,
-                  CASE WHEN i.due_at < now()                          THEN 'OVERDUE'
-                       WHEN i.due_at < now() + interval '24 hours'    THEN 'DUE_SOON'
-                       ELSE 'ON_TIME' END AS next
+                  /* Two clocks, and whichever has run out further decides.
+                  
+                     A ticket waiting to be reviewed is late because nobody has
+                     looked at it, not because the work was slow -- and the two
+                     need different conversations with different people, so the
+                     board has to be able to tell them apart. */
+                  CASE WHEN i.status = 'FOR_REVIEW' AND i.review_due_at < now() THEN 'OVERDUE'
+                       WHEN i.due_at < now()                       THEN 'OVERDUE'
+                       WHEN i.due_at < now() + interval '24 hours' THEN 'DUE_SOON'
+                       ELSE 'ON_TIME' END AS next,
+                  CASE WHEN i.status = 'FOR_REVIEW' AND i.review_due_at < now()
+                       THEN 'REVIEW' ELSE 'WORK' END AS why
              FROM tk_items i
-            WHERE i.due_at IS NOT NULL
+            WHERE (i.due_at IS NOT NULL OR i.review_due_at IS NOT NULL)
               /* BLOCKED is deliberately absent. A ticket waiting on another
                  department is not late -- the clock is stopped, and letting it
                  tick would make somebody overdue for a week through no fault of
-                 theirs, then show them as the problem on their manager's
-                 board. FOR_REVIEW and IMPLEMENTATION are included: the work is
-                 still owed, it is simply at a later stage. */
-              AND i.status IN ('ASSIGNED','IN_PROGRESS','FOR_REVIEW','IMPLEMENTATION')
+                 theirs, then show them as the problem on their manager's board.
+                 APPROVED and CHANGES_REQUESTED are included: both are waiting on
+                 the assignee, and work owed is work owed whatever the stage. */
+              AND i.status IN ('ASSIGNED','IN_PROGRESS','FOR_REVIEW',
+                               'CHANGES_REQUESTED','APPROVED','IMPLEMENTATION')
          ) AS s
         WHERE t.id = s.id AND t.sla_state IS DISTINCT FROM s.next
-        RETURNING t.id, t.reference, t.assignee_id, t.sla_state AS state`);
+        RETURNING t.id, t.reference, t.assignee_id, t.requester_id,
+                  t.sla_state AS state, t.sla_reason AS reason`);
 
     for (const row of crossed) {
       if (row.state === 'ON_TIME') continue;
       await query(
         `INSERT INTO tk_events (item_id, actor_id, type, payload) VALUES ($1,NULL,$2,'{}'::jsonb)`,
         [row.id, row.state]);
-      if (!row.assignee_id) continue;
+      /* A late review is the requester's to clear, not the assignee's -- they
+         finished. Telling the assignee their work is overdue when it is sitting
+         unlooked-at is both useless and unfair. */
+      const target = row.reason === 'REVIEW' ? row.requester_id : row.assignee_id;
+      if (!target) continue;
       const overdue = row.state === 'OVERDUE';
       try {
         const notificationId = await this.notifications.notify(
-          row.assignee_id, MODULE_KEY,
-          overdue ? `Past its date: ${row.reference}` : `Due tomorrow: ${row.reference}`,
-          overdue
-            ? 'The date you committed to has passed. Set a new one, or say where it stands.'
-            : 'The date you committed to is within a day.',
+          target, MODULE_KEY,
+          row.reason === 'REVIEW' ? `Waiting on your review: ${row.reference}`
+            : overdue ? `Past its date: ${row.reference}` : `Due tomorrow: ${row.reference}`,
+          row.reason === 'REVIEW'
+            ? 'The work was finished and is waiting for you to approve it or ask for changes.'
+            : overdue
+              ? 'The date you committed to has passed. Set a new one, or say where it stands.'
+              : 'The date you committed to is within a day.',
           overdue ? 'WARNING' : 'INFO',
           `/tasks/${row.id}`);
 
@@ -141,7 +160,7 @@ export class TasksScheduler implements OnModuleInit, OnModuleDestroy {
            assignee is the one who can fix it, and nobody else will notice it on
            a board until it is much later. */
         if (overdue && notificationId) {
-          void this.emailOverdue(notificationId, row.assignee_id, row.id, row.reference)
+          void this.emailOverdue(notificationId, target, row.id, row.reference)
             .catch(() => undefined);
         }
       } catch (e) {

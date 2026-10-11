@@ -36,6 +36,8 @@ type Pending =
   | { kind: 'assign'; id: string; to: string; departmentId: string }
   | { kind: 'start'; id: string; to: string; departmentId: string }
   | { kind: 'review'; id: string; to: string }
+  | { kind: 'changes'; id: string; to: string }
+  | { kind: 'resume'; id: string; to: string }
   | null;
 
 export function TicketBoardPage() {
@@ -62,6 +64,10 @@ function ManagerBoard() {
     const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n;
   });
   const [departmentId, setDepartmentId] = useState<string>('');
+  /* The second filter: which department asked. Cleared whenever the first
+     changes, because "Sales asked us" means nothing once you have moved to
+     standing in a different department. */
+  const [askedBy, setAskedBy] = useState<string>('');
   const [pending, setPending] = useState<Pending>(null);
   const [value, setValue] = useState('');
   const toast = useToast();
@@ -77,25 +83,26 @@ function ManagerBoard() {
   const oversees = can('tasks.item.manage-any') || can('tasks.item.view-any');
 
   const { data, isPending, error, refetch } = useQuery({
-    queryKey: ['tasks', 'board', departmentId],
+    queryKey: ['tasks', 'board', departmentId, askedBy],
     /* Only work this department is carrying out. Watching another
        department's pipeline was a read-only board whose cards refused to move
        -- which reads as broken rather than as deliberate. Work we asked for is
        followed on the ticket itself, where there is room to say what is
        happening. */
     queryFn: () => api<BoardResponse>(
-      `/tasks/board?side=doing${departmentId ? `&departmentId=${departmentId}` : ''}`),
+      `/tasks/board?side=doing${departmentId ? `&departmentId=${departmentId}` : ''}`
+      + `${askedBy ? `&askedBy=${askedBy}` : ''}`),
     refetchInterval: 60_000,
   });
 
   const move = useMutation({
     mutationFn: (body: {
       id: string; to: string; plannedFor?: string; reason?: string;
-      assigneeId?: string; resolution?: string;
+      assigneeId?: string; resolution?: string; dueAt?: string;
     }) =>
       api(`/tasks/${body.id}/move`, { method: 'POST', body: {
         to: body.to, plannedFor: body.plannedFor, reason: body.reason,
-        assigneeId: body.assigneeId, resolution: body.resolution,
+        assigneeId: body.assigneeId, resolution: body.resolution, dueAt: body.dueAt,
       } }),
     onSuccess: () => {
       setPending(null); setValue('');
@@ -118,9 +125,13 @@ function ManagerBoard() {
     if (to === 'PLANNING') return setPending({ kind: 'plan', id, to });
     if (to === 'ON_HOLD') return setPending({ kind: 'hold', id, to });
     if (to === 'FOR_REVIEW') return setPending({ kind: 'review', id, to });
+    if (to === 'CHANGES_REQUESTED') return setPending({ kind: 'changes', id, to });
 
     if (to === 'IN_PROGRESS') {
       const card = data?.columns.flatMap((c) => c.cards).find((c) => c.id === id);
+      /* Picked back up after changes: the new date is owed by whoever is
+         picking it up, so it is asked for on the drop. */
+      if (card?.status === 'CHANGES_REQUESTED') return setPending({ kind: 'resume', id, to });
       /* A parked ticket has nobody on it, so starting means choosing somebody.
          One gesture, one question, and the API does both. */
       if (!card?.assigneeId) {
@@ -188,14 +199,36 @@ function ManagerBoard() {
             {collapsed.size ? 'Expand all' : 'Collapse all'}
           </button>
         ) : null}
+        {/* Standing in a department: an administrator borrows its manager's
+            view, and the rest of the screen follows. */}
         {data.departments.length > 1 ? (
           <select
             className="input" value={departmentId}
-            onChange={(e) => setDepartmentId(e.target.value)}
-            aria-label={oversees ? 'Requested by' : 'Asked of us by'}
+            onChange={(e) => { setDepartmentId(e.target.value); setAskedBy(''); }}
+            aria-label={oversees ? 'Standing in' : 'My department'}
+            title={oversees
+              ? 'Look at the board the way this department\u2019s manager sees it'
+              : 'Which of your departments'}
           >
-            <option value="">{oversees ? 'Every department' : 'Everything we are doing'}</option>
-            {data.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            <option value="">{oversees ? 'Every department' : 'All my departments'}</option>
+            {data.departments.map((d) => (
+              <option key={d.id} value={d.id}>{oversees ? `In ${d.name}` : d.name}</option>
+            ))}
+          </select>
+        ) : null}
+
+        {/* The second filter, inside the first: of the work this department is
+            doing, what did one other department ask for. Built from the tickets
+            rather than the org chart, so every option returns something. */}
+        {data.requesters.length > 0 ? (
+          <select className="input" value={askedBy}
+                  onChange={(e) => setAskedBy(e.target.value)}
+                  aria-label="Asked for by"
+                  title="Narrow to what one department asked of this one">
+            <option value="">Asked by anyone</option>
+            {data.requesters.map((d) => (
+              <option key={d.id} value={d.id}>Asked by {d.name}</option>
+            ))}
           </select>
         ) : null}
       </div>
@@ -261,6 +294,29 @@ function ManagerBoard() {
                   placeholder="Waiting on the supplier to confirm stock…"
                 />
               </>
+            ) : pending.kind === 'changes' ? (
+              <>
+                <p className="modal__sub">
+                  Say what needs changing. It goes back to whoever did the work,
+                  stays on the ticket's history, and they set a new date when
+                  they pick it up.
+                </p>
+                <textarea
+                  className="input" rows={4} value={value} autoFocus
+                  onChange={(e) => setValue(e.target.value)}
+                  placeholder="The refund has not reached the customer yet…"
+                />
+              </>
+            ) : pending.kind === 'resume' ? (
+              <>
+                <p className="modal__sub">
+                  Picking it back up needs a new date. The old one was a promise
+                  about work that has since been sent back.
+                </p>
+                <input className="input" type="datetime-local" value={value}
+                       min={localNow()} autoFocus
+                       onChange={(e) => setValue(e.target.value)} />
+              </>
             ) : pending.kind === 'review' ? (
               <>
                 <p className="modal__sub">
@@ -311,9 +367,10 @@ function ManagerBoard() {
                 onClick={() => move.mutate({
                   id: pending.id, to: pending.to,
                   plannedFor: pending.kind === 'plan' ? new Date(value).toISOString() : undefined,
-                  reason: pending.kind === 'hold' ? value : undefined,
+                  reason: pending.kind === 'hold' || pending.kind === 'changes' ? value : undefined,
                   assigneeId: pending.kind === 'assign' || pending.kind === 'start' ? value : undefined,
                   resolution: pending.kind === 'review' ? value : undefined,
+                  dueAt: pending.kind === 'resume' ? new Date(value).toISOString() : undefined,
                 })}
               >
                 Move it

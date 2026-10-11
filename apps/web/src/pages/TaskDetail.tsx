@@ -90,6 +90,10 @@ const EVENT_SENTENCE: Record<string, (p: any) => string> = {
     ? `finished the work — ${p.resolution ?? ''} (fast-tracked, so it skipped review)`
     : `started putting it in place — ${p.resolution ?? ''}`,
   REVIEW_APPROVED: () => 'approved the work',
+  CHANGES_PICKED_UP: (p) => `picked it back up, due ${formatDate(p.dueAt)}`,
+  RETURNED_TO_REVIEW: (p) => p.reason
+    ? `asked to look at it again — ${p.reason}`
+    : 'asked to look at it again',
   REVIEW_REJECTED: (p) => `sent it back — ${p.reason ?? 'no reason given'}`,
   DONE: () => 'marked it done — it is in place',
   ATTACHMENT_REMOVED: (p) => p.byAdmin
@@ -115,6 +119,7 @@ type Dialog =
   | { kind: 'contributor' }
   | { kind: 'due' }
   | { kind: 'plan' }
+  | { kind: 'resume' }
   | { kind: 'reason'; action: string; heading: string; verb: string; hint?: string };
 
 export function TaskDetailPage() {
@@ -344,6 +349,28 @@ export function TaskDetailPage() {
                     <Icon name="left" size={15} /> Not done yet
                   </button>
                 </>
+              ) : null}
+              {a.canStartImplementation ? (
+                <button type="button" className="btn btn--primary btn--block"
+                  onClick={() => act.mutate({ path: '/implementation' })}>
+                  <Icon name="right" size={15} /> Start carrying it out
+                </button>
+              ) : null}
+              {a.canResumeAfterChanges ? (
+                <button type="button" className="btn btn--primary btn--block"
+                  onClick={() => setDialog({ kind: 'resume' })}>
+                  <Icon name="refresh" size={15} /> Pick it back up
+                </button>
+              ) : null}
+              {a.canReturnToReview ? (
+                <button type="button" className="btn btn--ghost btn--block"
+                  onClick={() => setDialog({
+                    kind: 'reason', action: '/review/again', heading: 'Look at it again',
+                    verb: 'Send back for review',
+                    hint: 'Say what you want to check. It goes back to the person carrying it out.',
+                  })}>
+                  <Icon name="eye" size={15} /> Review it again
+                </button>
               ) : null}
               {a.canComplete ? (
                 <button type="button" className="btn btn--primary btn--block"
@@ -677,14 +704,16 @@ function TaskDialog({ dialog, task, busy, onClose, onSubmit }: {
           : dialog.kind === 'contributor' ? 'Bring in a colleague'
             : dialog.kind === 'due' ? 'When will it be done?'
               : dialog.kind === 'plan' ? 'When should this be worked on?'
-                : dialog.heading;
+                : dialog.kind === 'resume' ? 'When will it be done this time?'
+                  : dialog.heading;
 
   const ready =
     dialog.kind === 'assign' || dialog.kind === 'contributor' ? !!choice
       : dialog.kind === 'transfer' ? !!choice && text.trim().length >= 3
         : dialog.kind === 'dependency' ? !!choice && title.trim().length >= 3
           : dialog.kind === 'due' ? true
-            : dialog.kind === 'plan' ? !!dueAt
+            : dialog.kind === 'resume' ? !!dueAt
+              : dialog.kind === 'plan' ? !!dueAt
               : text.trim().length >= 3;
 
   const submit = () => {
@@ -698,6 +727,8 @@ function TaskDialog({ dialog, task, busy, onClose, onSubmit }: {
       });
     } else if (dialog.kind === 'due') {
       onSubmit('/due', { dueAt: dueAt ? new Date(dueAt).toISOString() : null });
+    } else if (dialog.kind === 'resume') {
+      onSubmit('/resume', { dueAt: new Date(dueAt).toISOString() });
     } else if (dialog.kind === 'plan') {
       /* Reusing the due-date field. Both are "pick a moment", and a second
          piece of state holding a datetime would only be a second thing to
@@ -727,7 +758,21 @@ function TaskDialog({ dialog, task, busy, onClose, onSubmit }: {
         </header>
 
         <div className="modal__body">
-          {dialog.kind === 'plan' ? (
+          {dialog.kind === 'resume' ? (
+            <>
+              <p className="modal__sub">
+                The old date was a promise about work that has since been sent
+                back, so it no longer means anything. Set a new one and the
+                ticket goes back into progress.
+              </p>
+              <div className="field field--wide">
+                <span className="field__label">Due by</span>
+                <input className="input" type="datetime-local" value={dueAt}
+                       min={localNow()} autoFocus
+                       onChange={(e) => setDueAt(e.target.value)} />
+              </div>
+            </>
+          ) : dialog.kind === 'plan' ? (
             <>
               <p className="modal__sub">
                 Planning holds a date, not a person. Whoever is free on the day

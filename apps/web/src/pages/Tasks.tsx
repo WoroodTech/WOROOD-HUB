@@ -38,7 +38,8 @@ type Scope = 'assigned' | 'requested' | 'contributing' | 'queue' | 'department' 
 export const STATUS_LABEL: Record<string, string> = {
   NEW: 'Awaiting assignment', PLANNING: 'Planned', ON_HOLD: 'On hold',
   ASSIGNED: 'Assigned', IN_PROGRESS: 'In progress', BLOCKED: 'Waiting on another team',
-  FOR_REVIEW: 'For review', IMPLEMENTATION: 'Being carried out', DONE: 'Done',
+  FOR_REVIEW: 'For review', CHANGES_REQUESTED: 'Changes requested',
+  APPROVED: 'Approved', IMPLEMENTATION: 'Being carried out', DONE: 'Done',
   REJECTED: 'Not accepted', CANCELLED: 'Cancelled',
   /* Not a status. The board draws this column from slaState, and the card keeps
      showing the real one underneath. */
@@ -49,11 +50,13 @@ export const STATUS_LABEL: Record<string, string> = {
 export const STATUS_SHORT: Record<string, string> = {
   ...STATUS_LABEL,
   NEW: 'Unassigned', BLOCKED: 'Blocked', IMPLEMENTATION: 'Carrying out',
+  CHANGES_REQUESTED: 'Changes', FOR_REVIEW: 'For review',
 };
 
 export const STATUS_TONE: Record<string, 'neutral' | 'good' | 'warning' | 'critical' | 'info' | 'accent'> = {
   NEW: 'warning', PLANNING: 'info', ON_HOLD: 'warning', ASSIGNED: 'info',
   IN_PROGRESS: 'accent', BLOCKED: 'critical', FOR_REVIEW: 'warning',
+  CHANGES_REQUESTED: 'critical', APPROVED: 'good',
   IMPLEMENTATION: 'accent', DONE: 'good',
   REJECTED: 'neutral', CANCELLED: 'neutral', DELAYED: 'critical',
 };

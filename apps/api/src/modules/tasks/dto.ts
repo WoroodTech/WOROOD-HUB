@@ -154,7 +154,7 @@ export class MoveTask {
      may do it. One of those is a vocabulary and the other is a rule, and they
      were tangled. */
   @IsIn(['PLANNING', 'ON_HOLD', 'ASSIGNED', 'IN_PROGRESS', 'FOR_REVIEW',
-         'IMPLEMENTATION', 'DONE', 'CANCELLED'])
+         'CHANGES_REQUESTED', 'APPROVED', 'IMPLEMENTATION', 'DONE', 'CANCELLED'])
   to!: string;
 
   @IsOptional() @IsISO8601() plannedFor?: string;
@@ -162,6 +162,8 @@ export class MoveTask {
   @IsOptional() @IsUUID() assigneeId?: string;
   /** What was done, when dropping on For review. */
   @IsOptional() @IsString() @MinLength(3) @MaxLength(2000) resolution?: string;
+  /** Required when picking work back up from Changes requested. */
+  @IsOptional() @IsISO8601() dueAt?: string;
 }
 
 /** What the browser says it is about to upload. Claims only -- the size is

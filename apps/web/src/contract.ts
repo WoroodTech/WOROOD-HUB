@@ -445,7 +445,8 @@ export const PERMISSIONS = {
 
 export type TaskStatus =
   | 'NEW' | 'PLANNING' | 'ON_HOLD' | 'ASSIGNED' | 'IN_PROGRESS' | 'BLOCKED'
-  | 'FOR_REVIEW' | 'IMPLEMENTATION' | 'DONE' | 'REJECTED' | 'CANCELLED';
+  | 'FOR_REVIEW' | 'CHANGES_REQUESTED' | 'APPROVED' | 'IMPLEMENTATION'
+  | 'DONE' | 'REJECTED' | 'CANCELLED';
 
 export type TaskPriority = 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
 
@@ -485,6 +486,8 @@ export interface TaskAccessFlags {
   canPlan: boolean; canHold: boolean;
   canWork: boolean; canAddDependency: boolean; canResolve: boolean;
   canApproveReview: boolean; canRejectReview: boolean; canComplete: boolean;
+  canStartImplementation: boolean; canResumeAfterChanges: boolean;
+  canReturnToReview: boolean;
   /** After work is sent back the assignee owes a new date before anything else
    *  is possible. The screen insists rather than letting the ticket sit there
    *  looking normal with no commitment on it. */
@@ -583,6 +586,8 @@ export interface TasksPortlet {
 export interface BoardCard {
   id: string; reference: string; title: string;
   status: TaskStatus; priority: TaskPriority; slaState: string;
+  /** Which clock ran out: the work's own, or the review it is waiting on. */
+  slaReason?: 'WORK' | 'REVIEW' | null;
   dueAt: string | null; plannedFor: string | null; createdAt: string;
   overdueSince: string | null;
   fastTrack: boolean; reviewRejectionCount: number;
@@ -605,6 +610,10 @@ export interface BoardColumnData {
 export interface BoardResponse {
   side: 'doing' | 'requested';
   departments: Array<{ id: string; name: string }>;
+  /** Departments that have asked this one for something — the second filter. */
+  requesters: Array<{ id: string; name: string }>;
+  /** Which department the viewer is looking from, for an administrator. */
+  standingIn: string | null;
   columns: BoardColumnData[];
   empty: 'notAManager' | null;
 }
