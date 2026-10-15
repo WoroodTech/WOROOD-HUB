@@ -210,9 +210,35 @@ export function Sync() {
             </header>
             <ul className="statlist">
               <li><span>Waiting</span><strong>{formatInteger(queue.waiting)}</strong></li>
-              <li><span>Active</span><strong>{formatInteger(queue.active)}</strong></li>
-              <li className={queue.failed ? 'is-bad' : undefined}><span>Failed</span><strong>{formatInteger(queue.failed)}</strong></li>
-              <li><span>Completed</span><strong>{formatInteger(queue.completed)}</strong></li>
+              <li><span>Processing</span><strong>{formatInteger(queue.processing)}</strong></li>
+              {/* Retrying is not failure: it has a backoff and will come back
+                  on its own. Only what has run out of attempts is marked bad,
+                  because a panel that shouts at a transient Shopify 503 trains
+                  people to ignore it. */}
+              <li><span>Retrying</span><strong>{formatInteger(queue.retrying)}</strong></li>
+              <li className={queue.dead ? 'is-bad' : undefined}>
+                <span>Given up</span><strong>{formatInteger(queue.dead)}</strong>
+              </li>
+              {/* Work claimed by a worker that stopped renewing. Not in
+                  progress and not waiting -- it needs the sweep, and until it
+                  runs it is invisible in every other number. */}
+              {queue.expiredLeases > 0 && (
+                <li className="is-bad">
+                  <span>Stalled leases</span><strong>{formatInteger(queue.expiredLeases)}</strong>
+                </li>
+              )}
+              <li><span>Completed (24h)</span><strong>{formatInteger(queue.completed24h)}</strong></li>
+              {/* The number that says whether the backlog is moving. A count
+                  alone cannot tell ten events a minute old from one stuck
+                  since this morning. */}
+              <li className={(queue.oldestDueSeconds ?? 0) > 900 ? 'is-bad' : undefined}>
+                <span>Oldest waiting</span>
+                <strong>
+                  {/* formatDuration takes minutes, and this figure is seconds. */}
+                  {queue.oldestDueSeconds === null
+                    ? '—' : formatDuration(queue.oldestDueSeconds / 60)}
+                </strong>
+              </li>
             </ul>
           </section>
         </div>

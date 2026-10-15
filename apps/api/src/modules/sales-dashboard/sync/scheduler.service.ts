@@ -31,6 +31,7 @@
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { config } from '../../../common/config';
 import { query } from '../../../common/db';
+import { INSTANCE_ID, dayOf, runDailyOnce, withJobLock } from '../../../common/job-lock';
 import { ShopContext } from '../analytics/snapshot.service';
 import { ShopifyService } from '../shopify/shopify.service';
 import { SnapshotService } from '../analytics/snapshot.service';
@@ -86,7 +87,14 @@ export class SalesScheduler implements OnModuleInit, OnModuleDestroy {
          four ShopifyQL queries at once and a throttled failure. */
       if (written > 0) this.snapshots.scheduleRefresh(60_000);
       return written;
-    }, { runAtStartup: true, startupDelayMs: 10_000 });
+    }, {
+      runAtStartup: true, startupDelayMs: 10_000,
+      /* Exclusive. Two passes at once spend double the Shopify quota on the
+         same window, and both write the cursor and watermark Phase 1 added --
+         so the one that finishes second can move the resume point backwards
+         over work the first had already covered. */
+      lock: 'sales:reconcile', lockTtlMs: 20 * 60_000,
+    });
 
     /* Day grain as well as hour grain, every hour.
      *
@@ -114,33 +122,60 @@ export class SalesScheduler implements OnModuleInit, OnModuleDestroy {
 
     this.every(60 * 60_000, 'hourly snapshot',
       () => this.snapshots.refreshRecent(),
-      { runAtStartup: true, startupDelayMs: 20_000 });
+      { runAtStartup: true, startupDelayMs: 20_000,
+        /* Locked though its writes are a recompute: the cost is the ShopifyQL
+           behind them. Two instances refreshing the same hours is double the
+           quota on the one call already slow enough to be throttled. */
+        lock: 'sales:hourly-snapshot', lockTtlMs: 15 * 60_000 });
 
     /* The overnight jobs are checked every ten minutes rather than scheduled at
        an offset from start-up: a process restarted at 01:59 would otherwise
        wait a full day. The date guard is what keeps them to once. */
     this.every(10 * 60_000, 'overnight', async () => {
-      const today = new Date().toISOString().slice(0, 10);
+      /* The Cairo calendar day, not UTC. "Today" for this business is the day
+         the shop is open, and at 02:00 Cairo the UTC date is still yesterday
+         for part of the year -- so a UTC date guard beside a Cairo hour check
+         lets the job through twice at the boundary. */
+      const today = dayOf(new Date());
 
-      if (cairoHour() === 2 && this.lastNightly !== today) {
-        this.lastNightly = today;
-        this.log.log('nightly snapshot: thirteen months at day grain');
-        await this.snapshots.captureDaily();
-        await this.snapshots.captureBreakdowns();
+      if (cairoHour() === 2) {
+        /* Once a day across every instance, recorded in the database.
+        
+           This used to be a field on this object. A process restarted at 02:30
+           had an empty one and ran the capture again, and a second instance had
+           its own regardless of what the first had done -- two thirteen-month
+           ShopifyQL captures against a shop that permits one bulk operation at
+           a time. */
+        const { outcome } = await runDailyOnce('sales:nightly-capture', today, async () => {
+          this.log.log('nightly snapshot: thirteen months at day grain');
+          await this.snapshots.captureDaily();
+          await this.snapshots.captureBreakdowns();
+        }, { ttlMs: 60 * 60_000, renew: true });
+        if (outcome === 'ran') this.lastNightly = today;
       }
       /* Store credit rides the nightly slot rather than a cadence of its own.
          It is a bulk export over every customer -- cheap in rate limit terms
          and slow in wall-clock, and the underlying events move in days. Running
          it hourly would be pure waste. */
-      if (cairoHour() === 2 && this.lastNightly === today && !this.creditRunToday) {
-        this.creditRunToday = today;
-        await this.credit.sync().catch((e) =>
-          this.log.error(`store credit sync failed: ${e?.message ?? e}`));
+      /* Once a day for the same reasons, asked of the lock rather than of
+         this process, so a restart does not repeat a bulk export over every
+         customer. */
+      if (cairoHour() === 2) {
+        await runDailyOnce('sales:store-credit', today,
+          () => this.credit.sync(), { ttlMs: 60 * 60_000, renew: true },
+        ).catch((e) => this.log.error(`store credit sync failed: ${e?.message ?? e}`));
       }
-      if (cairoHour() === 3 && this.lastWatchdog !== today) {
-        this.lastWatchdog = today;
-        await this.sync.verifyWebhooks();
-        await this.sync.runRetention();
+      if (cairoHour() === 3) {
+        /* Webhook registration and retention. Registration is the one that must
+           not double: two instances asking Shopify to create the same
+           subscription at the same moment is how a topic ends up registered
+           twice and every order arrives twice. */
+        await runDailyOnce('sales:watchdog', today, async () => {
+          await this.sync.verifyWebhooks();
+          await this.sync.runRetention();
+        }, { ttlMs: 30 * 60_000, renew: true })
+          .then(({ outcome }) => { if (outcome === 'ran') this.lastWatchdog = today; })
+          .catch((e) => this.log.error(`watchdog failed: ${e?.message ?? e}`));
       }
     });
 
@@ -156,11 +191,22 @@ export class SalesScheduler implements OnModuleInit, OnModuleDestroy {
        It decides for itself whether to run, from sd_sync_state, so a restart
        does not repeat it. That is the whole design: safe to call on every boot,
        does something on exactly one of them. */
-    setTimeout(() => void this.bootstrap(), 90_000);
+    /* Every instance boots and every instance schedules this; exactly one
+       should carry it out. The import itself is already claimed in the database
+       (Phase 6), but shop settings and webhook registration are not, and
+       registering the same subscription from two instances at once is how a
+       topic ends up delivered twice. */
+    setTimeout(() => {
+      void withJobLock('sales:bootstrap', () => this.bootstrap(), {
+        ttlMs: 30 * 60_000, renew: true,
+      }).then(({ outcome }) => {
+        if (outcome === 'held-elsewhere') this.log.log('bootstrap: another instance is doing it');
+      }).catch((e) => this.log.error(`bootstrap failed: ${e?.message ?? e}`));
+    }, 90_000);
 
     this.log.log(
-      'scheduled sync started — reconcile 15m, abandoned 30m, snapshots hourly, ' +
-      'nightly 02:00 Cairo, watchdog 03:00 Cairo');
+      `scheduled sync started as ${INSTANCE_ID} — reconcile 15m, abandoned 30m, ` +
+      'snapshots hourly, nightly 02:00 Cairo, watchdog 03:00 Cairo');
   }
 
   /**
@@ -296,7 +342,7 @@ export class SalesScheduler implements OnModuleInit, OnModuleDestroy {
     ms: number,
     name: string,
     job: () => Promise<unknown>,
-    { runAtStartup = false, startupDelayMs = 0 } = {},
+    { runAtStartup = false, startupDelayMs = 0, lock = '', lockTtlMs = 10 * 60_000 } = {},
   ) {
     let running = false;
     const tick = async () => {
@@ -306,7 +352,16 @@ export class SalesScheduler implements OnModuleInit, OnModuleDestroy {
       if (running) { this.log.warn(`${name}: previous run still going, skipping`); return; }
       running = true;
       try {
-        await job();
+        if (!lock) {
+          await job();
+        } else {
+          /* The same question asked where every instance can see the answer.
+             The flag above covers this process; the lease covers the others. */
+          const { outcome } = await withJobLock(lock, job, { ttlMs: lockTtlMs, renew: true });
+          if (outcome === 'held-elsewhere') {
+            this.log.log(`${name}: another instance is running it, skipping`);
+          }
+        }
       } catch (e: any) {
         this.log.error(`${name} failed: ${e?.message ?? e}`);
       } finally {

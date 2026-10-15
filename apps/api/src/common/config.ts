@@ -64,6 +64,26 @@ export const config = {
     region: process.env.S3_ATTACHMENTS_REGION || process.env.AWS_REGION || 'eu-west-1',
   },
 
+  /**
+   * The durable webhook worker.
+   *
+   * Off by default, and that default is load-bearing: with it off the API
+   * keeps processing webhooks inline exactly as it does today, so deploying
+   * the worker code changes nothing until somebody turns it on. With it on the
+   * API stops processing inline and the worker owns the queue -- never both,
+   * because the worker claims events and the inline path does not.
+   */
+  webhookWorker: {
+    enabled: process.env.WEBHOOK_WORKER_ENABLED === 'true',
+    /* How long to wait before asking for work again when there was none. The
+       floor on latency for an event whose Redis nudge was lost, which is the
+       only case it governs -- a nudge that arrives wakes the loop at once. */
+    pollMs: Number(process.env.WEBHOOK_WORKER_POLL_MS || 1000),
+    /* Identifies this process in lease_owner. Diagnostic, and the thing that
+       stops a restarted worker from being mistaken for its former self. */
+    id: process.env.WEBHOOK_WORKER_ID || `${process.env.HOSTNAME || 'worker'}-${process.pid}`,
+  },
+
   mail: {
     enabled: process.env.MAIL_ENABLED === 'true',
     region: process.env.AWS_REGION || 'eu-west-1',

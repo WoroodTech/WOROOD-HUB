@@ -28,6 +28,7 @@
  * upper case.
  */
 import { Injectable, Logger } from '@nestjs/common';
+import { linesOf, streamBulkJsonl, type StreamOptions, type StreamResult } from './bulk-stream';
 import { createInterface } from 'node:readline';
 import { Readable } from 'node:stream';
 import { config } from '../../../common/config';
@@ -78,6 +79,23 @@ const LINE_ITEM_FIELDS = `
   originalTotalSet   { shopMoney { amount } }
   discountedTotalSet { shopMoney { amount } }
 `;
+
+/**
+ * The download did not arrive whole.
+ *
+ * Its own type because the caller must treat it differently from any other
+ * failure: the operation and its URL are still good, the orders already
+ * written are still written, and the right response is to resume rather than
+ * to start a new export.
+ */
+export class BackfillIncomplete extends Error {
+  constructor(
+    message: string,
+    readonly operationId: string,
+    readonly url: string,
+    readonly progress: StreamResult,
+  ) { super(message); this.name = 'BackfillIncomplete'; }
+}
 
 export interface BackfillResult {
   operationId: string | null;
@@ -203,8 +221,15 @@ export class BackfillService {
   async waitAndIngest(
     operationId: string,
     ingest: (orders: any[]) => Promise<number>,
-    { timeoutMs = 15 * 60_000, intervalMs = 5_000 } = {},
+    opts: {
+      timeoutMs?: number; intervalMs?: number; skipLines?: number;
+      onProgress?: (p: {
+        lines: number; orders: number; written: number;
+        operationId: string; url: string; objectCount: number;
+      }) => Promise<void>;
+    } = {},
   ): Promise<BackfillResult> {
+    const { timeoutMs = 15 * 60_000, intervalMs = 5_000 } = opts;
     const deadline = Date.now() + timeoutMs;
 
     while (Date.now() < deadline) {
@@ -224,12 +249,39 @@ export class BackfillService {
           return { operationId, objectCount: 0, orders: 0, status: 'COMPLETED',
                    note: 'Shopify returned no rows for this range.' };
         }
-        const orders = await this.download(op.url);
-        const written = await ingest(orders);
+
+        const objectCount = Number(op.objectCount ?? 0);
+        const result = await this.download(op.url, ingest, {
+          skipLines: opts.skipLines,
+          onProgress: opts.onProgress
+            ? (pr) => opts.onProgress!({ ...pr, operationId, url: op.url, objectCount })
+            : undefined,
+        });
+        /* The completeness check the import never had.        
+           One JSONL line is one object, so the export's own objectCount and
+           the lines actually read must agree. They disagree when the body was
+           cut short -- a dropped connection, a proxy timing out mid-stream --
+           and nothing else reveals it: a truncated download parses cleanly and
+           looks exactly like a smaller store. Reported as success it would
+           leave the mirror quietly missing however many orders were in the
+           tail, with a row saying the import had completed.
+        
+           Counted including skipped and malformed lines, because the question
+           is whether the file arrived whole, not whether every line was
+           usable. */
+        const seen = result.lines + (opts.skipLines ?? 0);
+        if (objectCount > 0 && seen !== objectCount) {
+          throw new BackfillIncomplete(
+            `bulk result was truncated: read ${seen} of ${objectCount} objects`,
+            operationId, op.url, result);
+        }
+
         return {
-          operationId, status: 'COMPLETED',
-          objectCount: Number(op.objectCount ?? 0),
-          orders: written,
+          operationId, status: 'COMPLETED', objectCount,
+          orders: result.written,
+          note: result.malformed || result.orphans
+            ? `${result.malformed} unparseable line(s), ${result.orphans} orphaned child row(s)`
+            : undefined,
         };
       }
 
@@ -244,7 +296,7 @@ export class BackfillService {
             'in the Dev Dashboard and is separate from the read_customers scope.');
           this.includeCustomerFields = false;
           const retry = await this.start(this.lastSince);
-          return this.waitAndIngest(retry.operationId, ingest, { timeoutMs, intervalMs });
+          return this.waitAndIngest(retry.operationId, ingest, { ...opts, timeoutMs, intervalMs, skipLines: 0 });
         }
         throw new Error(
           `bulk operation ${operationId} ended ${op.status}: ${op.errorCode ?? 'no error code'}`);
@@ -267,75 +319,53 @@ export class BackfillService {
    * two are joined at the end. Attaching eagerly would silently drop any line
    * item Shopify happened to emit early.
    */
-  private async download(url: string): Promise<any[]> {
+  /**
+   * Stream the bulk result and hand it on in batches.
+   *
+   * Nothing is accumulated: the reassembly keeps a bounded window and this
+   * returns counts, not orders. An import of ninety thousand orders now costs
+   * a window rather than the file.
+   */
+  private async download(
+    url: string,
+    onBatch: (orders: any[]) => Promise<number>,
+    opts: { skipLines?: number; onProgress?: StreamOptions['onProgress'] } = {},
+  ): Promise<StreamResult> {
     const res = await fetch(url);
     if (!res.ok) throw new Error(`bulk result download failed: ${res.status}`);
-    if (!res.body) return [];
+    if (!res.body) return { lines: 0, malformed: 0, orders: 0, written: 0, orphans: 0 };
 
-    const orders = new Map<string, any>();
-    const pendingLineItems = new Map<string, any[]>();
-    const pendingRefunds = new Map<string, any[]>();
-
-    const rl = createInterface({
-      input: Readable.fromWeb(res.body as any),
-      crlfDelay: Infinity,
+    return streamBulkJsonl(linesOf(res.body as any), {
+      onBatch,
+      skipLines: opts.skipLines,
+      onProgress: opts.onProgress,
+      log: this.log,
     });
-
-    let lines = 0;
-    for await (const line of rl) {
-      if (!line.trim()) continue;
-      lines++;
-
-      let obj: any;
-      try {
-        obj = JSON.parse(line);
-      } catch {
-        // One malformed line should not lose the other forty thousand.
-        this.log.warn(`skipped an unparseable JSONL line at ${lines}`);
-        continue;
-      }
-
-      const parent = obj.__parentId;
-      if (!parent) {
-        // A top-level object. Line items may already be waiting for it.
-        obj.lineItems = { nodes: pendingLineItems.get(obj.id) ?? [] };
-        obj.refunds = pendingRefunds.get(obj.id) ?? [];
-        pendingLineItems.delete(obj.id);
-        pendingRefunds.delete(obj.id);
-        orders.set(obj.id, obj);
-        continue;
-      }
-
-      /* A child. Refunds and line items are told apart by shape rather than by
-         a type field, because the JSONL carries none: a refund line has
-         totalRefundedSet, a line item has a quantity. */
-      const isRefund = obj.totalRefundedSet !== undefined;
-      const bucket = isRefund ? pendingRefunds : pendingLineItems;
-      const target = orders.get(parent);
-
-      if (target) {
-        if (isRefund) target.refunds.push(obj);
-        else target.lineItems.nodes.push(obj);
-      } else {
-        const held = bucket.get(parent) ?? [];
-        held.push(obj);
-        bucket.set(parent, held);
-      }
-    }
-
-    const orphans = pendingLineItems.size + pendingRefunds.size;
-    if (orphans) {
-      // Not fatal, but it means the export and the reassembly disagree, and
-      // that is worth seeing in the log rather than discovering in a total.
-      this.log.warn(`${orphans} child rows had no parent in the export`);
-    }
-
-    this.log.log(`bulk result: ${lines} lines, ${orders.size} orders`);
-    return [...orders.values()];
   }
 
-  /** Called by the webhook handler when Shopify announces completion. The
-   *  payload's `status` arrives lowercase, unlike the GraphQL enum. */
+  /**
+   * Can this operation still be resumed from?
+   *
+   * A bulk operation's result does not live for ever: the URL expires, and
+   * Shopify keeps one operation per shop, so a newer export replaces an older
+   * one outright. Asked before resuming so the alternative -- starting again --
+   * is a decision the log records, rather than something that happens by
+   * accident when a download 404s.
+   */
+  async stillAvailable(operationId: string): Promise<boolean> {
+    try {
+      const data = await this.shopify.source.graphql<any>(
+        `query($id: ID!) {
+           node(id: $id) { ... on BulkOperation { id status url } }
+         }`, { id: operationId });
+      const op = data?.node;
+      return !!op && op.status === 'COMPLETED' && !!op.url;
+    } catch (e: any) {
+      this.log.warn(`could not check bulk operation ${operationId}: ${e?.message ?? e}`);
+      return false;
+    }
+  }
+
   isFinished(payload: any): boolean {
     return String(payload?.status ?? '').toUpperCase() === 'COMPLETED';
   }

@@ -394,7 +394,34 @@ export interface SyncStateRow {
 export interface SyncHealthResponse {
   shop: { name: string; domain: string; plan: string | null; apiVersion: string };
   resources: SyncStateRow[];
-  queue: { waiting: number; active: number; failed: number; completed: number };
+  /**
+   * The webhook backlog, measured.
+   *
+   * `waiting`, `active`, `failed` and `completed` were literal zeros beside a
+   * `waiting` read from the length of a Redis list -- which stopped being the
+   * queue when the worker started taking its work from PostgreSQL. A health
+   * screen that reports three hardcoded zeros is worse than one that reports
+   * nothing: it answers the question confidently and wrongly, and the answer
+   * looks healthy.
+   */
+  queue: {
+    /** Accepted, due, nobody has claimed it. */
+    waiting: number;
+    /** Claimed by a worker right now. */
+    processing: number;
+    /** Failed and waiting out its backoff. Not yet lost. */
+    retrying: number;
+    /** Attempts exhausted. Needs a person. */
+    dead: number;
+    /** Reached a terminal state within the window. */
+    completed24h: number;
+    /** Claimed by a worker that is no longer renewing: work in limbo. */
+    expiredLeases: number;
+    /** Seconds since the oldest due event became due, or null if none is. */
+    oldestDueSeconds: number | null;
+    /** Attempts before an event is given up on, so a count can be read. */
+    maxAttempts: number;
+  };
   webhooks: {
     subscribed: string[]; missing: string[]; lastCheckedAt: string | null;
     received24h: number; duplicates24h: number; stale24h: number;
@@ -404,6 +431,33 @@ export interface SyncHealthResponse {
     throttledCalls24h: number;
   };
   token: { source: string; expiresAt: string | null; refreshedAt: string | null };
+}
+
+/** One terminally failed event, for the operator screen. */
+export interface FailedWebhookEvent {
+  id: string;
+  topic: string;
+  status: 'DEAD' | 'FAILED';
+  attempts: number;
+  receivedAt: string;
+  lastAttemptAt: string | null;
+  nextAttemptAt: string | null;
+  error: string | null;
+  /** Whether the payload is still held, or retention has already cleared it.
+   *  An event whose payload is gone cannot be replayed. */
+  hasPayload: boolean;
+}
+
+export interface FailedWebhookEventsResponse {
+  events: FailedWebhookEvent[];
+  total: number;
+}
+
+export interface ReplayWebhookEventResponse {
+  id: string;
+  status: string;
+  queued: boolean;
+  note?: string;
 }
 
 export interface DashboardAccessResponse {
