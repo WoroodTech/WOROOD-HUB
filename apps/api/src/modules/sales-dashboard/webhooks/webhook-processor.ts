@@ -5,6 +5,7 @@
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { query, one } from '../../../common/db';
+import { config } from '../../../common/config';
 import { ShopContext, SnapshotService } from '../analytics/snapshot.service';
 import { redis, ShopifyService } from '../shopify/shopify.service';
 import { SyncService } from '../sync/sync.service';
@@ -21,75 +22,132 @@ export class WebhookProcessor {
     private credit: StoreCreditService,
   ) {}
 
-  /** In this build the queue is a Redis list; BullMQ slots in unchanged behind
-   *  the same two methods when the worker process is deployed. */
+  /**
+   * Nudge whoever is going to do the work.
+   *
+   * Durability is not this method's job and never was: by the time it is
+   * called the event is committed to PostgreSQL, and the worker finds it by
+   * querying for it. Everything here is latency.
+   *
+   * Which is why the Redis push is best-effort. It used to be awaited, so a
+   * Redis outage threw out of the controller and turned a webhook that WAS
+   * durably stored into a 500 -- telling Shopify to redeliver something we
+   * already had, during an incident, when the last thing the system needs is
+   * more traffic.
+   */
   async enqueue(eventId: string) {
-    await redis().lpush('sales:webhooks', eventId);
-    // Processed inline as well so a single-process demo stays live. The worker
-    // process is what does this in production; both call the same method.
-    setImmediate(() => this.processOne(eventId).catch((e) =>
-      this.log.error(`processing ${eventId} failed: ${e.message}`)));
+    try {
+      await redis().lpush('sales:webhooks', eventId);
+    } catch (e: any) {
+      this.log.warn(`could not nudge the queue for ${eventId} (stored anyway): ${e?.message ?? e}`);
+    }
+
+    /* Inline processing, while the worker is not the one doing it.
+    
+       This is the existing path and it stays the default, because turning it
+       off before the worker runs would leave nothing processing webhooks at
+       all. With the worker enabled it must NOT run: the worker claims events,
+       this path does not, and the two together would process the same event
+       twice with no claim between them. */
+    if (!config.webhookWorker.enabled) {
+      setImmediate(() => this.processOne(eventId).catch((e) =>
+        this.log.error(`processing ${eventId} failed: ${e.message}`)));
+    }
+  }
+
+  /**
+   * Apply a payload. Public so the worker can run it between its own claim and
+   * completion, rather than the worker owning a second copy of the dispatch.
+   *
+   * Returns false when the event is stale.
+   */
+  applyEvent(topic: string, payload: any, triggeredAt: any): Promise<boolean> {
+    return this.apply(topic, payload, triggeredAt);
+  }
+
+  /**
+   * Everything outside the mirror: tell the browsers, refresh the figures, and
+   * re-read the order in full.
+   *
+   * Extracted so the worker runs exactly the same steps in the same order, and
+   * so both callers place them after the event has been recorded as finished.
+   * None of it is allowed to fail the event -- it has already been applied, and
+   * these are improvements on top.
+   */
+  async announce(topic: string, payload: any) {
+    await this.publish('order');
+
+    /* The mirror is now current; the snapshots are not, and the dashboard
+       reads the snapshots. Without this the order appears in the orders
+       table immediately and in the headline figures at the top of the next
+       hour -- which reads as the dashboard being broken rather than as two
+       tables refreshing on different clocks.
+
+       Debounced inside scheduleRefresh, so a burst of orders produces one
+       ShopifyQL round trip rather than one per order. Only order and refund
+       events move a figure; a customer's phone number changing does not. */
+    if (topic.startsWith('orders/') || topic === 'refunds/create') {
+      this.snapshots.scheduleRefresh();
+    }
+
+    /* Then fetch the order in full and apply that on top.
+     *
+     * A webhook payload is a snapshot of one moment, and for `orders/create`
+     * that moment is often before the order is finished being assembled:
+     * line items added in a second step, a customer attached after, payment
+     * captured later still. The row therefore appeared with no items, no
+     * customer and nothing collected, and filled in over the following
+     * minutes as `orders/updated` and `orders/paid` arrived. Correct, and it
+     * reads like a bug.
+     *
+     * One GraphQL read gives the whole order at once. It runs after the
+     * payload has already been applied, not instead of it, so a failed
+     * fetch -- a network blip, or the protected-customer-data denial that
+     * already affects the backfill -- costs richness rather than the record.
+     *
+     * Paid and cancelled are here too, and their absence was a real gap.
+     * Hydration re-reads the order and pushes it through `upsertOrders`,
+     * which is also what recomputes the customer's lifetime spend. Lifetime
+     * spend sums `net_payment` -- money actually collected -- and
+     * `orders/paid` is precisely the event where that changes. */
+    if (topic === 'orders/create' || topic === 'orders/updated'
+        || topic === 'orders/paid' || topic === 'orders/cancelled') {
+      await this.hydrateWithRetry(payload, topic);
+    }
   }
 
   async processOne(eventId: string) {
     const ev = await one(`SELECT * FROM sd_webhook_events WHERE id = $1`, [eventId]);
     if (!ev || ev.status === 'PROCESSED') return;
 
+    let applied: boolean;
     try {
-      const applied = await this.apply(ev.topic, ev.payload, ev.triggered_at);
+      applied = await this.apply(ev.topic, ev.payload, ev.triggered_at);
       await query(
         `UPDATE sd_webhook_events SET status = $2, processed_at = now(), attempts = attempts + 1
           WHERE id = $1`, [eventId, applied ? 'PROCESSED' : 'STALE']);
-      if (applied) {
-        await this.publish('order');
-
-        /* The mirror is now current; the snapshots are not, and the dashboard
-           reads the snapshots. Without this the order appears in the orders
-           table immediately and in the headline figures at the top of the next
-           hour -- which reads as the dashboard being broken rather than as two
-           tables refreshing on different clocks.
-
-           Debounced inside scheduleRefresh, so a burst of orders produces one
-           ShopifyQL round trip rather than one per order. Only order and refund
-           events move a figure; a customer's phone number changing does not. */
-        if (ev.topic.startsWith('orders/') || ev.topic === 'refunds/create') {
-          this.snapshots.scheduleRefresh();
-        }
-
-        /* Then fetch the order in full and apply that on top.
-         *
-         * A webhook payload is a snapshot of one moment, and for `orders/create`
-         * that moment is often before the order is finished being assembled:
-         * line items added in a second step, a customer attached after, payment
-         * captured later still. The row therefore appeared with no items, no
-         * customer and nothing collected, and filled in over the following
-         * minutes as `orders/updated` and `orders/paid` arrived. Correct, and it
-         * reads like a bug.
-         *
-         * One GraphQL read gives the whole order at once. It runs after the
-         * payload has already been applied, not instead of it, so a failed
-         * fetch -- a network blip, or the protected-customer-data denial that
-         * already affects the backfill -- costs richness rather than the record.
-         */
-        /* Paid and cancelled are here too, and their absence was a real gap.
-         *
-         * Hydration re-reads the order and pushes it through `upsertOrders`,
-         * which is also what recomputes the customer's lifetime spend. Lifetime
-         * spend sums `net_payment` -- money actually collected -- and
-         * `orders/paid` is precisely the event where that changes. Without it,
-         * a payment moved the order row immediately and left the customer's
-         * spend, and every Customer Insights figure built on it, waiting for
-         * the fifteen-minute reconciliation to notice. */
-        if (ev.topic === 'orders/create' || ev.topic === 'orders/updated'
-            || ev.topic === 'orders/paid' || ev.topic === 'orders/cancelled') {
-          await this.hydrateWithRetry(ev.payload, ev.topic);
-        }
-      }
     } catch (e: any) {
       await query(
         `UPDATE sd_webhook_events SET status = 'FAILED', attempts = attempts + 1, error = $2
           WHERE id = $1`, [eventId, String(e.message).slice(0, 500)]);
       throw e;
+    }
+
+    /* Announcing is outside the block that records a failure, and the
+       difference is not cosmetic.
+    
+       It used to be inside. So a Redis outage -- a notification with no payload,
+       telling browsers something they will find out anyway -- threw after the
+       event had already been applied and written PROCESSED, and the catch
+       overwrote that with FAILED. The order was in the mirror and the row said
+       it had not been done, which with the worker running means it is picked up
+       and applied all over again.
+    
+       Nothing after the status write may change the event's fate. It is
+       finished; what remains is telling people about it. */
+    if (applied) {
+      await this.announce(ev.topic, ev.payload).catch((e) =>
+        this.log.warn(`event=${eventId} announce failed (already processed): ${e?.message ?? e}`));
     }
   }
 
@@ -190,7 +248,13 @@ export class WebhookProcessor {
              totalRefundedSet       { shopMoney { amount } }
              netPaymentSet          { shopMoney { amount } }
              totalOutstandingSet    { shopMoney { amount } }
-             lineItems(first: 100) { nodes {
+             lineItems(first: 100) {
+               # Whether 100 is all of them. Without this the reconciliation
+               # and hydration reads cannot tell a complete list from a
+               # truncated one, and the prune in upsertOrders deletes every
+               # line past the hundredth.
+               pageInfo { hasNextPage }
+               nodes {
                id title sku quantity currentQuantity
                product { id } variant { id title }
                originalTotalSet   { shopMoney { amount } }
@@ -370,7 +434,7 @@ export class WebhookProcessor {
   private async writeOrder(
     shopId: string, o: any, gid: any, updatedAt: Date, money: (v: any) => number,
   ): Promise<boolean> {
-    await query(
+    const applied = await query<{ id: string }>(
       `INSERT INTO sd_orders (shop_id, shopify_gid, name, order_number, shopify_created_at,
           processed_at, cancelled_at, cancel_reason, shopify_updated_at, test,
           financial_status, fulfillment_status, source_name, currency_code,
@@ -388,7 +452,22 @@ export class WebhookProcessor {
          current_total_price = EXCLUDED.current_total_price,
          total_refunded = EXCLUDED.total_refunded,
          net_payment = EXCLUDED.net_payment,
-         total_outstanding = EXCLUDED.total_outstanding`,
+         total_outstanding = EXCLUDED.total_outstanding
+       -- The ordering guard, where the row is locked rather than where it was
+       -- read.
+       --
+       -- applyOrder reads the stored timestamp a moment earlier and compares
+       -- in JavaScript, which is sound only if nothing writes in between.
+       -- Reconciliation does: it can commit a later version of the same order
+       -- between that read and this statement, and an unconditional update then
+       -- walks shopify_updated_at backwards over it. That does not heal --
+       -- reconciliation has already moved its watermark past the version it
+       -- wrote, so the newer data is never fetched again once the overlap has
+       -- passed, and the mirror keeps the older figures indefinitely.
+       --
+       -- Equal timestamps still write, so replaying a delivery stays possible.
+       WHERE EXCLUDED.shopify_updated_at >= sd_orders.shopify_updated_at
+       RETURNING id`,
       [shopId, String(gid), o.name ?? `#${o.order_number}`, o.order_number ?? null,
        new Date(o.created_at ?? Date.now()), o.processed_at ?? null,
        o.cancelled_at ?? null, o.cancel_reason ?? null, updatedAt, !!o.test,
@@ -400,7 +479,13 @@ export class WebhookProcessor {
        money(o.net_payment ?? 0), money(o.total_outstanding ?? 0),
        o.shipping_address?.city ?? null, o.shipping_address?.province ?? null,
        o.shipping_address?.country ?? null]);
-    return true;
+
+    /* What the database actually did, not what we hoped.
+    
+       Returning `true` unconditionally meant a delivery the guard refused was
+       still recorded PROCESSED. The caller already distinguishes STALE and
+       handles it; it was simply never told. */
+    return applied.length > 0;
   }
 
   private async applyCustomer(shopId: string, c: any): Promise<boolean> {
@@ -481,9 +566,23 @@ export class WebhookProcessor {
 
   /** Invalidation signals only, never data: no path may bypass the permission
    *  layer, and no customer data ever travels over a socket. */
+  /**
+   * Tell any open dashboard that something moved.
+   *
+   * Carries no data -- the browser refetches -- so a lost notification costs
+   * one stale screen until the next event or the next poll, and a duplicate
+   * costs one extra refetch. Neither is worth failing anything over, which is
+   * why this swallows rather than throws: every caller reaches it only after
+   * the work is already durable, and an unreachable Redis is a reason to log,
+   * not a reason to undo.
+   */
   private async publish(reason: 'order' | 'refund' | 'snapshot' | 'reconciliation') {
-    await redis().publish('sales:events', JSON.stringify({
-      type: 'metrics:changed', widgetKeys: ['*'], reason, at: new Date().toISOString(),
-    }));
+    try {
+      await redis().publish('sales:events', JSON.stringify({
+        type: 'metrics:changed', widgetKeys: ['*'], reason, at: new Date().toISOString(),
+      }));
+    } catch (e: any) {
+      this.log.warn(`could not notify dashboards (${reason}): ${e?.message ?? e}`);
+    }
   }
 }

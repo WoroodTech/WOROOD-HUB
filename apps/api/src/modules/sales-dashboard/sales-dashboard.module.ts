@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { CoreModule } from '../../core/core.module';
+import { WebhookWorker } from './webhooks/webhook-worker';
 import './descriptor';                    // side effect: registers the module
 import { ShopifyHealthTracker, ShopifyService, TokenManager, CostGovernor } from './shopify/shopify.service';
 import { ShopContext, SnapshotService } from './analytics/snapshot.service';
@@ -25,11 +26,11 @@ import { SalesGateway } from './realtime/sales.gateway';
 @Module({
   imports: [CoreModule],
   controllers: [DashboardsController, PortletsController, WebhooksController, SyncController],
-  providers: [
+  providers: [WebhookWorker, 
     ShopifyHealthTracker, TokenManager, CostGovernor, ShopifyService,
     ShopContext, SnapshotService, MetricsService, CustomerMetricsService, AbandonedCheckoutService, StoreCreditService, AccessService,
     WebhookProcessor, SyncService, BackfillService, SalesScheduler, SalesGateway,
   ],
-  exports: [ShopContext, SnapshotService, SyncService, BackfillService, MetricsService],
+  exports: [WebhookWorker, ShopContext, SnapshotService, SyncService, BackfillService, MetricsService],
 })
 export class SalesDashboardModule {}

@@ -182,14 +182,49 @@ export class TasksScheduler implements OnModuleInit, OnModuleDestroy {
    * about everything below them would bury them in a week.
    */
   async escalateUnassigned(): Promise<number> {
+    /* Claimed by writing the ESCALATED event first, not by reading that it is
+       absent and writing it afterwards.
+    
+       The old shape was SELECT, notify, INSERT. Two instances running the
+       hourly tick in the same second both saw the event missing, both told
+       every manager in the department and the one above it, and both wrote the
+       event -- so the escalation that exists to say "nobody has picked this up"
+       arrived twice, from the system that is meant to be the calm one. A
+       process flag could not help: the two schedulers are in different
+       processes.
+    
+       Inserting first inverts it, but the NOT EXISTS alone does not decide it:
+       under READ COMMITTED both instances evaluate that condition against
+       their own snapshot before either commits, so both find nothing and both
+       insert. What decides it is the partial unique index on
+       (item_id) WHERE type = 'ESCALATED' -- the second insert violates it,
+       ON CONFLICT DO NOTHING swallows the violation, and the loser gets no row
+       back and sends nothing. The NOT EXISTS stays because it keeps the common
+       case off the index entirely.
+    
+       The cost is the case where the claim lands and the process dies before
+       notifying: that ticket is recorded as escalated and nobody is told. A
+       missed escalation on a ticket already visible as unassigned on the board
+       is the better failure -- the alternative sends duplicates every hour
+       until somebody acts. */
     const stale = await query<any>(
-      `SELECT t.id, t.reference, t.title, d.name AS department, d.parent_id
-         FROM tk_items t JOIN core_departments d ON d.id = t.department_id
-        WHERE t.status = 'NEW'
-          AND t.created_at < now() - ($1 || ' hours')::interval
-          AND NOT EXISTS (SELECT 1 FROM tk_events e
-                           WHERE e.item_id = t.id AND e.type = 'ESCALATED')`,
-      [String(UNASSIGNED_ESCALATION_HOURS)]);
+      `WITH claimed AS (
+         INSERT INTO tk_events (item_id, actor_id, type, payload)
+         SELECT t.id, NULL, 'ESCALATED', $2::jsonb
+           FROM tk_items t
+          WHERE t.status = 'NEW'
+            AND t.created_at < now() - ($1 || ' hours')::interval
+            AND NOT EXISTS (SELECT 1 FROM tk_events e
+                             WHERE e.item_id = t.id AND e.type = 'ESCALATED')
+         ON CONFLICT DO NOTHING
+         RETURNING item_id
+       )
+       SELECT t.id, t.reference, t.title, d.name AS department, d.parent_id
+         FROM claimed c
+         JOIN tk_items t ON t.id = c.item_id
+         JOIN core_departments d ON d.id = t.department_id`,
+      [String(UNASSIGNED_ESCALATION_HOURS),
+       JSON.stringify({ hours: UNASSIGNED_ESCALATION_HOURS })]);
 
     for (const row of stale) {
       const above = row.parent_id
@@ -215,9 +250,8 @@ export class TasksScheduler implements OnModuleInit, OnModuleDestroy {
           this.log.warn(`escalation notification failed: ${(e as Error).message}`);
         }
       }
-      await query(
-        `INSERT INTO tk_events (item_id, actor_id, type, payload) VALUES ($1,NULL,'ESCALATED',$2)`,
-        [row.id, JSON.stringify({ hours: UNASSIGNED_ESCALATION_HOURS })]);
+      /* The event was written by the claim above. Writing it again here would
+         put a second ESCALATED on the same ticket. */
     }
     if (stale.length > 0) this.log.log(`escalated ${stale.length} unassigned ticket(s)`);
     return stale.length;
