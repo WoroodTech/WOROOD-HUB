@@ -143,12 +143,16 @@ export class SalesScheduler implements OnModuleInit, OnModuleDestroy {
     this.every(60 * 60_000, 'hourly snapshot',
       () => this.snapshots.refreshRecent(),
       /* Third, and last of the recurring three. ShopifyQL is the most
-         expensive call the system makes and the one that was failing. */
+         expensive call the system makes and the one that was failing.
+      
+         No lock here any more. refreshRecent guards itself now, under
+         'sales:snapshot-refresh', because the hourly tick is no longer the only
+         way in: the webhook worker refreshes after processing events, from its
+         own process, and a lock on this job could not see that. One guard
+         around the expensive work beats a guard around each way of reaching
+         it. */
       { runAtStartup: true, startupDelayMs: 210_000,
-        /* Locked though its writes are a recompute: the cost is the ShopifyQL
-           behind them. Two instances refreshing the same hours is double the
-           quota on the one call already slow enough to be throttled. */
-        lock: 'sales:hourly-snapshot', lockTtlMs: 15 * 60_000 });
+        });
 
     /* The overnight jobs are checked every ten minutes rather than scheduled at
        an offset from start-up: a process restarted at 01:59 would otherwise
