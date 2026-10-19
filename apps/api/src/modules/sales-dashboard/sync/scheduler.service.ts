@@ -32,6 +32,7 @@ import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/commo
 import { config } from '../../../common/config';
 import { query } from '../../../common/db';
 import { INSTANCE_ID, dayOf, runDailyOnce, withJobLock } from '../../../common/job-lock';
+import { isWorkerProcess } from '../../../common/process-role';
 import { ShopContext } from '../analytics/snapshot.service';
 import { ShopifyService } from '../shopify/shopify.service';
 import { SnapshotService } from '../analytics/snapshot.service';
@@ -64,6 +65,13 @@ export class SalesScheduler implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit() {
+    /* The worker process boots this module too, and it must not schedule: the
+       API owns the schedule, and a second scheduler runs every job that is not
+       behind a lock a second time. */
+    if (isWorkerProcess()) {
+      this.log.log('scheduled sync not started: this is the webhook worker, the API owns the schedule');
+      return;
+    }
     if (!config.shopify.scheduleEnabled) {
       this.log.log('scheduled sync disabled (SHOPIFY_SCHEDULE_ENABLED=false)');
       return;
@@ -88,6 +96,17 @@ export class SalesScheduler implements OnModuleInit, OnModuleDestroy {
       if (written > 0) this.snapshots.scheduleRefresh(60_000);
       return written;
     }, {
+      /* First out, and alone for a while.
+      
+         The startup offsets used to be 10s, 20s, 45s and 90s -- four jobs
+         inside a minute and a half, every one of them talking to Shopify, on a
+         cost bucket they all share. The hourly capture is the most expensive
+         and started while reconciliation was still paging, so it lost and
+         reported a failure for what was really congestion we caused ourselves.
+      
+         Spread out now, heaviest last, so each has the bucket largely to
+         itself. Nothing here is urgent: the gap costs a few minutes once, at
+         boot. */
       runAtStartup: true, startupDelayMs: 10_000,
       /* Exclusive. Two passes at once spend double the Shopify quota on the
          same window, and both write the cursor and watermark Phase 1 added --
@@ -118,11 +137,14 @@ export class SalesScheduler implements OnModuleInit, OnModuleDestroy {
        first time the scheduler ran. */
     this.every(30 * 60_000, 'abandoned checkouts',
       () => this.abandoned.sync(),
-      { runAtStartup: true, startupDelayMs: 45_000 });
+      // Second: a page of checkouts, moderate cost.
+      { runAtStartup: true, startupDelayMs: 90_000 });
 
     this.every(60 * 60_000, 'hourly snapshot',
       () => this.snapshots.refreshRecent(),
-      { runAtStartup: true, startupDelayMs: 20_000,
+      /* Third, and last of the recurring three. ShopifyQL is the most
+         expensive call the system makes and the one that was failing. */
+      { runAtStartup: true, startupDelayMs: 210_000,
         /* Locked though its writes are a recompute: the cost is the ShopifyQL
            behind them. Two instances refreshing the same hours is double the
            quota on the one call already slow enough to be throttled. */
@@ -191,7 +213,11 @@ export class SalesScheduler implements OnModuleInit, OnModuleDestroy {
        It decides for itself whether to run, from sd_sync_state, so a restart
        does not repeat it. That is the whole design: safe to call on every boot,
        does something on exactly one of them. */
-    /* Every instance boots and every instance schedules this; exactly one
+    /* Last of all, five and a half minutes in: on a fresh install this
+       registers webhooks and captures snapshots, which is more Shopify work
+       again, and it must not land on top of the three above.
+    
+       Every instance boots and every instance schedules this; exactly one
        should carry it out. The import itself is already claimed in the database
        (Phase 6), but shop settings and webhook registration are not, and
        registering the same subscription from two instances at once is how a
@@ -202,7 +228,7 @@ export class SalesScheduler implements OnModuleInit, OnModuleDestroy {
       }).then(({ outcome }) => {
         if (outcome === 'held-elsewhere') this.log.log('bootstrap: another instance is doing it');
       }).catch((e) => this.log.error(`bootstrap failed: ${e?.message ?? e}`));
-    }, 90_000);
+    }, 330_000);
 
     this.log.log(
       `scheduled sync started as ${INSTANCE_ID} — reconcile 15m, abandoned 30m, ` +
