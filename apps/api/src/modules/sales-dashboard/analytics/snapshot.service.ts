@@ -11,6 +11,11 @@
  * thirteen months of history without duplicating anything.
  */
 import { Injectable, Logger } from '@nestjs/common';
+import { withJobLock } from '../../../common/job-lock';
+
+/** Guards the three ShopifyQL captures a refresh makes, whichever process and
+ *  whichever trigger asked for them. */
+const SNAPSHOT_REFRESH_LOCK = 'sales:snapshot-refresh';
 import { DateTime } from 'luxon';
 import { config } from '../../../common/config';
 import { one, query } from '../../../common/db';
@@ -519,7 +524,28 @@ export class SnapshotService {
 
     this.inFlight = (async () => {
       try {
-        const daily = await this.captureDaily();
+        /* And one capture at a time across processes, which the guard above
+           cannot do.
+        
+           `inFlight` is a field on this object, so it holds for as long as
+           there is one object -- which stopped being true the moment the
+           webhook worker started. The worker refreshes after every batch of
+           events it processes; the API refreshes after reconciliation and on
+           the hour. Neither can see the other's field, so the three ShopifyQL
+           captures below ran twice over the same range, writing the same rows,
+           at the same time, out of the same cost bucket. That bucket is the one
+           already producing throttling, and these are the most expensive calls
+           the system makes.
+        
+           Skipping rather than joining is the right answer here: a refresh
+           already in flight covers the same data, so the second caller has
+           nothing to add. The confirming pass four minutes later is what
+           catches anything that landed in between -- and it is scheduled
+           whether or not this call did any work. */
+        const { outcome, value } = await withJobLock(
+          SNAPSHOT_REFRESH_LOCK,
+          async () => {
+            const daily = await this.captureDaily();
         /* Fourteen days at hour grain, not three.
         
            Three was sized for the pulse strip, which only ever looks at today
@@ -528,7 +554,7 @@ export class SnapshotService {
            call. Fourteen covers a fortnight of the comparisons people actually
            make -- this week against last -- for about 670 extra rows, which is
            nothing beside the 92,000-order mirror. */
-        const hourly = await this.captureHourly(14);
+            const hourly = await this.captureHourly(14);
         /* Breakdowns too, and leaving them out was the third time the same
            mistake was made in one build.
         
@@ -542,8 +568,17 @@ export class SnapshotService {
            The rule that keeps being relearned: a partial refresh cannot clear a
            whole-page freshness check. If the page reads it, this has to write
            it. */
-        const breakdowns = await this.captureBreakdowns();
-        return daily + hourly + breakdowns;
+            const breakdowns = await this.captureBreakdowns();
+            return daily + hourly + breakdowns;
+          },
+          { ttlMs: 10 * 60_000, renew: true },
+        );
+
+        if (outcome === 'held-elsewhere') {
+          this.log.log('snapshot refresh skipped: another process is already refreshing');
+          return 0;
+        }
+        return value ?? 0;
       } finally {
         this.inFlight = null;
       }
@@ -577,7 +612,8 @@ export class SnapshotService {
       this.refreshPending = false;
       try {
         const n = await this.refreshRecent();
-        this.log.log(`snapshot refresh after webhook: ${n} rows`);
+        // Zero means it stood aside for another process, which already said so.
+        if (n > 0) this.log.log(`snapshot refresh after webhook: ${n} rows`);
       } catch (e: any) {
         this.log.error(`snapshot refresh failed: ${e?.message ?? e}`);
       }
