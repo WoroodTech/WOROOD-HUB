@@ -19,8 +19,13 @@ import { AppModule } from './app.module';
 import { config } from './common/config';
 import { WebhookWorker } from './modules/sales-dashboard/webhooks/webhook-worker';
 import { closeDb } from './common/db';
+import { declareWorkerProcess } from './common/process-role';
 
 async function main() {
+  /* Before the application context is created: the schedulers decide whether to
+     start in onModuleInit, which runs inside createApplicationContext. */
+  declareWorkerProcess();
+
   const log = new Logger('Worker');
 
   /* Refuse to start rather than run alongside the API's inline processing.

@@ -259,7 +259,16 @@ export class CostGovernor {
     const bucket = `sales:shopify:throttled:${new Date().toISOString().slice(0, 13)}`;
     await redis().incr(bucket);
     await redis().expire(bucket, 25 * 3600);
-    this.log.warn('Shopify throttled a request');
+
+    /* Counted, not announced.
+    
+       The counter above is what the health screen reads, so nothing is lost by
+       not logging here. As a WARN it produced six lines for every request that
+       had to wait, none of which said which request, how long it waited or
+       whether it ever got through -- so a burst read as six separate problems
+       when it was one. The request that was throttled now reports once, with
+       the outcome, from where that is known. */
+    this.log.debug('Shopify throttled a request');
   }
 
   async status(): Promise<GovernorStatus> {
@@ -398,6 +407,27 @@ export class LiveShopifySource implements ShopifySource {
        minute of patience before giving up, which is the right trade for a
        scheduled capture: finishing late is fine, failing is not. */
     let lastNetworkError: any = null;
+
+    /* Throttling is counted separately from failure, and that distinction is
+       the whole fix.
+    
+       A THROTTLED reply is not an error. It is Shopify saying "not yet" -- the
+       bucket refills at a known rate and the call will succeed if we wait.
+       Sharing one six-attempt budget with network failures meant a busy minute
+       spent the budget on waiting and then reported "failed after retries",
+       which is how the hourly snapshot died while the API was perfectly
+       healthy: four scheduled jobs started within ninety seconds, the
+       ShopifyQL capture was the most expensive of them, and it lost the race
+       for a bucket the others had already drained.
+    
+       So a throttle gets its own, larger allowance and does not consume a
+       network attempt. Sixteen waits on the throttle curve below is about four
+       minutes of patience -- long for a request, short against an hourly job
+       whose only alternative is to produce nothing for an hour. */
+    let throttleWaits = 0;
+    let throttledSince = 0;
+    const MAX_THROTTLE_WAITS = 16;
+
     for (let attempt = 0; attempt < 6; attempt++) {
       await this.governor.acquire(10);
       /* An explicit timeout, because Node's fetch has none. Without it a
@@ -460,13 +490,35 @@ export class LiveShopifySource implements ShopifySource {
       const throttled = body?.errors?.some?.((e: any) => e?.extensions?.code === 'THROTTLED');
       if (throttled) {
         await this.governor.markThrottled();
-        await this.backoff(attempt);
+        if (throttleWaits === 0) throttledSince = Date.now();
+
+        if (throttleWaits >= MAX_THROTTLE_WAITS) {
+          const secs = Math.round((Date.now() - throttledSince) / 1000);
+          const msg = `Shopify throttled this request ${throttleWaits} times without clearing (${secs}s)`;
+          this.health.recordFailure(msg);
+          throw new Error(msg);
+        }
+
+        await this.throttleBackoff(throttleWaits);
+        throttleWaits++;
+        /* Undo this iteration's attempt: waiting for the bucket is not a failed
+           try, and spending the failure budget on it is what turned a busy
+           minute into a reported outage. */
+        attempt--;
         continue;
       }
       if (body.errors?.length) {
         throw new Error(`Shopify GraphQL error: ${JSON.stringify(body.errors).slice(0, 500)}`);
       }
       this.health.recordSuccess();
+
+      /* One line for the whole episode, and at INFO: the request succeeded, so
+         this is context, not a problem. A request that gives up throws instead,
+         and its caller logs that as the error it is. */
+      if (throttleWaits > 0) {
+        const secs = Math.round((Date.now() - throttledSince) / 1000);
+        this.log.log(`Shopify throttled this request ${throttleWaits} time(s); it cleared after ${secs}s`);
+      }
       return body.data as T;
     }
     const failure = lastNetworkError
@@ -493,6 +545,24 @@ export class LiveShopifySource implements ShopifySource {
    */
   private backoff(attempt: number) {
     const ceiling = Math.min(1000 * 2 ** attempt, 16_000);
+    const wait = ceiling / 2 + Math.random() * (ceiling / 2);
+    return new Promise((r) => setTimeout(r, wait));
+  }
+
+  /**
+   * Waiting out a drained cost bucket.
+   *
+   * Climbs the same way but settles at thirty seconds rather than sixteen, and
+   * keeps waiting there. The bucket refills at a fixed rate, so the useful
+   * behaviour once it is empty is to keep checking at a steady interval rather
+   * than to give up faster and faster -- and a long steady wait is also what
+   * stops a retrying caller from being the reason the bucket stays empty.
+   *
+   * Jittered for the same reason as the other curve: several jobs throttled in
+   * the same second must not all come back in the same second.
+   */
+  private throttleBackoff(waits: number) {
+    const ceiling = Math.min(1000 * 2 ** waits, 30_000);
     const wait = ceiling / 2 + Math.random() * (ceiling / 2);
     return new Promise((r) => setTimeout(r, wait));
   }

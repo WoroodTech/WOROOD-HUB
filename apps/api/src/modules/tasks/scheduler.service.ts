@@ -19,6 +19,7 @@
  * briefly overlapping all produce the same answer.
  */
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { isWorkerProcess } from '../../common/process-role';
 import { one, query } from '../../common/db';
 import { config } from '../../common/config';
 import { NotificationMailer } from '../../core/notifications.controller';
@@ -40,6 +41,9 @@ export class TasksScheduler implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit() {
+    // The webhook worker boots this module as well. The sweep and the
+    // escalation are the API's schedule, not the worker's.
+    if (isWorkerProcess()) return;
     this.every(SWEEP_INTERVAL_MS, 'sla sweep', () => this.sweep());
     this.every(60 * 60_000, 'unassigned escalation', () => this.escalateUnassigned());
   }

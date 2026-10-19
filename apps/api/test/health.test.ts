@@ -15,7 +15,7 @@
  * itself.
  */
 import { query, one, closeDb } from '../src/common/db';
-import { SyncService } from '../src/modules/sales-dashboard/sync/sync.service';
+import { SyncService, isResourceHealthy } from '../src/modules/sales-dashboard/sync/sync.service';
 import { WebhookWorker } from '../src/modules/sales-dashboard/webhooks/webhook-worker';
 import { MAX_ATTEMPTS } from '../src/modules/sales-dashboard/webhooks/webhook-lifecycle';
 
@@ -136,6 +136,45 @@ async function main() {
       h.queue.waiting + h.queue.retrying === 3);
   }
 
+  section('Each resource is judged against its own cadence');
+  {
+    /* The blanket twenty-four-hour threshold put orders_backfill permanently in
+       the red. It is a one-time import of the store's history -- it ran once,
+       brought ninety-six thousand orders, and is supposed to have an old
+       timestamp. A row that can only ever be red teaches people to ignore the
+       colour, and then reconciliation going red means nothing either. */
+    const day = 24 * 3600;
+
+    check('a backfill that succeeded three weeks ago is healthy',
+      isResourceHealthy('orders_backfill', 'OK', 21 * day) === true);
+    check('and one that succeeded a year ago still is -- age says nothing about it',
+      isResourceHealthy('orders_backfill', 'OK', 365 * day) === true);
+    check('but a FAILED backfill is not',
+      isResourceHealthy('orders_backfill', 'ERROR', 60) === false);
+    check('nor one that has never completed',
+      isResourceHealthy('orders_backfill', 'OK', null) === false);
+
+    /* Reconciliation runs every fifteen minutes, so a day of grace hid a
+       genuinely stuck sync for most of that day. */
+    check('reconciliation is healthy half an hour after a success',
+      isResourceHealthy('orders', 'OK', 1800) === true);
+    check('and unhealthy after two hours, not after a day',
+      isResourceHealthy('orders', 'OK', 2 * 3600) === false);
+
+    /* The watchdog re-verifies webhooks at 03:00 Cairo, so a day exactly would
+       flap red in the hours before each run. */
+    check('webhooks verified yesterday are still healthy',
+      isResourceHealthy('webhooks', 'OK', 25 * 3600) === true);
+    check('but not after two days', isResourceHealthy('webhooks', 'OK', 49 * 3600) === false);
+
+    check('customers tolerate a quiet weekend',
+      isResourceHealthy('customers', 'OK', 30 * 3600) === true);
+
+    check('an unlisted resource keeps the old blanket day',
+      isResourceHealthy('something_new', 'OK', 23 * 3600) === true
+        && isResourceHealthy('something_new', 'OK', 25 * 3600) === false);
+  }
+
   section('Reconciliation and backfill status come through');
   {
     await query(`DELETE FROM sd_sync_state WHERE shop_id = $1`, [shopId]);
@@ -155,8 +194,8 @@ async function main() {
 
     check('the backfill is reported', !!backfill);
     eq('with how much it brought', backfill!.records, 9000);
-    check('and judged stale once its last success is two days old',
-      backfill!.healthy === false, String(backfill!.lagSeconds));
+    check('and is NOT called stale for being two days old -- it is a one-time import',
+      backfill!.healthy === true, String(backfill!.lagSeconds));
   }
 
   /* ------------------------------------------------------- the dead letter -- */

@@ -1332,7 +1332,15 @@ export class SyncService {
           // A dashboard that quietly shows week-old numbers is the failure mode
           // that destroys trust, so "healthy" is an explicit server-side verdict
           // rather than something the UI has to infer.
-          healthy: r.status === 'OK' && lag !== null && lag < 24 * 3600,
+          //
+          // Judged against each resource's own cadence. One blanket
+          // twenty-four-hour threshold was wrong in a way that matters: it put
+          // orders_backfill permanently in the red. That import is a one-time
+          // load of the store's history -- it ran once, brought ninety-six
+          // thousand orders, and is SUPPOSED to have an old timestamp. A row
+          // that can only ever be red teaches people to ignore the colour, and
+          // then the reconciliation row going red means nothing either.
+          healthy: isResourceHealthy(r.resource, r.status, lag),
         };
       }),
       queue: {
@@ -1610,4 +1618,47 @@ function orderNumber(name: unknown): number | null {
   if (!digits) return null;
   const n = Number(digits);
   return Number.isSafeInteger(n) && n > 0 ? n : null;
+}
+/**
+ * How long each resource may go without a success before it is worth saying so.
+ *
+ * Different jobs, different clocks:
+ *
+ *   orders            reconciliation every fifteen minutes. An hour without a
+ *                     success means something is actually wrong.
+ *   customers         written as a consequence of orders syncing, so it tracks
+ *                     order traffic. A whole quiet day is possible on a slow
+ *                     weekend; two is not.
+ *   webhooks          re-verified by the watchdog at 03:00 Cairo. A day and a
+ *                     bit covers the gap between runs without flapping red in
+ *                     the hours before each one.
+ *   orders_backfill   a one-time import of the store's whole history. It has
+ *                     no cadence at all, so age says nothing about it. Only a
+ *                     failure or a never-run state is worth reporting.
+ */
+const RESOURCE_MAX_LAG_SECONDS: Record<string, number | null> = {
+  orders: 60 * 60,
+  customers: 36 * 60 * 60,
+  webhooks: 26 * 60 * 60,
+  orders_backfill: null,        // never stale by age
+};
+
+/** Anything not listed keeps the old blanket day. */
+const DEFAULT_MAX_LAG_SECONDS = 24 * 60 * 60;
+
+export function isResourceHealthy(
+  resource: string, status: string, lagSeconds: number | null,
+): boolean {
+  if (status !== 'OK') return false;
+  // Never completed: not healthy whatever its cadence.
+  if (lagSeconds === null) return false;
+
+  const max = resource in RESOURCE_MAX_LAG_SECONDS
+    ? RESOURCE_MAX_LAG_SECONDS[resource]
+    : DEFAULT_MAX_LAG_SECONDS;
+
+  // null means age is not a signal for this resource -- it succeeded, and that
+  // is the whole question.
+  if (max === null) return true;
+  return lagSeconds < max;
 }
