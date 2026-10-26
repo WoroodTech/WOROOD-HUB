@@ -213,7 +213,12 @@ export type RoomCalendarBlock =
   | { type: 'BLACKOUT'; startsAt: string; endsAt: string; reason: string | null }
   | { type: 'BUFFER'; startsAt: string; endsAt: string };
 
-/** A room's timeline for one day, in the room's own timezone. */
+/** One day of a room's timeline, in the room's own timezone. */
+export interface RoomCalendarDay {
+  date: string;
+  blocks: RoomCalendarBlock[];
+}
+
 export interface RoomCalendarResponse {
   room: {
     id: string;
@@ -223,8 +228,16 @@ export interface RoomCalendarResponse {
     closesAt: string;
     bufferMinutes: number;
   };
+  /** The first day of the range, as asked for. */
   date: string;
-  blocks: RoomCalendarBlock[];
+  /**
+   * The range itself, one entry per day, in order.
+   *
+   * Always present and never empty: a single-day request is a range of one, so
+   * callers read `days` whether they asked for a day or a week rather than
+   * branching on which shape came back.
+   */
+  days: RoomCalendarDay[];
 }
 
 export interface Reservation {
@@ -694,4 +707,61 @@ export interface TicketDashboardResponse {
     active: number; inProgress: number; blocked: number;
     forReview: number; implementation: number; done: number; delayed: number;
   }>;
+}
+
+/* ------------------------------------------------------------ company news */
+
+export interface AnnouncementImage {
+  id: string;
+  /** Short-lived signed URLs; refetch the announcement rather than caching them. */
+  url: string;
+  thumbUrl: string | null;
+  width: number | null;
+  height: number | null;
+  caption: string | null;
+  captionAr: string | null;
+}
+
+export interface AnnouncementComment {
+  id: string;
+  body: string;
+  createdAt: string;
+  author: { id: string; fullName: string };
+  /** Decided by the server: your own, or anyone's if you look after the board. */
+  canRemove: boolean;
+}
+
+export interface Announcement {
+  id: string;
+  /** Either language may be absent — a notice can be written in one only. */
+  title: string | null;
+  titleAr: string | null;
+  body: string | null;
+  bodyAr: string | null;
+  status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+  publishAt: string;
+  /** Null means it stays up until somebody takes it down. */
+  expiresAt: string | null;
+  pinned: boolean;
+  commentsEnabled: boolean;
+  commentCount: number;
+  author: { id: string; fullName: string };
+  createdAt: string;
+  canManage: boolean;
+  images: AnnouncementImage[];
+}
+
+export interface AnnouncementDetail extends Announcement {
+  comments: AnnouncementComment[];
+}
+
+export interface AnnouncementsResponse {
+  announcements: Announcement[];
+  total: number;
+}
+
+export interface AnnouncementUploadTicket {
+  imageId: string;
+  uploadUrl: string;
+  headers: Record<string, string>;
 }

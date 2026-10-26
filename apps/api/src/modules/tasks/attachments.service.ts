@@ -20,10 +20,7 @@ import {
   BadRequestException, ConflictException, ForbiddenException, Injectable, Logger,
   NotFoundException, ServiceUnavailableException,
 } from '@nestjs/common';
-import {
-  DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client,
-} from '@aws-sdk/client-s3';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { ObjectStoreService } from '../../core/object-store.service';
 import { randomUUID } from 'node:crypto';
 import { Principal, can } from '../../common/auth';
 import { config } from '../../common/config';
@@ -33,7 +30,7 @@ import { assertCan, loadWithAccess } from './visibility.service';
 import { writeEvent } from './events';
 import {
   ACCEPTED_TYPES, MAX_UPLOAD_BYTES, compressImage, sniff,
-} from './attachment-files';
+} from '../../core/upload-files';
 
 const PER_TICKET = 10;
 const PER_COMMENT = 5;
@@ -58,23 +55,13 @@ export interface AttachmentView {
 @Injectable()
 export class AttachmentsService {
   private readonly log = new Logger('Attachments');
-  private client: S3Client | null = null;
 
-  private get s3(): S3Client {
-    /* Built lazily, so a boot without a bucket never resolves the instance
-       role, and a slow metadata service delays the first upload rather than
-       every start. */
-    if (!this.client) this.client = new S3Client({ region: config.attachments.region });
-    return this.client;
-  }
+  /* S3 itself now lives in core, so the bucket is reachable from anywhere that
+     needs it rather than only from here. What stays in this service is
+     everything that is about tickets: who may attach to what, the per-ticket
+     and per-comment limits, and the rows. */
+  constructor(private readonly store: ObjectStoreService) {}
 
-  private get bucket(): string {
-    if (!config.attachments.bucket) {
-      throw new ServiceUnavailableException(
-        'Attachments are not set up on this server (S3_ATTACHMENTS_BUCKET is empty).');
-    }
-    return config.attachments.bucket;
-  }
 
   /* -------------------------------------------------------------- upload -- */
 
@@ -89,7 +76,6 @@ export class AttachmentsService {
   async requestUpload(p: Principal, itemId: string, dto: {
     name: string; type: string; size: number; commentId?: string;
   }) {
-    const bucket = this.bucket;
     const { item, access } = await loadWithAccess(p, itemId);
 
     if (CLOSED.includes(item.status)) {
@@ -151,9 +137,7 @@ export class AttachmentsService {
        as. Size is not -- a presigned PUT cannot carry a range -- which is why
        confirmation checks it and why `incoming/` expires after a day: an
        oversized upload costs at most a day of storage and is never kept. */
-    const uploadUrl = await getSignedUrl(this.s3,
-      new PutObjectCommand({ Bucket: bucket, Key: incomingKey, ContentType: dto.type }),
-      { expiresIn: 300 });
+    const uploadUrl = await this.store.presignUpload(incomingKey, dto.type, 300);
 
     return { attachmentId: id, uploadUrl, headers: { 'Content-Type': dto.type } };
   }
@@ -167,29 +151,21 @@ export class AttachmentsService {
    * becomes visible.
    */
   async confirm(p: Principal, attachmentId: string): Promise<AttachmentView> {
-    const bucket = this.bucket;
     const row = await one<any>(`SELECT * FROM tk_attachments WHERE id = $1`, [attachmentId]);
     if (!row || row.uploaded_by !== p.id) throw new NotFoundException('No such upload.');
     if (row.status !== 'PENDING') throw new ConflictException('This upload was already handled.');
 
     const reject = async (message: string): Promise<never> => {
-      await this.s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: row.incoming_key }))
-        .catch(() => undefined);
+      await this.store.remove(row.incoming_key);
       await query(`UPDATE tk_attachments SET status='DELETED', deleted_at=now() WHERE id=$1`, [row.id]);
       throw new BadRequestException(message);
     };
 
-    let size: number;
-    try {
-      const head = await this.s3.send(new HeadObjectCommand({ Bucket: bucket, Key: row.incoming_key }));
-      size = Number(head.ContentLength ?? 0);
-    } catch {
-      throw new BadRequestException('The upload has not arrived. Try again.');
-    }
-    if (size <= 0 || size > MAX_UPLOAD_BYTES) return reject('Files can be up to 10 MB.');
+    const head = await this.store.head(row.incoming_key);
+    if (!head) throw new BadRequestException('The upload has not arrived. Try again.');
+    if (head.size <= 0 || head.size > MAX_UPLOAD_BYTES) return reject('Files can be up to 10 MB.');
 
-    const obj = await this.s3.send(new GetObjectCommand({ Bucket: bucket, Key: row.incoming_key }));
-    const input = Buffer.from(await obj.Body!.transformToByteArray());
+    const input = await this.store.read(row.incoming_key);
 
     const kind = sniff(input);
     if (!kind) return reject('That file is not a JPEG, PNG, WebP image or a PDF.');
@@ -205,9 +181,7 @@ export class AttachmentsService {
       fileKey = `files/${row.id}.pdf`;
       contentType = 'application/pdf';
       bytes = input.length;
-      await this.s3.send(new PutObjectCommand({
-        Bucket: bucket, Key: fileKey, Body: input, ContentType: contentType,
-      }));
+      await this.store.put(fileKey, input, contentType);
     } else {
       let out;
       try { out = await compressImage(input); }
@@ -219,16 +193,11 @@ export class AttachmentsService {
       thumbKey = `thumbs/${row.id}.webp`;
       contentType = 'image/webp';
       bytes = out.main.length; width = out.width; height = out.height;
-      await this.s3.send(new PutObjectCommand({
-        Bucket: bucket, Key: fileKey, Body: out.main, ContentType: contentType,
-      }));
-      await this.s3.send(new PutObjectCommand({
-        Bucket: bucket, Key: thumbKey, Body: out.thumb, ContentType: contentType,
-      }));
+      await this.store.put(fileKey, out.main, contentType);
+      await this.store.put(thumbKey, out.thumb, contentType);
     }
 
-    await this.s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: row.incoming_key }))
-      .catch(() => undefined);
+    await this.store.remove(row.incoming_key);
 
     await query(
       `UPDATE tk_attachments
@@ -236,7 +205,7 @@ export class AttachmentsService {
               original_bytes=$6, bytes=$7, width=$8, height=$9, ready_at=now()
         WHERE id=$1`,
       [row.id, kind === 'pdf' ? 'PDF' : 'IMAGE', fileKey, thumbKey, contentType,
-       size, bytes, width, height]);
+       head.size, bytes, width, height]);
 
     const [view] = await this.forItem(p, row.item_id, [row.id]);
     return view;
@@ -265,15 +234,12 @@ export class AttachmentsService {
         ORDER BY a.created_at`, [itemId, onlyIds ?? null]);
 
     const admin = can(p, TASK_PERMISSIONS.MANAGE_ANY);
-    const sign = (key: string, a: any, inline: boolean) => getSignedUrl(this.s3,
-      new GetObjectCommand({
-        Bucket: this.bucket, Key: key,
-        /* The person's own file name on download, encoded the way headers
-           require so an Arabic name arrives as written. */
-        ResponseContentDisposition:
-          `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(
-            a.kind === 'IMAGE' ? a.original_name.replace(/\.[^.]+$/, '') + '.webp' : a.original_name)}`,
-      }), { expiresIn: 3600 });
+    /* The person's own file name on download, encoded the way headers require
+       so an Arabic name arrives as written. */
+    const sign = (key: string, a: any, inline: boolean) => this.store.presignDownload(
+      key, 3600,
+      `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(
+        a.kind === 'IMAGE' ? a.original_name.replace(/\.[^.]+$/, '') + '.webp' : a.original_name)}`);
 
     return Promise.all(rows.map(async (a) => ({
       id: a.id,
@@ -333,8 +299,7 @@ export class AttachmentsService {
     });
 
     for (const key of [row.file_key, row.thumb_key].filter(Boolean)) {
-      await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }))
-        .catch((e) => this.log.warn(`could not delete ${key}: ${e?.message ?? e}`));
+      await this.store.remove(key);
     }
     return { removed: true };
   }

@@ -28,4 +28,9 @@ export const qk = {
   taskPeople: (departmentId: string) => ['tasks', 'people', departmentId] as const,
 
   roomCalendar: (roomId: string, date: string) => ['mr', 'room-calendar', roomId, date] as const,
+  news: ['news', 'live'] as const,
+  newsList: (limit: number, offset: number) => ['news', 'list', limit, offset] as const,
+  newsItem: (id: string) => ['news', 'item', id] as const,
+  roomCalendarRange: (roomId: string, date: string, days: number) =>
+    ['mr', 'room-calendar', roomId, date, days] as const,
 };

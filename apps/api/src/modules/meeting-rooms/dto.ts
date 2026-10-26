@@ -115,4 +115,23 @@ export class UpsertRoom {
 
 export class RoomCalendarQuery {
   @Matches(DATE, { message: 'date must be YYYY-MM-DD' }) date!: string;
+
+  /**
+   * How many consecutive days to return, starting at `date`.
+   *
+   * One by default, which is what a single-day view asks for. The week view
+   * asks for seven in one request rather than firing seven -- a calendar that
+   * opens with seven spinners finishing in a random order reads as broken even
+   * when every one of them succeeds.
+   *
+   * Capped at 31: the horizon is a room policy measured in weeks, and an
+   * unbounded range is a way to ask the database for a year of someone else's
+   * meetings in one call.
+   */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'days must be a whole number' })
+  @Min(1, { message: 'days must be at least 1' })
+  @Max(31, { message: 'days cannot exceed 31' })
+  days?: number;
 }

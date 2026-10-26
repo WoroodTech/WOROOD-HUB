@@ -84,6 +84,24 @@ export const config = {
     id: process.env.WEBHOOK_WORKER_ID || `${process.env.HOSTNAME || 'worker'}-${process.pid}`,
   },
 
+  /**
+   * Whether the tasks and tickets module is part of this deployment.
+   *
+   * On by default, so development and any existing environment keep working;
+   * production turns it off explicitly. When off the module is never
+   * constructed at all -- no routes, no scheduler, no emails -- rather than
+   * being hidden behind a navigation entry that is no longer rendered. A module
+   * that is merely invisible still sweeps its SLAs and still emails managers
+   * about tickets nobody is looking at, which is a worse state than either on
+   * or off.
+   *
+   * The tables keep their rows. This is a decision about what runs, not about
+   * what is stored, and turning it back on is one line of configuration.
+   */
+  tasks: {
+    enabled: process.env.TASKS_MODULE_ENABLED !== 'false',
+  },
+
   mail: {
     enabled: process.env.MAIL_ENABLED === 'true',
     region: process.env.AWS_REGION || 'eu-west-1',

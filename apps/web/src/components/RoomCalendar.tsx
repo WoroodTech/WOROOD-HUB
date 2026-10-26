@@ -19,7 +19,7 @@
  */
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import type { RoomCalendarResponse, MeetingRoom } from '../contract';
+import type { RoomCalendarBlock, RoomCalendarResponse, MeetingRoom } from '../contract';
 import { api } from '../lib/api';
 import { qk } from '../lib/keys';
 import { LoadingState, ErrorState, EmptyState } from './States';
@@ -97,7 +97,10 @@ export function RoomCalendar({ room, date }: { room: MeetingRoom; date: string }
   const hourMarks: number[] = [];
   for (let h = Math.ceil(openMin / 60); h <= Math.floor(closeMin / 60); h++) hourMarks.push(h * 60);
 
-  const blocks = calendar.data?.blocks ?? [];
+  /* The endpoint now answers with a range -- one entry for a single day, seven
+     for the week view -- so this reads the first and only one rather than a
+     `blocks` field that no longer exists. */
+  const blocks: RoomCalendarBlock[] = calendar.data?.days?.[0]?.blocks ?? [];
 
   // Where "now" falls relative to the viewed day: before it (whole day is
   // past), inside it (partial shading), or after it (nothing to shade).

@@ -25,6 +25,7 @@ import { TasksService } from './tasks.service';
 import { TasksScheduler } from './scheduler.service';
 import { BoardService } from './board.service';
 import { AttachmentsService } from './attachments.service';
+import { config } from '../../common/config';
 import {
   AddComment, AddDependency, AssignTask, CreateTask, ListTasksQuery,
   ManageContributor, MoveTask, PlanTask, ReasonOnly, RequestUpload, ResolveTask, SetDue, TransferTask,
@@ -38,7 +39,10 @@ export const TASKS_MODULE = registerHubModule({
   version: '1.0.0',
   apiPrefix: '/api/v1/tasks',
   tablePrefix: 'tk_',
-  enabled: true,
+  /* Belt and braces: when the module is not imported this descriptor is never
+     registered at all, so the portal shell never hears of it. This matters only
+     if the module is ever imported with the flag off. */
+  enabled: config.tasks.enabled,
 
   navigation: [
     { label: 'Tasks & Tickets', labelAr: 'المهام والتذاكر', path: '/tasks', icon: 'check' },

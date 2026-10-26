@@ -2767,3 +2767,208 @@ button, input, select, textarea { font: inherit; color: inherit; }
   .tprops { grid-template-columns: minmax(0, 1fr); }
   .tprops__cell { grid-template-columns: 110px minmax(0, 1fr); }
 }
+/* --------------------------------------------------------- week calendar -- */
+/* Seven days as columns with the hours running down them. The track height
+   comes from the component as --track-height, so an hour is the same number of
+   pixels whatever hours the room keeps -- a room open twelve hours makes a
+   taller calendar rather than a denser one. */
+
+.weekcal { margin-block-start: 14px; padding-block-start: 14px; border-block-start: 1px solid var(--line); }
+
+.weekcal__head { display: flex; align-items: center; gap: 10px; margin-block-end: 10px; }
+/* Worded as well as drawn: an arrow alone did not say what it would move. */
+.weekcal__step { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+
+/* A week that is still loading dims rather than disappearing, so stepping is
+   the same gesture whether or not that week has been seen before. */
+.weekcal__grid.is-stepping { opacity: .55; transition: opacity .12s ease; }
+.weekcal__title { flex: 1; text-align: center; display: flex; flex-direction: column; gap: 2px; }
+.weekcal__zone { font-size: 11px; color: var(--muted); }
+
+/* The gutter is a column like any other, so the hour lines meet the rows. */
+.weekcal__grid {
+  display: grid;
+  grid-template-columns: auto repeat(7, minmax(72px, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: auto hidden;
+}
+.weekcal__gutter, .weekcal__col { background: var(--surface); display: flex; flex-direction: column; }
+
+.weekcal__dayhead {
+  display: flex; flex-direction: column; align-items: center; gap: 1px;
+  padding: 6px 4px; border-block-end: 1px solid var(--line);
+  position: sticky; inset-block-start: 0; background: var(--surface); z-index: 2;
+}
+.weekcal__dayhead--spacer { visibility: hidden; }
+.weekcal__dayname { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.weekcal__daynum { font-size: 15px; font-weight: 600; }
+.weekcal__col--today .weekcal__daynum { color: var(--accent); }
+
+.weekcal__track { position: relative; block-size: var(--track-height); touch-action: none; }
+.weekcal__track--gutter { inline-size: 62px; touch-action: auto; }
+
+/* Hour labels sit on the line rather than between them, so a block starting at
+   ten lines up with the label that says ten. */
+.weekcal__hour {
+  position: absolute; inset-inline: 0; transform: translateY(-50%);
+  display: flex; flex-direction: column; align-items: flex-end;
+  padding-inline-end: 6px; line-height: 1.1;
+}
+.weekcal__hourmain { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.weekcal__houralt { font-size: 10px; color: var(--muted); opacity: .65; font-variant-numeric: tabular-nums; }
+
+.weekcal__rule { position: absolute; inset-inline: 0; block-size: 1px; background: var(--line); opacity: .6; }
+
+.weekcal__block {
+  position: absolute; inset-inline: 2px; border-radius: 6px; overflow: hidden;
+  padding: 2px 5px; font-size: 11px; line-height: 1.25; cursor: default;
+}
+.weekcal__block--booking { background: var(--accent); color: #fff; display: flex; flex-direction: column; gap: 1px; }
+.weekcal__block--booking.is-mine { outline: 2px solid var(--good); outline-offset: -2px; }
+.weekcal__blocktime { font-weight: 600; font-variant-numeric: tabular-nums; display: flex; gap: 5px; align-items: baseline; }
+.weekcal__blockalt { font-style: normal; font-weight: 400; opacity: .75; font-size: 10px; }
+.weekcal__blocktitle { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.weekcal__blockwho { opacity: .8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.weekcal__block--blackout { background: var(--line); opacity: .8; }
+.weekcal__block--buffer {
+  background: repeating-linear-gradient(45deg, var(--line), var(--line) 3px, transparent 3px, transparent 6px);
+}
+
+/* The range being dragged. Dashed and translucent because it is a proposal --
+   nothing is reserved until the form it fills is confirmed. */
+.weekcal__selection {
+  position: absolute; inset-inline: 2px; border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border: 1.5px dashed var(--accent);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10.5px; font-weight: 600; color: var(--accent);
+  font-variant-numeric: tabular-nums; pointer-events: none;
+}
+
+/* Time that has gone, or that is past the room's booking horizon. Hatched like
+   a changeover so it reads as "not available" at a glance, and translucent so
+   the bookings drawn over it stay legible -- yesterday's meetings are still
+   worth seeing. */
+.weekcal__closed {
+  position: absolute; inset-inline: 0; z-index: 0;
+  background: repeating-linear-gradient(
+    135deg, var(--line), var(--line) 4px, transparent 4px, transparent 9px);
+  opacity: .55;
+}
+.weekcal__closed--horizon { opacity: .35; }
+
+/* The current time. A bare line was being read as another hour rule, so it now
+   carries a dot and the time itself, and sits above the bookings. */
+.weekcal__now {
+  position: absolute; inset-inline: 0; block-size: 0; z-index: 4;
+  border-block-start: 2px solid var(--good);
+  display: flex; align-items: center;
+}
+.weekcal__nowdot {
+  inline-size: 8px; block-size: 8px; border-radius: 50%;
+  background: var(--good); margin-inline-start: -4px; flex: none;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+.weekcal__nowtime {
+  margin-inline-start: auto; margin-inline-end: 2px;
+  font-size: 9.5px; font-weight: 700; color: #fff; background: var(--good);
+  padding: 0 4px; border-radius: 3px; line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+.weekcal__hint { margin-block-start: 8px; font-size: 11.5px; color: var(--muted); }
+
+@media (max-width: 720px) {
+  /* Columns stop being readable long before they stop fitting, so the grid
+     scrolls sideways rather than shrinking into stripes. */
+  .weekcal__grid { grid-template-columns: auto repeat(7, 96px); }
+}
+
+/* ---------------------------------------------------------- company news -- */
+/* The banner is the widest thing on the home page and the first, because a
+   noticeboard below the fold is a noticeboard nobody reads. */
+
+.newsbanner { position: relative; }
+.newsslide { display: grid; grid-template-columns: minmax(0, 38%) 1fr; gap: 16px; align-items: center; }
+.newsslide--textonly { grid-template-columns: 1fr; }
+
+.newsslide__media { position: relative; border-radius: 10px; overflow: hidden; background: var(--line); }
+.newsslide__media img {
+  inline-size: 100%; block-size: 100%; max-block-size: 220px; object-fit: cover; display: block;
+}
+.newsslide__count {
+  position: absolute; inset-block-end: 6px; inset-inline-end: 6px;
+  background: rgba(0,0,0,.55); color: #fff; font-size: 10.5px;
+  padding: 1px 6px; border-radius: 10px; font-variant-numeric: tabular-nums;
+}
+
+.newsslide__text { display: flex; flex-direction: column; gap: 7px; min-inline-size: 0; }
+.newsslide__meta { display: flex; align-items: center; gap: 8px; font-size: 11.5px; flex-wrap: wrap; }
+.newsslide__title { margin: 0; font-size: 19px; line-height: 1.25; }
+.newsslide__title a { color: inherit; text-decoration: none; }
+.newsslide__title a:hover { text-decoration: underline; }
+/* Three lines, then it stops: the banner is an invitation to read, not the
+   reading itself. */
+.newsslide__body {
+  margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.newsslide__actions { margin-block-start: 2px; }
+
+.newsbanner__nav { display: flex; align-items: center; justify-content: center; gap: 8px; margin-block-start: 12px; }
+.newsbanner__dots { display: inline-flex; gap: 6px; }
+.newsbanner__dot {
+  inline-size: 7px; block-size: 7px; border-radius: 50%; border: 0; padding: 0;
+  background: var(--line); cursor: pointer; transition: background .15s, transform .15s;
+}
+.newsbanner__dot.is-on { background: var(--accent); transform: scale(1.35); }
+
+/* ---- archive ---- */
+.newslist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.newsrow { display: flex; gap: 14px; padding-block-end: 14px; border-block-end: 1px solid var(--line); }
+.newsrow__thumb { flex: none; inline-size: 120px; block-size: 84px; border-radius: 8px; overflow: hidden; }
+.newsrow__thumb img { inline-size: 100%; block-size: 100%; object-fit: cover; display: block; }
+.newsrow__text { min-inline-size: 0; display: flex; flex-direction: column; gap: 5px; }
+.newsrow__text h2 { margin: 0; font-size: 16px; }
+.newsrow__text h2 a { color: inherit; text-decoration: none; }
+.newsrow__meta { display: flex; align-items: center; gap: 8px; font-size: 11.5px; flex-wrap: wrap; }
+.newsrow__body {
+  margin: 0; color: var(--muted); font-size: 13px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.newsrow__replies { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; }
+.idtag--muted { opacity: .7; }
+
+/* ---- one notice ---- */
+.newsarticle__gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-block: 16px; }
+.newsarticle__gallery figure { margin: 0; }
+.newsarticle__gallery img { inline-size: 100%; border-radius: 10px; display: block; }
+.newsarticle__gallery figcaption { font-size: 11.5px; color: var(--muted); margin-block-start: 4px; }
+.newsarticle__body { white-space: pre-wrap; line-height: 1.6; }
+.newsarticle__admin { display: flex; gap: 8px; margin-block-start: 18px; padding-block-start: 14px; border-block-start: 1px solid var(--line); }
+
+.newscomments { margin-block-start: 26px; }
+.newscomments__compose { display: flex; gap: 8px; align-items: flex-start; margin-block-end: 14px; }
+.newscomments__compose .input { flex: 1; }
+.newscomments__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.newscomments__list li { padding-block-end: 10px; border-block-end: 1px solid var(--line); }
+.newscomments__list p { margin: 4px 0 0; white-space: pre-wrap; }
+.newscomments__head { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
+
+/* ---- composer ---- */
+.composer { display: flex; flex-direction: column; gap: 12px; }
+.composer__row { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; align-items: end; }
+.composer__hint { margin: -6px 0 0; font-size: 11.5px; }
+.composer__gallery { display: flex; gap: 8px; flex-wrap: wrap; }
+.composer__gallery img { inline-size: 92px; block-size: 68px; object-fit: cover; border-radius: 6px; }
+.composer__actions { display: flex; gap: 8px; justify-content: flex-end; }
+.field--check { flex-direction: row; align-items: center; gap: 7px; }
+
+@media (max-width: 700px) {
+  /* The picture stops earning its column long before it stops fitting. */
+  .newsslide { grid-template-columns: 1fr; }
+  .newsrow__thumb { inline-size: 84px; block-size: 60px; }
+}

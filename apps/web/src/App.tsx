@@ -23,6 +23,8 @@ import { Composer } from './pages/Composer';
 import { Sync } from './pages/Sync';
 import { NotFound } from './pages/NotFound';
 import { WoroodMark } from './components/Icon';
+import { ModuleRoute } from './components/ModuleRoute';
+import { News, NewsItem } from './pages/News';
 
 function Booting() {
   return (
@@ -60,15 +62,28 @@ export function App() {
         {/* The administration console. The links are permission-gated in the
             descriptor; the routes are open to anyone who guesses the URL, and
             the API refuses them -- which is the boundary that matters. */}
-        <Route path="/tasks" element={<Tasks />} />
-        <Route path="/tasks/queue" element={<TaskQueue />} />
-        <Route path="/tasks/all" element={<AllTasks />} />
-        {/* Ahead of /tasks/:id — the router matches in order, and "board"
-            would otherwise be read as a ticket id. */}
-        <Route path="/tasks/board" element={<TicketBoardPage />} />
-        <Route path="/tasks/backlog" element={<TicketBacklog />} />
-        <Route path="/tasks/department" element={<TicketDashboard />} />
-        <Route path="/tasks/:id" element={<TaskDetailPage />} />
+        {/* Tasks is wrapped rather than removed. The module can be switched
+            off for a deployment, and when it is the API stops mounting its
+            endpoints -- so these pages would render and then fail on their
+            first request. ModuleRoute sends that visitor home instead, which is
+            what a stale bookmark deserves. The pages themselves are untouched
+            and come back with the module. */}
+        {/* Reading the news is for everyone; the composer appears inside the
+            page for whoever may use it. */}
+        <Route path="/news" element={<News />} />
+        <Route path="/news/:id" element={<NewsItem />} />
+
+        <Route element={<ModuleRoute module="tasks" />}>
+          <Route path="/tasks" element={<Tasks />} />
+          <Route path="/tasks/queue" element={<TaskQueue />} />
+          <Route path="/tasks/all" element={<AllTasks />} />
+          {/* Ahead of /tasks/:id — the router matches in order, and "board"
+              would otherwise be read as a ticket id. */}
+          <Route path="/tasks/board" element={<TicketBoardPage />} />
+          <Route path="/tasks/backlog" element={<TicketBacklog />} />
+          <Route path="/tasks/department" element={<TicketDashboard />} />
+          <Route path="/tasks/:id" element={<TaskDetailPage />} />
+        </Route>
 
         <Route path="/admin/people" element={<People />} />
         <Route path="/admin/departments" element={<Departments />} />
