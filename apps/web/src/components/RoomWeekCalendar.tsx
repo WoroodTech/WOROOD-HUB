@@ -235,7 +235,7 @@ export function RoomWeekCalendar({
       <header className="weekcal__head">
         <button type="button" className="btn btn--sm weekcal__step" aria-label="Previous week"
                 onClick={() => setStart((s) => shiftDay(s, -DAYS))}>
-          <Icon name="chevron-left" /> <span>Prev</span>
+          <Icon name="left" /> <span>Prev</span>
         </button>
         <div className="weekcal__title">
           <strong>{formatRange(start, shiftDay(start, DAYS - 1))}</strong>
@@ -247,7 +247,7 @@ export function RoomWeekCalendar({
         </div>
         <button type="button" className="btn btn--sm weekcal__step" aria-label="Next week"
                 onClick={() => setStart((s) => shiftDay(s, DAYS))}>
-          <span>Next</span> <Icon name="chevron-right" />
+          <span>Next</span> <Icon name="right" />
         </button>
       </header>
 

@@ -2972,3 +2972,151 @@ button, input, select, textarea { font: inherit; color: inherit; }
   .newsslide { grid-template-columns: 1fr; }
   .newsrow__thumb { inline-size: 84px; block-size: 60px; }
 }
+
+/* -------------------------------------------------------------- finance -- */
+/* The request form. `formrow` (two columns) and `field` come from the portal's
+   own form styles; these are the few pieces that did not already exist. */
+.stackform { display: flex; flex-direction: column; gap: 14px; }
+.field__hint { font-size: 11.5px; color: var(--muted); margin: -8px 0 0; }
+.field--check { flex-direction: row; align-items: center; gap: 8px; }
+.field--check span { font-size: 13px; }
+.input--sm { padding-block: 5px; font-size: 12.5px; }
+
+/* A note and its button side by side, the button not stretched to the height
+   of the box. */
+.noterow { display: flex; gap: 8px; align-items: flex-start; }
+.noterow .input { flex: 1; }
+.noterow .btn { flex: 0 0 auto; }
+
+/* The approval trail. Read top to bottom as a story: who decided what, on what
+   amount, and why. The left rule carries the outcome so a rejection is visible
+   before any of it is read. */
+
+.trail { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.trail__item {
+  padding-inline-start: 12px; border-inline-start: 3px solid var(--line);
+}
+.trail__item--approved { border-inline-start-color: var(--good); }
+.trail__item--rejected { border-inline-start-color: var(--danger, #c0392b); }
+.trail__head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.trail__amount { font-size: 11.5px; display: block; margin-block-start: 2px; }
+.trail__item p { margin: 4px 0 0; white-space: pre-wrap; }
+
+/* Key/value pairs for the request itself. Two columns where there is room, and
+   one where there is not, because a label stacked on its value is still
+   readable while a squeezed column is not. */
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; }
+.kv dt { color: var(--muted); font-size: 12.5px; }
+.kv dd { margin: 0; }
+
+.table .num { text-align: end; font-variant-numeric: tabular-nums; }
+.table__wrap { max-inline-size: 36ch; }
+.tablewrap { overflow-x: auto; }
+
+.idtag--warn { background: var(--warning-soft); color: var(--warning-ink); }
+.idtag--info { background: var(--accent-soft); }
+
+@media (max-width: 620px) {
+  .kv { grid-template-columns: 1fr; gap: 2px; }
+  .kv dd { margin-block-end: 8px; }
+}
+
+/* ------------------------------------------------ finance: changes + fixes */
+
+/* A long description used to push the column beside it off the row. One line,
+   ellipsis, full text in the tooltip. The column is given a share of the table
+   rather than a fixed width so it still uses whatever room there is. */
+.col--desc { inline-size: 42%; max-inline-size: 0; }
+.clip { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Buttons pressed up against a text box get clicked by accident. */
+.decideblock { display: flex; flex-direction: column; gap: 14px; }
+.decideblock__actions { margin-block-start: 2px; }
+
+.changelist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.changelist__item {
+  padding-inline-start: 12px; border-inline-start: 3px solid var(--line);
+}
+.changelist__item--applied { border-inline-start-color: var(--good); }
+.changelist__item--rejected { border-inline-start-color: var(--critical-ink, #c0392b); }
+.changelist__item--manager_pending,
+.changelist__item--finance_pending { border-inline-start-color: var(--warning-ink); }
+.changelist__head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.changelist__item p { margin: 5px 0 0; }
+.changelist__money { font-size: 15px; }
+.changelist__money s { margin-inline-end: 4px; }
+
+.idtag--muted { opacity: .7; }
+
+/* ------------------------------------------------ finance: files, pricing */
+
+.pricingblock {
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 12px; border-radius: 8px; background: var(--accent-soft);
+}
+
+.filelist { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.filelist__item { display: flex; align-items: center; gap: 10px; }
+.filelist__thumb {
+  flex: none; inline-size: 52px; block-size: 40px; border-radius: 6px;
+  overflow: hidden; background: var(--line); display: grid; place-items: center;
+}
+.filelist__thumb img { inline-size: 100%; block-size: 100%; object-fit: cover; }
+.filelist__thumb--doc { font-size: 11px; font-weight: 700; color: var(--muted); }
+.filelist__meta { display: flex; flex-direction: column; gap: 1px; min-inline-size: 0; flex: 1; }
+.filelist__meta a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.filelist__meta span { font-size: 11.5px; }
+.filelist__add { align-self: flex-start; }
+
+/* ------------------------------------------------------ finance: payments */
+
+.paylist { list-style: none; margin: 0 0 14px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.paylist__item { display: flex; align-items: baseline; gap: 10px; }
+.paylist__amount { font-weight: 600; font-variant-numeric: tabular-nums; min-inline-size: 7em; }
+.paylist__meta { color: var(--muted); font-size: 12px; flex: 1; }
+/* A reversal is struck through and dimmed: the row stays on the record, and
+   it should not read as money that went out. */
+.paylist__item.is-reversal .paylist__amount { text-decoration: line-through; opacity: .65; }
+
+/* ----------------------------------------------------- finance: cash flow */
+/* A month of days against seven columns. Dense by nature, so the day column
+   sticks while the figures scroll sideways on a narrow screen. */
+
+.cashflow__month { font-weight: 600; min-inline-size: 11ch; text-align: center; }
+.cashflow__methods { display: flex; gap: 8px; margin-block-end: 14px; flex-wrap: wrap; }
+
+.cashflow__table { font-variant-numeric: tabular-nums; font-size: 12.5px; }
+.cashflow__table th, .cashflow__table td { padding-block: 5px; }
+.cashflow__daycol {
+  position: sticky; inset-inline-start: 0; background: var(--surface);
+  text-align: start; inline-size: 4ch;
+}
+.cashflow__table tr.is-today { background: var(--accent-soft); }
+.cashflow__table tr.is-today .cashflow__daycol { background: var(--accent-soft); }
+.cashflow__table tfoot td, .cashflow__table tfoot th {
+  border-block-start: 2px solid var(--line); font-weight: 600;
+}
+
+.cashflow__diffs { list-style: none; margin: 10px 0 0; padding: 0;
+                   display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; }
+.cashflow__diffs li { display: flex; align-items: baseline; gap: 10px; }
+.cashflow__diffday { inline-size: 3ch; color: var(--muted); }
+.cashflow__agree { display: flex; align-items: center; gap: 6px; }
+
+/* ----------------------------------------------- finance: purchase orders */
+
+.polines { list-style: none; margin: 10px 0; padding: 0;
+           display: flex; flex-direction: column; gap: 6px; }
+.polines li { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
+.polines--edit { gap: 8px; }
+/* What, how many, how much, and a way to drop the row — in that order, so the
+   eye runs left to right the way the line reads aloud. */
+.polines__row { display: grid; grid-template-columns: 1fr 5rem 7rem auto; gap: 8px; align-items: center; }
+.polines__total { margin-inline-start: auto; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 620px) {
+  .polines__row { grid-template-columns: 1fr 1fr; }
+  .polines__row > :first-child { grid-column: 1 / -1; }
+}
+
+.cashflow__viewing { margin-block-end: 12px; }

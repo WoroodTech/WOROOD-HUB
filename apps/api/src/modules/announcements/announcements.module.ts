@@ -26,12 +26,11 @@ export const ANNOUNCEMENTS_MODULE = registerHubModule({
   tablePrefix: 'hr_',
   enabled: true,
   navigation: [
-    /* Reading is for everyone, so no permission gate here. The link is the
-       archive: the home page carries what is current, and this is where last
-       quarter's goes when it comes down. */
+    /* One entry, for everyone. Writing happens inside the page -- whoever may
+       publish gets a button there -- so a second "Manage" link would point at
+       the same screen. It also pointed at /news/manage, which the router reads
+       as /news/:id and the API then rejects as a malformed id. */
     { label: 'Company News', labelAr: 'أخبار الشركة', path: '/news', icon: 'bell' },
-    { label: 'Manage News', labelAr: 'إدارة الأخبار', path: '/news/manage', icon: 'edit',
-      requiresAnyPermission: ['announcements.manage'] },
   ],
   portlets: [
     /* Wide and first. A noticeboard below the fold is a noticeboard nobody

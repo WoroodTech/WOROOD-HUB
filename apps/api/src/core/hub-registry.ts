@@ -10,6 +10,18 @@
 export interface HubNavEntry {
   label: string; labelAr?: string; path: string; icon: string;
   requiresAnyPermission?: string[];
+  /**
+   * Show this entry to anyone who manages a department, as well as to anyone
+   * with one of the permissions above.
+   *
+   * Managing a department is authority that does not come from a permission:
+   * it is a row in core_department_managers, and a manager who approves his
+   * team's spending holds no finance permission at all. An approvals queue
+   * gated purely on permissions would therefore be hidden from most of the
+   * people who have something in it, and shown to every employee if left
+   * ungated -- which is what happened.
+   */
+  requiresDepartmentManager?: boolean;
 }
 
 export interface HubPortletEntry {
@@ -46,13 +58,26 @@ export function allModules(): HubModuleDescriptor[] { return registry; }
 const visible = (required: string[] | undefined, perms: string[]) =>
   !required || required.length === 0 || required.some((k) => perms.includes(k));
 
+/** An entry is shown when its permissions match, or when it is open to
+ *  department managers and this person manages one. Ungated entries are shown
+ *  to everybody, as before. */
+const navVisible = (
+  n: HubNavEntry, perms: string[], managesDepartment: boolean,
+): boolean => {
+  const gated = (n.requiresAnyPermission?.length ?? 0) > 0 || n.requiresDepartmentManager;
+  if (!gated) return true;
+  if (visible(n.requiresAnyPermission, perms)
+      && (n.requiresAnyPermission?.length ?? 0) > 0) return true;
+  return !!n.requiresDepartmentManager && managesDepartment;
+};
+
 /** Everything the portal shell needs, already filtered for this employee. */
-export function resolveForPrincipal(permissions: string[]) {
+export function resolveForPrincipal(permissions: string[], managesDepartment = false) {
   const modules = registry.map((m) => ({
     key: m.key, name: m.name, nameAr: m.nameAr, version: m.version,
     enabled: m.enabled, comingSoon: m.comingSoon ?? false,
     navigation: m.enabled
-      ? m.navigation.filter((n) => visible(n.requiresAnyPermission, permissions))
+      ? m.navigation.filter((n) => navVisible(n, permissions, managesDepartment))
           .map(({ requiresAnyPermission, ...rest }) => rest)
       : [],
     portlets: m.enabled

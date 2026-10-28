@@ -50,7 +50,7 @@ export function News() {
         </div>
         {canManage ? (
           <button type="button" className="btn btn--primary" onClick={() => setComposing(true)}>
-            <Icon name="edit" size={14} /> Write an announcement
+            <Icon name="sparkles" size={14} /> Write an announcement
           </button>
         ) : null}
       </header>
@@ -97,7 +97,7 @@ function NewsRow({ item }: { item: Announcement }) {
         {body ? <p className="newsrow__body">{body}</p> : null}
         {item.commentCount ? (
           <span className="muted newsrow__replies">
-            <Icon name="chat" size={12} /> {item.commentCount}
+            <Icon name="info" size={12} /> {item.commentCount}
           </span>
         ) : null}
       </div>
@@ -121,7 +121,7 @@ export function NewsItem() {
 
   const comment = useMutation({
     mutationFn: (body: string) =>
-      api(`/news/${id}/comments`, { method: 'POST', body: JSON.stringify({ body }) }),
+      api(`/news/${id}/comments`, { method: 'POST', body: { body } }),
     onSuccess: () => {
       setReply('');
       void qc.invalidateQueries({ queryKey: qk.newsItem(id) });
@@ -161,7 +161,7 @@ export function NewsItem() {
 
   return (
     <div className="page page--narrow">
-      <Link to="/news" className="backlink"><Icon name="chevron-left" size={13} /> All news</Link>
+      <Link to="/news" className="backlink"><Icon name="left" size={13} /> All news</Link>
 
       <article className="newsarticle">
         <header>
@@ -272,11 +272,11 @@ function Composer({ onDone }: { onDone: () => void }) {
   const create = useMutation({
     mutationFn: () => api<Announcement>('/news', {
       method: 'POST',
-      body: JSON.stringify({
+      body: {
         title: title || undefined, titleAr: titleAr || undefined,
         body: body || undefined, bodyAr: bodyAr || undefined,
         days, pinned, commentsEnabled,
-      }),
+      },
     }),
     onSuccess: (a) => setDraft(a),
   });
@@ -304,7 +304,7 @@ function Composer({ onDone }: { onDone: () => void }) {
       for (const file of Array.from(files)) {
         const ticket = await api<AnnouncementUploadTicket>(`/news/${draft.id}/images`, {
           method: 'POST',
-          body: JSON.stringify({ name: file.name, type: file.type, size: file.size }),
+          body: { name: file.name, type: file.type, size: file.size },
         });
         const put = await fetch(ticket.uploadUrl, {
           method: 'PUT', headers: ticket.headers, body: file,

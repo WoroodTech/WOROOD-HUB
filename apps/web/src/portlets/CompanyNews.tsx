@@ -106,7 +106,7 @@ export function CompanyNews({ title }: { title: string }) {
           <div className="newsbanner__nav">
             <button type="button" className="iconbtn iconbtn--ghost" aria-label="Previous"
                     onClick={() => setAt((i) => (i - 1 + items.length) % items.length)}>
-              <Icon name="chevron-left" size={14} />
+              <Icon name="left" size={14} />
             </button>
             <div className="newsbanner__dots" role="tablist" aria-label="Choose an announcement">
               {items.map((it, i) => (
@@ -123,7 +123,7 @@ export function CompanyNews({ title }: { title: string }) {
             </div>
             <button type="button" className="iconbtn iconbtn--ghost" aria-label="Next"
                     onClick={() => setAt((i) => (i + 1) % items.length)}>
-              <Icon name="chevron-right" size={14} />
+              <Icon name="right" size={14} />
             </button>
           </div>
         ) : null}

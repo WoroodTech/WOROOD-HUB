@@ -102,6 +102,31 @@ export const config = {
     enabled: process.env.TASKS_MODULE_ENABLED !== 'false',
   },
 
+  /**
+   * Zoho Books.
+   *
+   * `mode` is the safety catch and matches the legacy app's: `off` posts
+   * nothing, `dry` builds the exact body and logs it without sending, `live`
+   * sends. It starts at `off`, so a server that has not been deliberately
+   * pointed at an organisation cannot write to anybody's accounts.
+   *
+   * `organizationId` decides whose books are written to, which is why it has
+   * no default: a server that has not been told must post nowhere rather than
+   * somewhere plausible.
+   */
+  zoho: {
+    mode: process.env.ZOHO_MODE ?? 'off',
+    dc: process.env.ZOHO_DC ?? 'com',
+    organizationId: process.env.ZOHO_ORG ?? '',
+    clientId: process.env.ZOHO_CLIENT_ID ?? '',
+    clientSecret: process.env.ZOHO_CLIENT_SECRET ?? '',
+    refreshToken: process.env.ZOHO_REFRESH_TOKEN ?? '',
+    /* No account ids here. They are not configuration: the expense account is
+       chosen per request from the whole expense chart and the custody target
+       is one of about fifteen, so they are cached from Zoho and picked when a
+       payment is recorded. See fin_zoho_accounts. */
+  },
+
   mail: {
     enabled: process.env.MAIL_ENABLED === 'true',
     region: process.env.AWS_REGION || 'eu-west-1',
