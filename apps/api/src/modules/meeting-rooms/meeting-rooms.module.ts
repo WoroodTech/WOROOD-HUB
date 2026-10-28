@@ -185,7 +185,7 @@ export class MeetingRoomsController {
 
   @Get('rooms/:id/calendar')
   roomCalendar(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Query() q: RoomCalendarQuery) {
-  return this.reservations.calendar(p, id, q.date);
+  return this.reservations.calendar(p, id, q.date, q.days ?? 1);
 }
 
   @Get('rooms/:id')

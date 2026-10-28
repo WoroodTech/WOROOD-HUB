@@ -213,7 +213,12 @@ export type RoomCalendarBlock =
   | { type: 'BLACKOUT'; startsAt: string; endsAt: string; reason: string | null }
   | { type: 'BUFFER'; startsAt: string; endsAt: string };
 
-/** A room's timeline for one day, in the room's own timezone. */
+/** One day of a room's timeline, in the room's own timezone. */
+export interface RoomCalendarDay {
+  date: string;
+  blocks: RoomCalendarBlock[];
+}
+
 export interface RoomCalendarResponse {
   room: {
     id: string;
@@ -223,8 +228,16 @@ export interface RoomCalendarResponse {
     closesAt: string;
     bufferMinutes: number;
   };
+  /** The first day of the range, as asked for. */
   date: string;
-  blocks: RoomCalendarBlock[];
+  /**
+   * The range itself, one entry per day, in order.
+   *
+   * Always present and never empty: a single-day request is a range of one, so
+   * callers read `days` whether they asked for a day or a week rather than
+   * branching on which shape came back.
+   */
+  days: RoomCalendarDay[];
 }
 
 export interface Reservation {
@@ -694,4 +707,362 @@ export interface TicketDashboardResponse {
     active: number; inProgress: number; blocked: number;
     forReview: number; implementation: number; done: number; delayed: number;
   }>;
+}
+
+/* ------------------------------------------------------------ company news */
+
+export interface AnnouncementImage {
+  id: string;
+  /** Short-lived signed URLs; refetch the announcement rather than caching them. */
+  url: string;
+  thumbUrl: string | null;
+  width: number | null;
+  height: number | null;
+  caption: string | null;
+  captionAr: string | null;
+}
+
+export interface AnnouncementComment {
+  id: string;
+  body: string;
+  createdAt: string;
+  author: { id: string; fullName: string };
+  /** Decided by the server: your own, or anyone's if you look after the board. */
+  canRemove: boolean;
+}
+
+export interface Announcement {
+  id: string;
+  /** Either language may be absent — a notice can be written in one only. */
+  title: string | null;
+  titleAr: string | null;
+  body: string | null;
+  bodyAr: string | null;
+  status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+  publishAt: string;
+  /** Null means it stays up until somebody takes it down. */
+  expiresAt: string | null;
+  pinned: boolean;
+  commentsEnabled: boolean;
+  commentCount: number;
+  author: { id: string; fullName: string };
+  createdAt: string;
+  canManage: boolean;
+  images: AnnouncementImage[];
+}
+
+export interface AnnouncementDetail extends Announcement {
+  comments: AnnouncementComment[];
+}
+
+export interface AnnouncementsResponse {
+  announcements: Announcement[];
+  total: number;
+}
+
+export interface AnnouncementUploadTicket {
+  imageId: string;
+  uploadUrl: string;
+  headers: Record<string, string>;
+}
+
+/* ---------------------------------------------------------------- finance */
+
+/** What a request is called, from its approval state and its payment state. */
+export type RequestLabel =
+  | 'Draft' | 'Open' | 'In Progress' | 'Partial Pay' | 'Complete' | 'Rejected';
+
+export type ApprovalState =
+  | 'DRAFT' | 'MANAGER_PENDING' | 'PURCHASES_PENDING' | 'FINANCE_PENDING'
+  | 'APPROVED' | 'REJECTED';
+
+export type PaymentState = 'UNPAID' | 'PARTIAL' | 'PAID';
+
+export interface FinanceDepartment {
+  id: string;
+  pageKey: string;
+  code: string;
+  name: string;
+  nameAr: string | null;
+  /** finance — straight to Finance · choice — the requester picks · purchases — via Purchases */
+  route: 'finance' | 'choice' | 'purchases';
+  /** A lite department never sees amounts, vendors or transfer details. */
+  lite: boolean;
+  requestTypes: string[];
+  placeholder: string | null;
+  placeholderAr: string | null;
+}
+
+export interface FinanceApproval {
+  step: 'MANAGER' | 'PURCHASES' | 'FINANCE';
+  decision: 'APPROVED' | 'REJECTED';
+  reason: string | null;
+  decidedBy: string;
+  /** What the amount was when this decision was taken. */
+  amountAtDecision: number | null;
+  at: string;
+}
+
+export interface FinanceNote {
+  id: string;
+  body: string;
+  /** Finance and Purchases only; the requester never receives these. */
+  internal: boolean;
+  author: string;
+  at: string;
+}
+
+export interface FinanceRequest {
+  id: string;
+  reference: string;
+  departmentId: string;
+  departmentName: string | null;
+  departmentNameAr: string | null;
+  requester: { id: string; fullName: string | null };
+  type: string | null;
+  description: string;
+  moreDetails: string | null;
+  dueDate: string;
+  /** Null while a Purchases-routed request has not been priced yet. */
+  requestedAmount: number | null;
+  paymentMethod: string | null;
+  paymentDetails: string | null;
+  route: 'finance' | 'purchases';
+  approvalState: ApprovalState;
+  paymentState: PaymentState;
+  label: RequestLabel;
+  labelAr: string;
+  /** Which step it is waiting on, or null once decided. */
+  waitingOn: 'MANAGER' | 'PURCHASES' | 'FINANCE' | null;
+  rejectionReason: string | null;
+  vendorName: string | null;
+  createdAt: string;
+  /** Purchases has not priced this yet, and must before approving. */
+  needsPricing?: boolean;
+  pricedAt?: string | null;
+  bankName?: string | null;
+  accountNumber?: string | null;
+  beneficiaryName?: string | null;
+  /**
+   * Fields removed because this reader may not see them — not blank, absent.
+   * A lite department (Office, Workshop, Warehouse) never sees money anywhere.
+   */
+  hidden?: string[];
+  /* Decided by the server, not by hiding buttons. */
+  canDecide: boolean;
+  canEdit: boolean;
+  canDelete: boolean;
+}
+
+export interface FinanceRequestDetail extends FinanceRequest {
+  approvals: FinanceApproval[];
+  notes: FinanceNote[];
+}
+
+export interface FinanceRequestsResponse {
+  requests: FinanceRequest[];
+  total: number;
+}
+
+export interface FinanceFormFields {
+  type: boolean;
+  amount: boolean;
+  payment: boolean;
+  moreDetails: boolean;
+  moreDetailsRequired: boolean;
+}
+
+/**
+ * Everything the new-request form needs.
+ *
+ * `department` is the requester's own and the only one they can raise for;
+ * null means they are not in a department that raises requests. `fields` comes
+ * in both shapes because a `choice` department switches between them as the
+ * requester picks who should buy it.
+ */
+export interface FinanceFormConfig {
+  department: FinanceDepartment | null;
+  banks: { name: string; nameAr: string | null }[];
+  fields: { finance: FinanceFormFields; purchases: FinanceFormFields } | null;
+}
+
+export interface FinanceEdit {
+  id: string;
+  requestId: string;
+  reference: string | null;
+  requestedBy: { id: string; fullName: string | null };
+  /** Null when the change is to the words rather than the money. */
+  newAmount: number | null;
+  amountBefore: number | null;
+  newDescription: string | null;
+  newMoreDetails: string | null;
+  newDueDate: string | null;
+  newPaymentMethod: string | null;
+  newAccountNumber: string | null;
+  newBankName: string | null;
+  newBeneficiaryName: string | null;
+  reason: string;
+  status: 'MANAGER_PENDING' | 'FINANCE_PENDING' | 'APPLIED' | 'REJECTED' | 'WITHDRAWN';
+  waitingOn: 'MANAGER' | 'FINANCE' | null;
+  decisionReason: string | null;
+  createdAt: string;
+  appliedAt: string | null;
+  canDecide: boolean;
+  canWithdraw: boolean;
+}
+
+/** Everything waiting on one person: new requests, and changes to approved ones. */
+export interface FinanceApprovalsResponse {
+  requests: FinanceRequest[];
+  total: number;
+  edits: FinanceEdit[];
+}
+
+export interface FinanceFile {
+  id: string;
+  kind: 'ATTACHMENT' | 'RECEIPT';
+  name: string | null;
+  contentType: string | null;
+  bytes: number | null;
+  width: number | null;
+  height: number | null;
+  /** Short-lived and issued after a server-side check; do not cache. */
+  url: string;
+  thumbUrl: string | null;
+  uploadedAt: string;
+  canRemove: boolean;
+}
+
+export interface FinanceFileUploadTicket {
+  fileId: string;
+  uploadUrl: string;
+  headers: Record<string, string>;
+}
+
+/** What Purchases supplies when it approves a request routed to it. */
+export interface PurchasePricing {
+  type: string;
+  requestedAmount: number;
+  vendorName?: string;
+  paymentMethod: string;
+  accountNumber: string;
+  bankName?: string;
+  beneficiaryName?: string;
+}
+
+export interface FinancePayment {
+  id: string;
+  requestId: string;
+  /** Negative when this row reverses an earlier payment. */
+  amount: number;
+  paidAt: string;
+  reference: string | null;
+  note: string | null;
+  recordedBy: string | null;
+  isReversal: boolean;
+  canReverse: boolean;
+}
+
+export interface FinancePayments {
+  payments: FinancePayment[];
+  /** Null when this reader may not see money at all. */
+  paid: number | null;
+  remaining: number | null;
+  hidden: boolean;
+}
+
+/** An approved request with money still owing. */
+export interface FinanceOutstanding {
+  id: string;
+  reference: string;
+  description: string;
+  departmentName: string | null;
+  type: string | null;
+  vendorName: string | null;
+  paymentMethod: string | null;
+  paymentDetails: string | null;
+  dueDate: string;
+  requestedAmount: number | null;
+  paid: number;
+  remaining: number | null;
+}
+
+export interface CashFlowColumn {
+  key: string;
+  label: string;
+  labelAr: string;
+}
+
+export interface CashFlowDay {
+  day: string;
+  /** One figure per column key, plus their sum. */
+  columns: Record<string, number>;
+  total: number;
+}
+
+export interface CashFlowResponse {
+  month: string;
+  /** `legacy` reproduces the spreadsheet; `accurate` uses real payment dates. */
+  method: 'legacy' | 'accurate';
+  columns: CashFlowColumn[];
+  days: CashFlowDay[];
+}
+
+export interface CashFlowDifference {
+  day: string;
+  legacy: number;
+  accurate: number;
+  /** How much more the spreadsheet asks for than is really needed. */
+  overstatedBy: number;
+}
+
+export interface CashFlowComparison {
+  month: string;
+  legacyTotal: number;
+  accurateTotal: number;
+  daysThatDiffer: number;
+  differences: CashFlowDifference[];
+}
+
+export interface ZohoAccountOption {
+  id: string;
+  name: string;
+  parentName: string | null;
+  type: string | null;
+}
+
+/** The accounts a payment may move money between, grouped by purpose. */
+export interface ZohoAccountLists {
+  payFrom: ZohoAccountOption[];
+  custody: ZohoAccountOption[];
+  expense: ZohoAccountOption[];
+  syncedAt: string | null;
+}
+
+export interface PurchaseOrderLine {
+  name: string;
+  quantity: number;
+  rate: number;
+}
+
+export interface PurchaseOrder {
+  id: string;
+  requestId: string;
+  vendorId: string | null;
+  vendorName: string;
+  /** Continues the supplier's own numbering; computed from their bills. */
+  reference: string | null;
+  lines: PurchaseOrderLine[];
+  total: number | null;
+  status: 'PENDING' | 'DRAFTED' | 'FAILED';
+  zohoPoId: string | null;
+  zohoPoNumber: string | null;
+  error: string | null;
+  createdAt: string | null;
+}
+
+export interface ZohoVendor {
+  id: string;
+  name: string;
+  companyName: string | null;
 }

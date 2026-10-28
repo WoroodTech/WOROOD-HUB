@@ -23,6 +23,7 @@ import { Badge, Card, DataAge, ProvisionalTag } from '../components/Card';
 import { EmptyState, ErrorState, LoadingState, PlaceholderState } from '../components/States';
 import { Icon } from '../components/Icon';
 import { Delta } from '../components/Delta';
+import { CompanyNews } from './CompanyNews';
 import {
   formatDate, formatDuration, formatInteger, formatMoney, formatMoneyShort,
   formatPercent, formatTime, formatWeekday,
@@ -31,6 +32,9 @@ import {
 /* ------------------------------------------------------------- plumbing -- */
 
 const PORTLET_ROUTES: Record<string, (key: string) => string> = {
+  /* Company news fetches its own list rather than going through the generic
+     portlet route: the banner wants the announcements themselves, with their
+     pictures and signed URLs, not a portlet-shaped summary of them. */
   'meeting-rooms': (key) => `/meeting-rooms/portlets/${key}`,
   'sales-dashboard': (key) => `/sales/portlets/${key}`,
   'tasks': (key) => `/tasks/portlets/${key}`,
@@ -528,6 +532,7 @@ export const PORTLET_REGISTRY: Record<string, ComponentType<PortletProps>> = {
   'my-requests': MyRequests,
   'quick-actions': QuickActions,
   'coming-soon': ComingSoon,
+  'company-news': CompanyNews,
 };
 
 export function UnknownPortlet({ title, portletKey }: PortletProps) {

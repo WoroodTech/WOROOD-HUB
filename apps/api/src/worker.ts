@@ -20,6 +20,7 @@ import { config } from './common/config';
 import { WebhookWorker } from './modules/sales-dashboard/webhooks/webhook-worker';
 import { closeDb } from './common/db';
 import { declareWorkerProcess } from './common/process-role';
+import { ZohoWorker } from './modules/finance/zoho/zoho-worker';
 
 async function main() {
   /* Before the application context is created: the schedulers decide whether to
@@ -46,6 +47,12 @@ async function main() {
 
   const worker = app.get(WebhookWorker);
   worker.start();
+
+  /* The Zoho queue drains here too, beside the webhooks. It decides for itself
+     whether to run: with ZOHO_MODE unset or "off" it logs and stays idle,
+     which is the right state for any server not pointed at the real
+     organisation. */
+  await app.get(ZohoWorker).start();
 
   log.log(`worker ${config.webhookWorker.id} ready`);
 

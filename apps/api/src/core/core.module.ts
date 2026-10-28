@@ -19,6 +19,7 @@ import {
 } from './notifications.controller';
 import { CurrentUser, Principal, Public, loadPrincipal } from '../common/auth';
 import { resolveForPrincipal } from './hub-registry';
+import { ObjectStoreService } from './object-store.service';
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 
@@ -205,7 +206,11 @@ export class HubController {
   /** The portal shell renders whatever this returns. No hard-coded menu. */
   @Get('modules')
   modules(@CurrentUser() principal: Principal) {
-    return resolveForPrincipal(principal.permissions);
+    /* Department managers are told apart from ordinary employees here, so an
+       entry like the approvals queue can be shown to the people who actually
+       have something in it. */
+    return resolveForPrincipal(
+      principal.permissions, (principal.managedDepartmentIds ?? []).length > 0);
   }
 
   @Get('notifications')
@@ -260,7 +265,7 @@ export class HealthController {
     signOptions: { expiresIn: config.jwt.accessTtlSeconds },
   })],
   controllers: [NotificationsController, AuthController, HubController, UsersController, HealthController],
-  providers: [MailService, NotificationReadService, NotificationMailer, AuthService, AuditService, NotificationsService],
-  exports: [MailService, NotificationMailer, JwtModule, AuditService, NotificationsService],
+  providers: [MailService, NotificationReadService, NotificationMailer, AuthService, AuditService, NotificationsService, ObjectStoreService],
+  exports: [MailService, NotificationMailer, JwtModule, AuditService, NotificationsService, ObjectStoreService],
 })
 export class CoreModule {}

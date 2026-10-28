@@ -174,11 +174,63 @@ export class ReservationsService {
     return this.view(row, p);
   }
 
+ /**
+  * One room's timeline over one or more consecutive days.
+  *
+  * The per-day work is unchanged and still done a day at a time: buffers either
+  * side of a booking, blackouts, and the trimming of anything that overruns
+  * midnight are all expressed against a single day's window, and rewriting that
+  * to span a range would risk the edges for no benefit the caller can see. A
+  * week is seven of those, run together.
+  *
+  * Seven indexed queries against one room is cheap, and a single response is
+  * what the week view needs: seven requests finishing in a random order makes a
+  * calendar that looks broken while it assembles itself.
+  */
  async calendar(
   p: Principal,
   roomId: string,
   date: string,
-): Promise<{
+  days = 1,
+ ): Promise<{
+  room: {
+    id: string;
+    name: string;
+    nameAr: string | null;
+    opensAt: string;
+    closesAt: string;
+    bufferMinutes: number;
+  };
+  date: string;
+  days: Array<{ date: string; blocks: any[] }>;
+ }> {
+  const room = await this.rooms.get(roomId);
+  const zone = room.location.timezone;
+  const first = DateTime.fromISO(date, { zone });
+  if (!first.isValid) {
+    throw new BadRequestException(`${date} is not a real date`);
+  }
+
+  /* Each day is named in the room's own zone and then asked for by name, so a
+     daylight-saving change inside the range shortens or lengthens that one day
+     rather than sliding every day after it by an hour. */
+  const wanted = Array.from({ length: Math.max(1, days) }, (_, i) =>
+    first.plus({ days: i }).toISODate() as string);
+
+  const results = await Promise.all(wanted.map((d) => this.calendarDay(p, roomId, d)));
+
+  return {
+    room: results[0].room,
+    date,
+    days: results.map((r) => ({ date: r.date, blocks: r.blocks })),
+  };
+ }
+
+ private async calendarDay(
+  p: Principal,
+  roomId: string,
+  date: string,
+ ): Promise<{
   room: {
     id: string;
     name: string;

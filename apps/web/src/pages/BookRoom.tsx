@@ -36,7 +36,7 @@ import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import { Icon } from '../components/Icon';
 import { AttendeePicker } from '../components/AttendeePicker';
 import { CAIRO, formatTime, formatWeekday } from '../lib/format';
-import { RoomCalendar } from '../components/RoomCalendar';
+import { RoomWeekCalendar, type SlotSelection } from '../components/RoomWeekCalendar';
 
 /** Mirrors BOOKING_LIMITS on the API. The floor rules out a mis-typed booking
  *  of a minute or two; the ceiling stops a room being held for a whole day.
@@ -168,6 +168,33 @@ export function BookRoom() {
   const useSuggestion = (iso: string) => {
     setStartTime(timeOf(iso));
     setDate(new Intl.DateTimeFormat('en-CA', { timeZone: CAIRO }).format(new Date(iso)));
+  };
+
+  /** A range dragged out on a room's calendar, brought back into the form.
+   *
+   *  It fills the fields rather than booking anything. The availability check
+   *  re-runs against it exactly as if it had been typed, so what the calendar
+   *  showed a moment ago is confirmed against the server before anyone commits
+   *  to it -- and the times stay editable, because the right meeting often
+   *  starts a quarter of an hour either side of the gap that was free. */
+  const useSlot = (room: MeetingRoom, slot: SlotSelection) => {
+    /* Straight into the booking dialogue, with the attendees and description it
+       always asks for. Dragging out a free hour and then having to find the
+       Book button is two steps for one intention, and the second step is the
+       one people forget -- they walk away believing the room is theirs.
+    
+       The form above is kept in step as well, so cancelling the dialogue leaves
+       the page describing what was just asked for rather than whatever was
+       there before.
+    
+       The times come from the calendar as instants it computed itself. Nothing
+       re-derives them here, and the server checks the range when the booking is
+       submitted: the grid can only ever be as fresh as its last fetch, so it
+       proposes and the server decides. */
+    setDate(slot.date);
+    setStartTime(slot.startTime);
+    setDuration(slot.durationMinutes);
+    setChosen({ room, startsAt: slot.startsAt, endsAt: slot.endsAt });
   };
 
   const data = availability.data;
@@ -312,6 +339,7 @@ export function BookRoom() {
           entry={requested} date={date} window={{ startsAt: data.startsAt, endsAt: data.endsAt }}
           onBook={() => setChosen({ room: requested.room, startsAt: data.startsAt, endsAt: data.endsAt })}
           onUseSuggestion={useSuggestion}
+          onPickSlot={(slot) => useSlot(requested.room, slot)}
         />
       ) : null}
 
@@ -325,6 +353,7 @@ export function BookRoom() {
               <FreeRoomRow
                 key={entry.room.id} entry={entry} date={date}
                 onBook={() => setChosen({ room: entry.room, startsAt: data.startsAt, endsAt: data.endsAt })}
+                onPickSlot={(slot) => useSlot(entry.room, slot)}
               />
             ))}
           </ul>
@@ -406,12 +435,14 @@ export function BookRoom() {
  * The named room's answer. Yes is a button; no is a reason plus, when the room
  * has one later the same day, its own next opening.
  */
-function RequestedAnswer({ entry, date, window, onBook, onUseSuggestion }: {
+function RequestedAnswer({ entry, date, window, onBook, onUseSuggestion, onPickSlot }: {
   entry: RoomAvailability;
   date: string;
   window: { startsAt: string; endsAt: string };
   onBook: () => void;
   onUseSuggestion: (iso: string) => void;
+  /** Dragging out a free range on the calendar fills the form above. */
+  onPickSlot?: (slot: SlotSelection) => void;
 }) {
   const { room } = entry;
   const [showCalendar, setShowCalendar] = useState(false);
@@ -482,17 +513,19 @@ function RequestedAnswer({ entry, date, window, onBook, onUseSuggestion }: {
         </div>
       )}
 
-      {showCalendar ? <RoomCalendar room={room} date={date} /> : null}
+      {showCalendar ? <RoomWeekCalendar room={room} date={date} onPickSlot={onPickSlot} /> : null}
     </Card>
   );
 }
 
 /* ----------------------------------------------------------- alternatives -- */
 
-function FreeRoomRow({ entry, date, onBook }: {
+function FreeRoomRow({ entry, date, onBook, onPickSlot }: {
   entry: RoomAvailability;
   date: string;
   onBook: () => void;
+  /** Dragging out a free range on the calendar fills the form above. */
+  onPickSlot?: (slot: SlotSelection) => void;
 }) {
   const { room } = entry;
   const [showCalendar, setShowCalendar] = useState(false);
@@ -528,7 +561,7 @@ function FreeRoomRow({ entry, date, onBook }: {
         </ul>
       ) : null}
 
-      {showCalendar ? <RoomCalendar room={room} date={date} /> : null}
+      {showCalendar ? <RoomWeekCalendar room={room} date={date} onPickSlot={onPickSlot} /> : null}
     </li>
   );
 }
