@@ -282,6 +282,24 @@ export class FinanceController {
     return this.purchaseOrders.draft(p, id, dto);
   }
 
+  /**
+   * Why no email arrived.
+   *
+   * There are five separate reasons a notification can be silent, and from the
+   * outside they all look identical: the flag is off, the address is missing,
+   * SES refuses, the recipient has no permission so was never in the list, or
+   * the link would have pointed at localhost. Guessing between them costs an
+   * afternoon; this says which.
+   *
+   * Sends a real email when `to` is given, so the answer is "it arrived" or
+   * "SES said this", not "it should work".
+   */
+  @Get('mail-check')
+  @Permissions('finance.request.manage')
+  async mailCheck(@CurrentUser() p: Principal, @Query('to') to?: string) {
+    return this.requests.mailCheck(p, to);
+  }
+
   /* ------------------------------------------------------- migration ---- */
   /* Reading an export writes nothing live; promoting is the separate step
      that does. Both need finance.request.manage, and nothing here ever writes

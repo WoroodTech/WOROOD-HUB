@@ -686,6 +686,70 @@ export class FinanceRequestsService {
     }
   }
 
+  /**
+   * Why no email arrived.
+   *
+   * Five things have to line up, and from the outside every failure looks the
+   * same -- nothing in the inbox. This reports each separately, and optionally
+   * sends a real message so the answer is what SES actually said rather than
+   * what ought to happen.
+   */
+  async mailCheck(p: Principal, to?: string) {
+    const holders = await query<{ id: string; full_name: string; email: string }>(
+      `SELECT DISTINCT u.id, u.full_name, u.email FROM core_users u
+         JOIN core_user_roles ur ON ur.user_id = u.id
+         JOIN core_role_permissions rp ON rp.role_id = ur.role_id
+         JOIN core_permissions p2 ON p2.id = rp.permission_id
+        WHERE p2.key = $1 AND u.deleted_at IS NULL AND u.status = 'ACTIVE'`,
+      [MANAGE]);
+
+    const managers = await query<{ department: string; full_name: string; email: string }>(
+      `SELECT d.name AS department, u.full_name, u.email
+         FROM core_department_managers m
+         JOIN core_users u ON u.id = m.user_id
+         JOIN core_departments d ON d.id = m.department_id
+        WHERE u.deleted_at IS NULL AND u.status = 'ACTIVE'
+        ORDER BY d.name`);
+
+    const result: Record<string, unknown> = {
+      mailEnabled: config.mail.enabled,
+      from: config.mail.from || '(not set)',
+      /* The quiet one: an email that arrives with a link to localhost is worse
+         than no email, because it looks like it worked. */
+      portalOrigin: config.portalOrigin,
+      portalOriginLooksReal: !/localhost|127\.0\.0\.1/.test(config.portalOrigin),
+      mailerWired: !!this.mailer,
+      /* Nobody holding the permission means nobody is in the list to email,
+         however well the rest of it works. */
+      financeApprovers: holders.map((h) => ({
+        name: h.full_name, email: h.email, hasAddress: !!h.email,
+      })),
+      departmentManagers: managers.map((m) => ({
+        department: m.department, name: m.full_name,
+        email: m.email, hasAddress: !!m.email,
+      })),
+    };
+
+    if (to) {
+      if (!this.mailer) {
+        result.testSend = { sent: false, error: 'the mailer is not available' };
+      } else {
+        const id = await this.notifications.notify(
+          p.id, 'finance', 'Mail check', 'A test from the Finance module.', 'INFO');
+        try {
+          await this.mailer.deliver(id ?? 'mail-check', to,
+            'WOROOD HUB — mail check',
+            '<p>If you are reading this, Finance emails will reach you.</p>',
+            'If you are reading this, Finance emails will reach you.');
+          result.testSend = { sent: true, to };
+        } catch (e: any) {
+          result.testSend = { sent: false, to, error: e?.message ?? String(e) };
+        }
+      }
+    }
+    return result;
+  }
+
   /* ------------------------------------------------------------ helpers -- */
 
   private async load(id: string) {
@@ -833,11 +897,39 @@ export class FinanceRequestsService {
           }));
         return;
       }
-      /* notifyPermissionHolders takes no link, so the reference is put in the
-         body -- it is what people search for anyway. */
-      await this.notifications.notifyPermissionHolders(
-        step === 'PURCHASES' ? PURCHASES : MANAGE, 'finance', title,
-        `${body}  (${link})`, 'INFO');
+      /*
+       * Finance and Purchases, by permission.
+       *
+       * Not notifyPermissionHolders: it sends and returns nothing, so there is
+       * no notification id to hang an email on, and no link either. That left
+       * the two steps where work actually queues up -- Purchases pricing and
+       * Finance approving -- with a bell and no email, which is the opposite
+       * of the right way round. A bell is seen by somebody already in the
+       * portal; an email reaches somebody who is not.
+       */
+      const holders = await query<{ id: string }>(
+        `SELECT DISTINCT u.id FROM core_users u
+           JOIN core_user_roles ur ON ur.user_id = u.id
+           JOIN core_role_permissions rp ON rp.role_id = ur.role_id
+           JOIN core_permissions p ON p.id = rp.permission_id
+          WHERE p.key = $1 AND u.deleted_at IS NULL AND u.status = 'ACTIVE'`,
+        [step === 'PURCHASES' ? PURCHASES : MANAGE]);
+
+      const mail = awaitingDecisionMail({
+        reference: row.reference, description: row.description,
+        departmentName: row.department_name ?? '',
+        requesterName: row.requester_name ?? row.legacy_requested_by ?? 'a colleague',
+        url: `${config.portalOrigin}${link}`,
+      }, step);
+
+      await Promise.all(holders
+        /* Nobody is told about their own request, at any step. */
+        .filter((u) => u.id !== row.requester_id)
+        .map(async (u) => {
+          const notificationId = await this.notifications
+            .notify(u.id, 'finance', title, body, 'INFO', link).catch(() => null);
+          await this.alsoEmail(u.id, notificationId, mail);
+        }));
     } catch (e: any) {
       this.log.warn(`could not notify for ${row.reference}: ${e?.message ?? e}`);
     }
