@@ -23,6 +23,7 @@ import { ZohoQueueService } from './zoho/zoho-queue.service';
 import { ZohoAccountsService } from './zoho/accounts.service';
 import { CashFlowService } from './cashflow.service';
 import { PurchaseOrdersService } from './zoho/purchase-orders.service';
+import { FinanceImportService } from './migration/import.service';
 import {
   AddNote, CreateRequest, DecideRequest, ListRequests, RequestEdit,
   CashFlowQuery, DraftPurchaseOrder, RecordPayment, RequestFileUpload,
@@ -90,6 +91,7 @@ export class FinanceController {
     private readonly zohoAccounts: ZohoAccountsService,
     private readonly cashflow: CashFlowService,
     private readonly purchaseOrders: PurchaseOrdersService,
+    private readonly imports: FinanceImportService,
   ) {}
 
   /** Everything the new-request form needs: the person's own department, the
@@ -278,6 +280,40 @@ export class FinanceController {
                      @Param('id', ParseUUIDPipe) id: string,
                      @Body() dto: DraftPurchaseOrder) {
     return this.purchaseOrders.draft(p, id, dto);
+  }
+
+  /* ------------------------------------------------------- migration ---- */
+  /* Reading an export writes nothing live; promoting is the separate step
+     that does. Both need finance.request.manage, and nothing here ever writes
+     back to the spreadsheet. */
+
+  @Post('migration/read')
+  @Permissions('finance.request.manage')
+  readImport(@CurrentUser() p: Principal,
+             @Body() dto: { sourceName: string; rows: any[] }) {
+    return this.imports.read(p, dto.sourceName, dto.rows);
+  }
+
+  @Get('migration/:batchId')
+  @Permissions('finance.request.manage')
+  reviewImport(@CurrentUser() p: Principal,
+               @Param('batchId', ParseUUIDPipe) batchId: string) {
+    return this.imports.review(p, batchId);
+  }
+
+  @Post('migration/:batchId/promote')
+  @Permissions('finance.request.manage')
+  promoteImport(@CurrentUser() p: Principal,
+                @Param('batchId', ParseUUIDPipe) batchId: string,
+                @Body() dto: { force?: boolean }) {
+    return this.imports.promote(p, batchId, { force: dto?.force });
+  }
+
+  @Post('migration/:batchId/discard')
+  @Permissions('finance.request.manage')
+  discardImport(@CurrentUser() p: Principal,
+                @Param('batchId', ParseUUIDPipe) batchId: string) {
+    return this.imports.discard(p, batchId);
   }
 
   /* ------------------------------------------------------------ zoho ---- */

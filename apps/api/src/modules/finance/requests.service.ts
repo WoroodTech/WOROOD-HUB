@@ -24,6 +24,9 @@ import { randomUUID } from 'node:crypto';
 import { Principal, can } from '../../common/auth';
 import { one, query, tx } from '../../common/db';
 import { AuditService, NotificationsService } from '../../core/core.module';
+import { NotificationMailer } from '../../core/notifications.controller';
+import { awaitingDecisionMail, refusedMail } from './finance-mail';
+import { config } from '../../common/config';
 import {
   canDecide, canDelete, canEditDirectly, firstState, labelFor, LABEL_AR,
   makeReference, nextState, stepOf, type ApprovalState, type PaymentState,
@@ -48,7 +51,33 @@ export class FinanceRequestsService {
   constructor(
     private readonly notifications: NotificationsService,
     private readonly audit: AuditService,
+    /* Optional: the module works without it, and a server with no mail
+       configured should still run the approval chain. */
+    private readonly mailer?: NotificationMailer,
   ) {}
+
+  /**
+   * Send one email alongside a bell notification.
+   *
+   * Never allowed to fail the thing it is reporting: the decision is already
+   * committed and is the part that mattered. A mail server being down is a log
+   * line, not a lost approval.
+   */
+  private async alsoEmail(
+    userId: string, notificationId: string | null,
+    mail: { subject: string; html: string; text: string },
+  ) {
+    if (!this.mailer || !config.mail.enabled || !notificationId) return;
+    try {
+      const person = await one<any>(
+        `SELECT email FROM core_users WHERE id=$1 AND deleted_at IS NULL`, [userId]);
+      if (!person?.email) return;
+      await this.mailer.deliver(notificationId, person.email,
+        mail.subject, mail.html, mail.text);
+    } catch (e: any) {
+      this.log.warn(`could not email ${userId}: ${e?.message ?? e}`);
+    }
+  }
 
   /* ------------------------------------------------------------ config -- */
 
@@ -470,7 +499,7 @@ export class FinanceRequestsService {
       `SELECT r.*, u.full_name AS requester_name, d.name AS department_name,
               d.name_ar AS department_name_ar, f.lite AS department_is_lite
          FROM fin_requests r
-         JOIN core_users u ON u.id = r.requester_id
+         LEFT JOIN core_users u ON u.id = r.requester_id
          JOIN core_departments d ON d.id = r.department_id
          LEFT JOIN fin_departments f ON f.department_id = r.department_id
         WHERE ${where.join(' AND ')}
@@ -513,7 +542,7 @@ export class FinanceRequestsService {
       `SELECT r.*, u.full_name AS requester_name, d.name AS department_name,
               d.name_ar AS department_name_ar, f.lite AS department_is_lite
          FROM fin_requests r
-         JOIN core_users u ON u.id = r.requester_id
+         LEFT JOIN core_users u ON u.id = r.requester_id
          JOIN core_departments d ON d.id = r.department_id
          LEFT JOIN fin_departments f ON f.department_id = r.department_id
         WHERE r.deleted_at IS NULL
@@ -533,7 +562,7 @@ export class FinanceRequestsService {
       `SELECT r.*, u.full_name AS requester_name, d.name AS department_name,
               d.name_ar AS department_name_ar, f.lite AS department_is_lite
          FROM fin_requests r
-         JOIN core_users u ON u.id = r.requester_id
+         LEFT JOIN core_users u ON u.id = r.requester_id
          JOIN core_departments d ON d.id = r.department_id
          LEFT JOIN fin_departments f ON f.department_id = r.department_id
         WHERE r.id = $1 AND r.deleted_at IS NULL`, [id]);
@@ -722,7 +751,14 @@ export class FinanceRequestsService {
       departmentId: row.department_id,
       departmentName: row.department_name ?? null,
       departmentNameAr: row.department_name_ar ?? null,
-      requester: { id: row.requester_id, fullName: row.requester_name ?? null },
+      requester: {
+        id: row.requester_id,
+        /* A migrated request may have no account behind it -- its author has
+           left -- so the name the spreadsheet recorded stands in. Without this
+           the oldest requests would show no requester at all. */
+        fullName: row.requester_name ?? row.legacy_requested_by ?? null,
+        formerColleague: !row.requester_id && !!row.legacy_requested_by,
+      },
       type: row.type,
       description: row.description,
       moreDetails: row.more_details,
@@ -779,10 +815,22 @@ export class FinanceRequestsService {
 
       if (step === 'MANAGER') {
         const managers = await this.managersOf(row.department_id);
+        const mail = awaitingDecisionMail({
+          reference: row.reference, description: row.description,
+          departmentName: row.department_name ?? '', 
+          requesterName: row.requester_name ?? row.legacy_requested_by ?? 'a colleague',
+          url: `${config.portalOrigin}${link}`,
+        }, 'MANAGER');
+
         await Promise.all(managers
           .filter((id) => id !== row.requester_id)
-          .map((id) => this.notifications.notify(id, 'finance', title, body, 'INFO', link)
-            .catch(() => undefined)));
+          .map(async (id) => {
+            /* A manager is one person and the whole chain stops at them, so
+               this is one of the two things worth an email. */
+            const notificationId = await this.notifications
+              .notify(id, 'finance', title, body, 'INFO', link).catch(() => null);
+            await this.alsoEmail(id, notificationId, mail);
+          }));
         return;
       }
       /* notifyPermissionHolders takes no link, so the reference is put in the
@@ -806,10 +854,14 @@ export class FinanceRequestsService {
    * itself is one click away and shows whatever the reader may see.
    */
   private async tellTheRequester(row: any, decision: string, actor: Principal) {
+    /* Only a refusal is emailed. Approved, part-paid and paid all stay in the
+       bell: an inbox that fills with progress updates is one where the message
+       that needed acting on gets missed. */
     try {
       const approved = decision === 'APPROVED';
       const done = row.approval_state === 'APPROVED';
-      await this.notifications.notify(
+      const link = `/finance/requests/${row.id}`;
+      const notificationId = await this.notifications.notify(
         row.requester_id, 'finance',
         approved
           ? (done ? `${row.reference} is approved` : `${row.reference} moved forward`)
@@ -818,7 +870,20 @@ export class FinanceRequestsService {
           ? (done ? 'It is now waiting to be paid.' : `Approved by ${actor.fullName}.`)
           : (row.rejection_reason ?? ''),
         approved ? 'INFO' : 'WARNING',
-        `/finance/requests/${row.id}`);
+        link);
+
+      /* A refusal ends the request, and the person has to do something about
+         it -- raise a new one, or stop waiting. That earns an email. Moving to
+         the next step does not. */
+      if (!approved && row.requester_id) {
+        await this.alsoEmail(row.requester_id, notificationId, refusedMail({
+          reference: row.reference, description: row.description,
+          departmentName: row.department_name ?? '',
+          requesterName: row.requester_name ?? '',
+          reason: row.rejection_reason ?? undefined,
+          url: `${config.portalOrigin}${link}`,
+        }));
+      }
     } catch (e: any) {
       this.log.warn(`could not notify requester of ${row.reference}: ${e?.message ?? e}`);
     }

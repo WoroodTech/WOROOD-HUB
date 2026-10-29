@@ -818,7 +818,13 @@ export interface FinanceRequest {
   departmentId: string;
   departmentName: string | null;
   departmentNameAr: string | null;
-  requester: { id: string; fullName: string | null };
+  requester: {
+    /** Null for a migrated request whose author has no portal account. */
+    id: string | null;
+    fullName: string | null;
+    /** True when the name came from the spreadsheet rather than an account. */
+    formerColleague?: boolean;
+  };
   type: string | null;
   description: string;
   moreDetails: string | null;
