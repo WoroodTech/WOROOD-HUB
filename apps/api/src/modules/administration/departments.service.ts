@@ -7,21 +7,34 @@
  * `core_department_managers` decides who may hand work out, and until this
  * screen there was no way to edit it except SQL.
  *
- * The rail that matters: **a department must keep at least one active
- * manager.** Without one, tickets raised to it can never be assigned by
- * anybody, and the person who raised it cannot tell — as far as they can see it
- * is simply "with Customer Care". The module hides such a department from the
- * target picker for exactly that reason, which means losing the last manager
- * silently takes a department out of service.
+ * The rail that matters: **a department must keep at least one active manager
+ * — while something depends on having one.**
  *
- * It is enforced here rather than by a constraint because the check needs to
- * know who is acting and what to tell them to do first, which is the same
- * reason the last-administrator rails live in `guards.ts` rather than in SQL.
+ * It was written for tickets: a ticket raised into a department with no
+ * manager can never be assigned, and the person who raised it cannot tell, so
+ * losing the last manager quietly takes a department out of service.
+ *
+ * With tickets switched off that reasoning no longer applies on its own, and
+ * the rail was refusing ordinary administration — emptying a department,
+ * moving somebody out — to prevent a failure that cannot happen. A guard with
+ * no live hazard behind it teaches people to work around guards.
+ *
+ * Finance uses the same table, and its stake is different. A department with
+ * no manager does not break there: a request simply skips the manager step and
+ * goes to Finance, which is exactly what happens for a manager's own request.
+ * It is a weaker approval chain, not a dead end — so it is worth a warning,
+ * not a refusal.
+ *
+ * So the rail now follows the modules: it refuses while a module that would
+ * break is switched on, and otherwise lets the change through. Enforced here
+ * rather than in SQL because the check needs to know who is acting and what to
+ * tell them to do first.
  */
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Principal } from '../../common/auth';
 import { one, query } from '../../common/db';
 import { AuditService } from '../../core/core.module';
+import { config } from '../../common/config';
 
 @Injectable()
 export class AdminDepartmentsService {
@@ -178,6 +191,15 @@ async function queryRaw(sql: string, params: unknown[]): Promise<{ rowCount: num
 export async function assertDepartmentKeepsAManager(
   departmentId: string | null, losing: string[], what: string,
 ): Promise<void> {
+  /*
+   * Only tickets break outright, so only tickets justify a refusal.
+   *
+   * Checked at the moment of the change rather than read once at startup: the
+   * flag can be turned back on, and a rail that silently stayed off would be
+   * worse than one that was never there.
+   */
+  if (!config.tasks.enabled) return;
+
   const orphaned = await query<{ name: string }>(
     `SELECT d.name
        FROM core_departments d
@@ -198,6 +220,7 @@ export async function assertDepartmentKeepsAManager(
   throw new ConflictException(
     `${what} would leave ${names} with no manager. Tickets raised to ` +
     `${orphaned.length === 1 ? 'it' : 'them'} could never be assigned, and nobody ` +
-    `would be told. Add another manager there first.`,
+    `would be told. Add another manager there first, or switch the Tasks module ` +
+    `off if it is no longer used.`,
   );
 }

@@ -74,9 +74,9 @@ function RunsDepartment({ user }: { user: AdminUserDetail }) {
       <h3 className="formsection">Runs a department</h3>
       {!user.departmentId ? (
         <p className="hint">
-          Give them a department above first. Somebody can only run a department they are in —
-          the assign picker offers a department's own members, so a manager from outside would
-          see a queue with nobody to put on it.
+          Give them a department above first. Somebody can only run a department they
+          are in: they approve its spending and see its requests, and neither makes
+          sense from outside it.
         </p>
       ) : (
         <>
@@ -88,10 +88,12 @@ function RunsDepartment({ user }: { user: AdminUserDetail }) {
             <span>
               <strong>Runs {user.department}.</strong>
               <span className="hint">
-                {' '}Tickets raised to {user.department} land in their queue, and they decide who
-                does each one — there and in any department underneath it. This is not a role and
-                gives them nothing anywhere else. More than one person may run a department, which
-                is how cover during leave works.
+                {' '}They approve {user.department}'s finance requests before those reach
+                Finance, and they see every request the department raises. Tickets
+                raised to {user.department} also land in their queue when that module
+                is on. This is not a role and gives them nothing anywhere else. More
+                than one person may run a department, which is how cover during leave
+                works.
               </span>
             </span>
           </label>
