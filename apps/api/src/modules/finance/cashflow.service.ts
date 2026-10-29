@@ -157,13 +157,26 @@ export class CashFlowService {
     /* Shaped in TypeScript rather than SQL: the column definitions carry a
        type filter and an exception, and expressing those as SQL would mean
        generating a CASE per column for no gain. */
+    /*
+     * Every day of the month, whether or not anything is owed on it.
+     *
+     * Built before the rows are read rather than from them: a month with no
+     * spending in it used to come back as an empty list, so the screen showed
+     * nothing at all instead of a quiet month. A forecast of zero is an
+     * answer; a blank page is not one.
+     */
     const days = new Map<string, Record<string, number>>();
+    const first = new Date(`${month}-01T12:00:00Z`);
+    for (let d = new Date(first); d.getUTCMonth() === first.getUTCMonth();
+         d.setUTCDate(d.getUTCDate() + 1)) {
+      days.set(d.toISOString().slice(0, 10),
+        Object.fromEntries(CASH_FLOW_COLUMNS.map((c) => [c.key, 0])));
+    }
+
     for (const r of rows) {
       const day = r.day instanceof Date ? r.day.toISOString().slice(0, 10) : String(r.day);
-      if (!days.has(day)) {
-        days.set(day, Object.fromEntries(CASH_FLOW_COLUMNS.map((c) => [c.key, 0])));
-      }
-      const into = days.get(day)!;
+      const into = days.get(day);
+      if (!into) continue;
       const amount = Number(
         method === 'accurate' ? r.accurate_amount : r.legacy_amount);
 
