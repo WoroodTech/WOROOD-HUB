@@ -25,6 +25,7 @@ import { NotFound } from './pages/NotFound';
 import { WoroodMark } from './components/Icon';
 import { ModuleRoute } from './components/ModuleRoute';
 import { News, NewsItem } from './pages/News';
+import { NewsManage } from './pages/NewsManage';
 import { FinanceCashFlow } from './pages/FinanceCashFlow';
 import {
   Finance, FinanceAll, FinanceApprovals, FinanceNew, FinanceRequestPage, FinanceToPay,
@@ -86,6 +87,9 @@ export function App() {
         <Route path="/finance/requests/:id" element={<FinanceRequestPage />} />
 
         <Route path="/news" element={<News />} />
+        {/* Before /news/:id, or "manage" is read as an id and rejected by the
+            uuid pipe -- which is exactly how this route broke the first time. */}
+        <Route path="/news/manage" element={<NewsManage />} />
         <Route path="/news/:id" element={<NewsItem />} />
 
         <Route element={<ModuleRoute module="tasks" />}>

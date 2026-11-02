@@ -56,6 +56,24 @@ export const config = {
    * machine has no instance role and should not need an AWS account to raise a
    * ticket. Credentials come from the instance role, never from here.
    */
+  /**
+   * Writing requests through to the accountant's spreadsheet.
+   *
+   * `off` by default, so a server with no key configured runs the whole
+   * finance module and simply queues nothing. Turning it on is deliberate.
+   */
+  sheets: {
+    mode: (['off', 'dry', 'live'] as const)
+      .includes(process.env.SHEETS_MODE as any)
+      ? (process.env.SHEETS_MODE as 'off' | 'dry' | 'live') : 'off',
+    spreadsheetId: process.env.SHEETS_SPREADSHEET_ID || '',
+    /* The whole service-account JSON, base64-encoded. A PEM key is
+       multi-line, and in an env file its newlines come back as the two
+       characters \ and n -- the signature then fails with an error about the
+       key format that sends people looking at permissions instead. */
+    serviceAccountKey: process.env.SHEETS_SA_KEY_B64 || '',
+  },
+
   attachments: {
     bucket: process.env.S3_ATTACHMENTS_BUCKET || '',
     /* Its own variable, falling back to AWS_REGION. SES and the bucket do not

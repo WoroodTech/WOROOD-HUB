@@ -12,11 +12,14 @@ import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
-  Announcement, AnnouncementDetail, AnnouncementsResponse, AnnouncementUploadTicket,
+  Announcement, AnnouncementDetail, AnnouncementsResponse,
 } from '../contract';
 import { api } from '../lib/api';
 import { qk } from '../lib/keys';
 import { Card } from '../components/Card';
+import { NoticeComposer } from '../components/NoticeComposer';
+import { NoticeReactions } from '../components/Noticereactions';
+import { ConfirmDialog } from '../components/Confirmdialog';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import { Icon } from '../components/Icon';
 import { formatDate } from '../lib/format';
@@ -55,7 +58,18 @@ export function News() {
         ) : null}
       </header>
 
-      {composing ? <Composer onDone={() => setComposing(false)} /> : null}
+      {/* The same form the manage screen uses. Two copies drift: one grows a
+          field, the other does not, and the difference only surfaces when
+          somebody asks why a notice written from one place behaves
+          differently. */}
+      {composing ? (
+        <Card title="Write a notice">
+          <NoticeComposer
+            onSaved={() => { setComposing(false); void list.refetch(); }}
+            onCancel={() => setComposing(false)}
+          />
+        </Card>
+      ) : null}
 
       {!items.length ? (
         <EmptyState icon="bell" title="Nothing yet"
@@ -134,6 +148,8 @@ export function NewsItem() {
     onSuccess: () => void qc.invalidateQueries({ queryKey: qk.newsItem(id) }),
   });
 
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+
   const remove = useMutation({
     mutationFn: () => api(`/news/${id}`, { method: 'DELETE' }),
     onSuccess: () => {
@@ -172,9 +188,12 @@ export function NewsItem() {
           </p>
         </header>
 
-        {a.images.length ? (
+        {/* Pictures and documents are shown apart: one is looked at in place,
+            the other is opened. Mixing them would mean a row of broken image
+            frames where the PDFs are. */}
+        {a.images.some((im) => im.kind !== 'document') ? (
           <div className="newsarticle__gallery">
-            {a.images.map((im) => (
+            {a.images.filter((im) => im.kind !== 'document').map((im) => (
               <figure key={im.id}>
                 <img src={im.url} alt={pick(im.caption, im.captionAr, lang()) ?? ''} loading="lazy" />
                 {pick(im.caption, im.captionAr, lang())
@@ -186,6 +205,41 @@ export function NewsItem() {
 
         {body ? <div className="newsarticle__body">{body}</div> : null}
 
+        {a.images.some((im) => im.kind === 'document') ? (
+          <ul className="newsdocs">
+            {a.images.filter((im) => im.kind === 'document').map((im) => (
+              <li key={im.id}>
+                {/* The signed URL expires in an hour, which is why this is a
+                    plain link to open now rather than something to bookmark. */}
+                <a href={im.url} target="_blank" rel="noopener noreferrer">
+                  <Icon name="receipt" size={15} />
+                  <span>{im.name ?? 'Attachment'}</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
+        <NoticeReactions announcementId={a.id} reactions={a.reactions} />
+
+        {confirmingDelete ? (
+          <ConfirmDialog
+            title={`Delete “${a.title || a.titleAr || 'this notice'}”?`}
+            body={
+              /* Said plainly, because it is different for a notice people have
+                 already read: the comments and reactions go with it. */
+              a.commentCount > 0
+                ? `It has ${a.commentCount} ${a.commentCount === 1 ? 'comment' : 'comments'}, which will go with it. This cannot be undone.`
+                : 'This cannot be undone.'
+            }
+            confirmLabel="Delete it"
+            danger
+            busy={remove.isPending}
+            onCancel={() => setConfirmingDelete(false)}
+            onConfirm={() => { setConfirmingDelete(false); remove.mutate(); }}
+          />
+        ) : null}
+
         {a.canManage ? (
           <div className="newsarticle__admin">
             {a.status !== 'PUBLISHED' ? (
@@ -196,7 +250,7 @@ export function NewsItem() {
             ) : null}
             <button type="button" className="btn btn--sm btn--danger"
                     disabled={remove.isPending}
-                    onClick={() => { if (confirm('Delete this announcement?')) remove.mutate(); }}>
+                    onClick={() => setConfirmingDelete(true)}>
               Delete
             </button>
           </div>
@@ -256,170 +310,3 @@ export function NewsItem() {
  * the instant a title is typed would be published before its pictures are even
  * uploaded.
  */
-function Composer({ onDone }: { onDone: () => void }) {
-  const qc = useQueryClient();
-  const [title, setTitle] = useState('');
-  const [titleAr, setTitleAr] = useState('');
-  const [body, setBody] = useState('');
-  const [bodyAr, setBodyAr] = useState('');
-  const [days, setDays] = useState(21);
-  const [pinned, setPinned] = useState(false);
-  const [commentsEnabled, setComments] = useState(true);
-  const [draft, setDraft] = useState<Announcement | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-
-  const create = useMutation({
-    mutationFn: () => api<Announcement>('/news', {
-      method: 'POST',
-      body: {
-        title: title || undefined, titleAr: titleAr || undefined,
-        body: body || undefined, bodyAr: bodyAr || undefined,
-        days, pinned, commentsEnabled,
-      },
-    }),
-    onSuccess: (a) => setDraft(a),
-  });
-
-  const publish = useMutation({
-    mutationFn: () => api(`/news/${draft!.id}/publish`, { method: 'POST' }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.news });
-      void qc.invalidateQueries({ queryKey: ['news', 'list'] });
-      onDone();
-    },
-  });
-
-  /**
-   * Three steps per picture: ask for a URL, put the bytes straight into S3, and
-   * tell the API to look at what arrived. The bytes never pass through the API,
-   * which is what keeps a dozen photographs from occupying a request worker for
-   * as long as the upload takes.
-   */
-  const addImages = async (files: FileList | null) => {
-    if (!files?.length || !draft) return;
-    setUploading(true);
-    setUploadError(null);
-    try {
-      for (const file of Array.from(files)) {
-        const ticket = await api<AnnouncementUploadTicket>(`/news/${draft.id}/images`, {
-          method: 'POST',
-          body: { name: file.name, type: file.type, size: file.size },
-        });
-        const put = await fetch(ticket.uploadUrl, {
-          method: 'PUT', headers: ticket.headers, body: file,
-        });
-        if (!put.ok) throw new Error(`${file.name} could not be uploaded.`);
-        await api(`/news/images/${ticket.imageId}/confirm`, { method: 'POST' });
-      }
-      const fresh = await api<AnnouncementDetail>(`/news/${draft.id}`);
-      setDraft(fresh);
-    } catch (e: any) {
-      setUploadError(e?.message ?? 'The pictures could not be uploaded.');
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  return (
-    <Card title={draft ? 'Add pictures, then publish' : 'Write an announcement'}>
-      {!draft ? (
-        <div className="composer">
-          <div className="composer__row">
-            <label className="field">
-              <span>Title (English)</span>
-              <input className="input" value={title} maxLength={200}
-                     onChange={(e) => setTitle(e.target.value)} />
-            </label>
-            <label className="field">
-              <span>العنوان (عربي)</span>
-              <input className="input" dir="rtl" value={titleAr} maxLength={200}
-                     onChange={(e) => setTitleAr(e.target.value)} />
-            </label>
-          </div>
-          <p className="muted composer__hint">
-            One language is enough — fill in whichever this notice is written in.
-          </p>
-
-          <div className="composer__row">
-            <label className="field">
-              <span>Details (English)</span>
-              <textarea className="input" rows={4} value={body} maxLength={8000}
-                        onChange={(e) => setBody(e.target.value)} />
-            </label>
-            <label className="field">
-              <span>التفاصيل (عربي)</span>
-              <textarea className="input" dir="rtl" rows={4} value={bodyAr} maxLength={8000}
-                        onChange={(e) => setBodyAr(e.target.value)} />
-            </label>
-          </div>
-
-          <div className="composer__row">
-            <label className="field">
-              <span>Stay on the home page for</span>
-              <select className="input" value={days}
-                      onChange={(e) => setDays(Number(e.target.value))}>
-                <option value={7}>a week</option>
-                <option value={14}>two weeks</option>
-                <option value={21}>three weeks</option>
-                <option value={30}>a month</option>
-                <option value={92}>a quarter</option>
-                {/* The quarterly awards want this one far more often than a date. */}
-                <option value={0}>until I take it down</option>
-              </select>
-            </label>
-            <label className="field field--check">
-              <input type="checkbox" checked={pinned} onChange={(e) => setPinned(e.target.checked)} />
-              <span>Show before everything else</span>
-            </label>
-            <label className="field field--check">
-              <input type="checkbox" checked={commentsEnabled}
-                     onChange={(e) => setComments(e.target.checked)} />
-              <span>Allow replies</span>
-            </label>
-          </div>
-
-          {create.isError ? <ErrorState error={create.error} compact /> : null}
-
-          <div className="composer__actions">
-            <button type="button" className="btn" onClick={onDone}>Cancel</button>
-            <button type="button" className="btn btn--primary"
-                    disabled={(!title.trim() && !titleAr.trim()) || create.isPending}
-                    onClick={() => create.mutate()}>
-              Continue
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="composer">
-          <p className="muted">
-            Saved as a draft. Nobody has been notified yet — add the pictures, then publish.
-          </p>
-
-          <div className="composer__gallery">
-            {draft.images.map((im) => (
-              <img key={im.id} src={im.thumbUrl ?? im.url} alt="" />
-            ))}
-          </div>
-
-          <label className="btn btn--sm">
-            <Icon name="plus" size={13} /> {uploading ? 'Uploading…' : 'Add pictures'}
-            <input type="file" accept="image/jpeg,image/png,image/webp" multiple hidden
-                   disabled={uploading} onChange={(e) => void addImages(e.target.files)} />
-          </label>
-          {uploadError ? <p className="state state--error">{uploadError}</p> : null}
-          {publish.isError ? <ErrorState error={publish.error} compact /> : null}
-
-          <div className="composer__actions">
-            <button type="button" className="btn" onClick={onDone}>Leave as draft</button>
-            <button type="button" className="btn btn--primary"
-                    disabled={publish.isPending || uploading}
-                    onClick={() => publish.mutate()}>
-              Publish and notify everyone
-            </button>
-          </div>
-        </div>
-      )}
-    </Card>
-  );
-}

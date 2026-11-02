@@ -68,25 +68,57 @@ export class AnnouncementsService {
   /**
    * The archive: everything, newest first.
    *
-   * Managers see drafts and expired notices as well, because they are the
-   * people who need to find the one from last quarter and put it back up.
+   * Managers can ask for drafts and expired notices as well, because they are
+   * the people who need to find the one from last quarter and put it back up
+   * -- but only when they ask. The default for everybody, managers included,
+   * is the board as the company sees it.
    */
-  async list(p: Principal, { limit = 20, offset = 0 } = {}) {
+  async list(p: Principal, { limit = 20, offset = 0, status }: {
+    limit?: number; offset?: number; status?: string;
+  } = {}) {
     const manager = can(p, MANAGE);
+
+    /*
+     * What counts as each of these, in SQL.
+     *
+     * Written out rather than built from fragments because every one of them
+     * is a sentence somebody could get wrong: a notice can be PUBLISHED and
+     * still not be on the board, because its publish date has not arrived or
+     * its expiry has passed. "Live" is the intersection, and it is the only
+     * one most people ever see.
+     */
+    const filters: Record<string, string> = {
+      live: `a.status = 'PUBLISHED' AND a.publish_at <= now()
+             AND (a.expires_at IS NULL OR a.expires_at > now())`,
+      draft: `a.status = 'DRAFT'`,
+      /* Written, approved, waiting for its date. Worth its own tab: it is the
+         one state where nothing is wrong and nothing needs doing. */
+      scheduled: `a.status = 'PUBLISHED' AND a.publish_at > now()`,
+      /* Came down by itself. These are what somebody goes looking for when
+         they want last quarter's notice back. */
+      expired: `a.status = 'PUBLISHED' AND a.expires_at IS NOT NULL
+                AND a.expires_at <= now()`,
+      archived: `a.status = 'ARCHIVED'`,
+      all: `true`,
+    };
+
+    /* Anyone without the permission gets the live board whatever they ask
+       for. The filter narrows what a manager may already see; it never widens
+       anything for anybody. */
+    const clause = manager ? (filters[status ?? 'all'] ?? filters.all) : filters.live;
+
     const rows = await query<any>(
       `SELECT a.*, u.full_name AS author_name
          FROM hr_announcements a
          JOIN core_users u ON u.id = a.author_id
-        WHERE a.deleted_at IS NULL
-          AND ($3::boolean OR (a.status = 'PUBLISHED' AND a.publish_at <= now()))
-        ORDER BY a.publish_at DESC
+        WHERE a.deleted_at IS NULL AND (${clause})
+        ORDER BY a.pinned DESC, a.publish_at DESC
         LIMIT $1 OFFSET $2`,
-      [Math.min(Math.max(limit, 1), 50), Math.max(offset, 0), manager]);
+      [Math.min(Math.max(limit, 1), 50), Math.max(offset, 0)]);
 
     const total = await one<any>(
-      `SELECT count(*) AS n FROM hr_announcements
-        WHERE deleted_at IS NULL
-          AND ($1::boolean OR (status = 'PUBLISHED' AND publish_at <= now()))`, [manager]);
+      `SELECT count(*) AS n FROM hr_announcements a
+        WHERE a.deleted_at IS NULL AND (${clause})`);
 
     return {
       announcements: await Promise.all(rows.map((r) => this.view(p, r))),
@@ -132,12 +164,19 @@ export class AnnouncementsService {
       author: { id: row.author_id, fullName: row.author_name },
       createdAt: new Date(row.created_at).toISOString(),
       canManage: can(p, MANAGE),
+      reactions: await this.reactionsFor(p, row.id),
       images: await Promise.all(images.map(async (im) => ({
         id: im.id,
         url: await this.store.presignDownload(im.file_key, 3600),
         thumbUrl: im.thumb_key ? await this.store.presignDownload(im.thumb_key, 3600) : null,
         width: im.width, height: im.height,
         caption: im.caption, captionAr: im.caption_ar,
+        /* Said plainly rather than left to be guessed from the file name,
+           which a signed URL does not carry. Without it the board would try
+           to draw a PDF as a picture and show a broken image. */
+        kind: im.content_type === 'application/pdf' ? 'document' : 'image',
+        contentType: im.content_type,
+        name: im.original_name ?? null,
       }))),
     };
   }
@@ -354,7 +393,32 @@ export class AnnouncementsService {
 
     const input = await this.store.read(row.incoming_key);
     const kind = sniff(input);
-    if (!kind || kind === 'pdf') return reject('That file is not a JPEG, PNG or WebP image.');
+    if (!kind) return reject('That file is not a JPEG, PNG, WebP or PDF.');
+
+    /*
+     * A PDF is stored as it arrived.
+     *
+     * There is nothing to compress and nothing to make a thumbnail from
+     * without rendering a page, which needs a renderer this server does not
+     * have. It keeps its own type so the browser opens it rather than trying
+     * to draw it, and the board shows it as a document to open instead of a
+     * picture to look at -- a notice carrying a policy or a form is a normal
+     * thing here, and forcing it to be an image would mean somebody
+     * screenshotting a page of text.
+     */
+    if (kind === 'pdf') {
+      const key = `announcements/${imageId}.pdf`;
+      await this.store.put(key, input, 'application/pdf');
+      await this.store.remove(row.incoming_key);
+      await query(
+        `UPDATE hr_announcement_images
+            SET status='READY', file_key=$2, thumb_key=NULL,
+                content_type='application/pdf', bytes=$3,
+                width=NULL, height=NULL, incoming_key=NULL, ready_at=now()
+          WHERE id=$1`,
+        [imageId, key, input.length]);
+      return { id: imageId, ready: true };
+    }
 
     const out = await compressImage(input);
     const fileKey = `announcements/${imageId}.webp`;
@@ -466,4 +530,68 @@ export class AnnouncementsService {
       [commentId, p.id]);
     return { removed: true };
   }
+
+  /**
+   * How a notice landed, and what this person said about it.
+   *
+   * Counted rather than listed. Who reacted is deliberately not returned: a
+   * noticeboard where everybody can see that four people acknowledged the
+   * policy and forty did not is a noticeboard people stop touching. The number
+   * is useful; the roll call is not.
+   */
+  private async reactionsFor(p: Principal, announcementId: string) {
+    const rows = await query<{ kind: string; n: string }>(
+      `SELECT kind, count(*) AS n FROM hr_announcement_reactions
+        WHERE announcement_id = $1 GROUP BY kind`, [announcementId]);
+
+    const mine = await one<{ kind: string }>(
+      `SELECT kind FROM hr_announcement_reactions
+        WHERE announcement_id = $1 AND user_id = $2`, [announcementId, p.id]);
+
+    /* Only what somebody actually chose. Returning a zero for every kind
+       would mean nine empty counters on every notice, and the page would have
+       to filter them back out. */
+    const counts: Record<string, number> = {};
+    for (const r of rows) counts[r.kind] = Number(r.n);
+
+    return { counts, mine: (mine?.kind ?? null) as 'seen' | 'like' | 'celebrate' | null };
+  }
+
+  /**
+   * Add, change, or take back a reaction.
+   *
+   * Sending the one already there removes it, so the same control both sets
+   * and clears -- there is no separate "undo" to find, and no way to end up
+   * with two.
+   */
+  async react(p: Principal, id: string, kind: string) {
+    const row = await one<any>(
+      `SELECT id, status, publish_at FROM hr_announcements
+        WHERE id = $1 AND deleted_at IS NULL`, [id]);
+    if (!row) throw new NotFoundException('No such announcement.');
+
+    /* Only what is actually on the board. Reacting to a draft would confirm
+       it exists to anybody who guessed its id. */
+    const visible = row.status === 'PUBLISHED' && new Date(row.publish_at) <= new Date();
+    if (!visible && !can(p, MANAGE)) throw new NotFoundException('No such announcement.');
+
+    const existing = await one<{ kind: string }>(
+      `SELECT kind FROM hr_announcement_reactions
+        WHERE announcement_id = $1 AND user_id = $2`, [id, p.id]);
+
+    if (existing?.kind === kind) {
+      await query(
+        `DELETE FROM hr_announcement_reactions
+          WHERE announcement_id = $1 AND user_id = $2`, [id, p.id]);
+    } else {
+      await query(
+        `INSERT INTO hr_announcement_reactions (announcement_id, user_id, kind)
+         VALUES ($1,$2,$3)
+         ON CONFLICT (announcement_id, user_id)
+         DO UPDATE SET kind = EXCLUDED.kind, created_at = now()`,
+        [id, p.id, kind]);
+    }
+    return this.reactionsFor(p, id);
+  }
+
 }

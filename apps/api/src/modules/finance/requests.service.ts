@@ -26,6 +26,7 @@ import { one, query, tx } from '../../common/db';
 import { AuditService, NotificationsService } from '../../core/core.module';
 import { NotificationMailer } from '../../core/notifications.controller';
 import { awaitingDecisionMail, refusedMail } from './finance-mail';
+import { SheetsQueueService } from './sheets/sheets-queue.service';
 import { config } from '../../common/config';
 import {
   canDecide, canDelete, canEditDirectly, firstState, labelFor, LABEL_AR,
@@ -54,6 +55,9 @@ export class FinanceRequestsService {
     /* Optional: the module works without it, and a server with no mail
        configured should still run the approval chain. */
     private readonly mailer?: NotificationMailer,
+    /* Optional, like the mailer: a server with the sheet switched off runs
+       the whole module and simply queues nothing. */
+    private readonly sheetQueue?: SheetsQueueService,
   ) {}
 
   /**
@@ -231,6 +235,8 @@ export class FinanceRequestsService {
    * Separate from creation so a long request can be written in more than one
    * sitting without anyone being asked to approve a half-finished one.
    */
+  /* Where a request first reaches the sheet. Not on create: a draft nobody
+     has submitted is not a request the accountant should see. */
   async submit(p: Principal, id: string) {
     const row = await this.load(id);
     if (row.requester_id !== p.id) {
@@ -246,6 +252,9 @@ export class FinanceRequestsService {
       `UPDATE fin_requests SET approval_state=$2 WHERE id=$1 RETURNING *`, [id, state]);
 
     await this.tellWhoeverIsNext(updated);
+    /* Queued, never awaited for its result: the sheet is a mirror, and a
+       person pressing Submit should not wait on Google. */
+    await this.sheetQueue?.enqueue(id);
     return this.view(p, updated);
   }
 
@@ -291,6 +300,7 @@ export class FinanceRequestsService {
       actorId: p.id, moduleKey: 'finance', action: 'request.update',
       entityType: 'fin_request', entityId: id, payload: dto,
     });
+    await this.sheetQueue?.enqueue(id);
     return this.view(p, updated);
   }
 

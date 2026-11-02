@@ -26,6 +26,7 @@ import {
 import { Principal, can } from '../../common/auth';
 import { one, query, tx } from '../../common/db';
 import { AuditService, NotificationsService } from '../../core/core.module';
+import { SheetsQueueService } from './sheets/sheets-queue.service';
 import { lensFor } from './projection';
 import { ZohoQueueService } from './zoho/zoho-queue.service';
 import { ZohoAccountsService } from './zoho/accounts.service';
@@ -61,6 +62,10 @@ export class FinancePaymentsService {
     private readonly audit: AuditService,
     private readonly zoho: ZohoQueueService,
     private readonly accounts: ZohoAccountsService,
+    /* Last, and optional: an optional parameter before a required one is a
+       TypeScript error, and the order of a constructor is not where this
+       belongs anyway. */
+    private readonly sheetQueue?: SheetsQueueService,
   ) {}
 
   /**
@@ -154,6 +159,9 @@ export class FinancePaymentsService {
           + `${e?.message ?? e}`));
 
       await this.tellTheRequester(result.request.id);
+      /* The sheet's Paid Total and Last Payment Date both come from the
+         ledger, so every payment changes the row. */
+      await this.sheetQueue?.enqueue(requestId);
       return this.view(p, result.payment);
     } catch (e: any) {
       /* The same payment arriving twice. Returning the one that exists is
@@ -242,6 +250,8 @@ export class FinancePaymentsService {
         entityType: 'fin_payment', entityId: paymentId,
         payload: { amount: Number(original.amount), reason },
       });
+      /* A reversal moves the totals as much as a payment does. */
+      await this.sheetQueue?.enqueue(original.request_id);
       return this.view(p, row);
     } catch (e: any) {
       if (e?.code === '23505') {

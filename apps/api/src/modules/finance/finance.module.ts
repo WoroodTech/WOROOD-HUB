@@ -24,6 +24,8 @@ import { ZohoAccountsService } from './zoho/accounts.service';
 import { CashFlowService } from './cashflow.service';
 import { PurchaseOrdersService } from './zoho/purchase-orders.service';
 import { FinanceImportService } from './migration/import.service';
+import { SheetsClient } from './sheets/sheets-client';
+import { SheetsWorker } from './sheets/sheets-worker';
 import {
   AddNote, CreateRequest, DecideRequest, ListRequests, RequestEdit,
   CashFlowQuery, DraftPurchaseOrder, RecordPayment, RequestFileUpload,
@@ -92,6 +94,8 @@ export class FinanceController {
     private readonly cashflow: CashFlowService,
     private readonly purchaseOrders: PurchaseOrdersService,
     private readonly imports: FinanceImportService,
+    private readonly sheets: SheetsClient,
+    private readonly sheetsWorker: SheetsWorker,
   ) {}
 
   /** Everything the new-request form needs: the person's own department, the
@@ -332,6 +336,47 @@ export class FinanceController {
   discardImport(@CurrentUser() p: Principal,
                 @Param('batchId', ParseUUIDPipe) batchId: string) {
     return this.imports.discard(p, batchId);
+  }
+
+  /* ----------------------------------------------------------- sheet ---- */
+  /* The accountant's spreadsheet stays after the migration — they work in it
+     for things the portal has nothing to do with — so requests raised here
+     appear in the department's Log tab the way they did before. Nothing is
+     written to Local Cash Flow: the columns there that count request spending
+     are formulas reading those same Log tabs. */
+
+  /**
+   * Whose spreadsheet is this, and what tabs does it have?
+   *
+   * The first thing to run after setting the key up. It proves the key
+   * parses, the service account is allowed in, and the file is the one
+   * intended — three different failures that otherwise all happen for the
+   * first time during a real write.
+   */
+  @Get('sheet/describe')
+  @Permissions('finance.request.manage')
+  describeSheet() {
+    return this.sheets.describe();
+  }
+
+  /** The header of one tab, to confirm the columns are where we think. */
+  @Get('sheet/header')
+  @Permissions('finance.request.manage')
+  async sheetHeader(@Query('tab') tab: string) {
+    return { tab, columns: await this.sheets.readHeader(tab) };
+  }
+
+  @Get('sheet/health')
+  @Permissions('finance.request.manage')
+  sheetHealth() {
+    return this.sheetsWorker.health();
+  }
+
+  /** Push the queue now rather than waiting for the next sweep. */
+  @Post('sheet/drain')
+  @Permissions('finance.request.manage')
+  drainSheet() {
+    return this.sheetsWorker.drain();
   }
 
   /* ------------------------------------------------------------ zoho ---- */
