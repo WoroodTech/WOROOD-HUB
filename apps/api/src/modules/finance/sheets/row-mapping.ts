@@ -13,21 +13,33 @@ import { DateTime } from 'luxon';
  * holds is the only thing that matters here.
  */
 
-/** Which tab a department's requests are logged in. */
+/**
+ * Which tab a department's requests are logged in.
+ *
+ * Keyed by the code in `fin_departments`, and those codes are not the
+ * abbreviations anybody would guess: Customer Care is CSP, Technology is TEC,
+ * P.R is PRX, Human Resource is HRX, Workshop is WKS, Warehouse is WRH. Six of
+ * the nine were wrong here when this was written from memory, and the failure
+ * is quiet -- a request from an unmapped department logs a warning and never
+ * reaches the sheet at all.
+ *
+ * `test/sheet-departments.test.ts` checks this against the database rather
+ * than against anybody's recollection.
+ */
 export const TAB_FOR_DEPARTMENT: Record<string, string> = {
-  MKT: 'Marketing Log',
   PUR: 'Purchases Log',
-  TECH: 'Tech Log',
-  HR: 'HR Log',
-  PR: 'P.R Log',
-  CS: 'Customer Support Log',
-  /* The three lite departments do not have tabs of their own. Their requests
-     are routed through Purchases and logged there, with column T naming the
-     department they actually came from -- which is exactly what the Apps
-     Script does, and why column T exists at all. */
+  MKT: 'Marketing Log',
+  CSP: 'Customer Support Log',
+  TEC: 'Tech Log',
+  PRX: 'P.R Log',
+  HRX: 'HR Log',
+
+  /* The three lite departments have no tabs of their own. Their requests are
+     routed through Purchases and logged there, with column T naming the
+     department they actually came from -- which is what column T is for. */
   OFC: 'Purchases Log',
-  WRK: 'Purchases Log',
-  WHS: 'Purchases Log',
+  WKS: 'Purchases Log',
+  WRH: 'Purchases Log',
 };
 
 /**

@@ -10,10 +10,11 @@
  * requests is whoever Finance says it is, rather than whoever happens to sit in
  * a department with that name.
  */
-import {
+import { NotFoundException,
   Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query,
 } from '@nestjs/common';
 import { CurrentUser, Permissions, type Principal } from '../../common/auth';
+import { config } from '../../common/config';
 import { registerHubModule } from '../../core/hub-registry';
 import { FinanceRequestsService } from './requests.service';
 import { FinanceEditsService } from './edits.service';
@@ -56,9 +57,13 @@ export const FINANCE_MODULE = registerHubModule({
        visibility rule either way, so the page does not need to know which it
        is showing -- and a manager had no way at all to see his department's
        requests before, which meant an edit reached him only as a bell. */
-    { label: 'Cash Flow', labelAr: 'التدفق النقدي', path: '/finance/cash-flow',
-      icon: 'trending-up',
-      requiresAnyPermission: ['finance.report.view', 'finance.request.manage'] },
+    /* Hidden for now, not removed. The page, its two methods and its tests
+       all still work; the accountant simply reads the cash flow in their own
+       spreadsheet, where it is computed from the Log tabs this module now
+       writes to. Putting the entry back is uncommenting this line. */
+    // { label: 'Cash Flow', labelAr: 'التدفق النقدي', path: '/finance/cash-flow',
+    //   icon: 'trending-up',
+    //   requiresAnyPermission: ['finance.report.view', 'finance.request.manage'] },
     { label: 'To Pay', labelAr: 'للدفع', path: '/finance/pay', icon: 'receipt',
       requiresAnyPermission: ['finance.payment.record'] },
     { label: 'All Requests', labelAr: 'كل الطلبات', path: '/finance/all', icon: 'database',
@@ -305,6 +310,25 @@ export class FinanceController {
   }
 
   /* ------------------------------------------------------- migration ---- */
+  /*
+   * Off unless FINANCE_MIGRATION_ENABLED is set.
+   *
+   * Promoting a batch writes a thousand requests into the live tables, and
+   * that is wanted on exactly one day. Leaving the endpoint reachable the
+   * rest of the time is a standing risk for a feature nobody is using: a
+   * mistyped call, or anybody with finance.request.manage experimenting.
+   *
+   * Nothing is deleted. The service, its 37 assertions and this controller
+   * all stay; the day the sheets are brought across, the flag goes on.
+   */
+  private assertMigrationEnabled() {
+    if (!config.migrationTools) {
+      throw new NotFoundException(
+        'The migration tools are switched off. Set FINANCE_MIGRATION_ENABLED=true '
+        + 'on the server for the cutover, then switch it back.');
+    }
+  }
+
   /* Reading an export writes nothing live; promoting is the separate step
      that does. Both need finance.request.manage, and nothing here ever writes
      back to the spreadsheet. */
@@ -313,6 +337,7 @@ export class FinanceController {
   @Permissions('finance.request.manage')
   readImport(@CurrentUser() p: Principal,
              @Body() dto: { sourceName: string; rows: any[] }) {
+    this.assertMigrationEnabled();
     return this.imports.read(p, dto.sourceName, dto.rows);
   }
 
@@ -320,6 +345,7 @@ export class FinanceController {
   @Permissions('finance.request.manage')
   reviewImport(@CurrentUser() p: Principal,
                @Param('batchId', ParseUUIDPipe) batchId: string) {
+    this.assertMigrationEnabled();
     return this.imports.review(p, batchId);
   }
 
@@ -328,6 +354,7 @@ export class FinanceController {
   promoteImport(@CurrentUser() p: Principal,
                 @Param('batchId', ParseUUIDPipe) batchId: string,
                 @Body() dto: { force?: boolean }) {
+    this.assertMigrationEnabled();
     return this.imports.promote(p, batchId, { force: dto?.force });
   }
 
@@ -335,6 +362,7 @@ export class FinanceController {
   @Permissions('finance.request.manage')
   discardImport(@CurrentUser() p: Principal,
                 @Param('batchId', ParseUUIDPipe) batchId: string) {
+    this.assertMigrationEnabled();
     return this.imports.discard(p, batchId);
   }
 

@@ -62,6 +62,16 @@ export const config = {
    * `off` by default, so a server with no key configured runs the whole
    * finance module and simply queues nothing. Turning it on is deliberate.
    */
+  /**
+   * The spreadsheet migration tooling.
+   *
+   * Off by default. It exists for one day -- the day the old sheets are
+   * brought across -- and an endpoint that writes a thousand requests into
+   * the live tables should not be reachable on every other day of the year.
+   * Switching it on for that day is deliberate.
+   */
+  migrationTools: process.env.FINANCE_MIGRATION_ENABLED === 'true',
+
   sheets: {
     mode: (['off', 'dry', 'live'] as const)
       .includes(process.env.SHEETS_MODE as any)
