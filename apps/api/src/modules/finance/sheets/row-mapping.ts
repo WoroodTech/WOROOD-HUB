@@ -33,9 +33,15 @@ export const TAB_FOR_DEPARTMENT: Record<string, string> = {
 /**
  * The columns, in the sheet's order.
  *
- * `null` means leave the cell alone. Only one column needs it, and it needs it
- * absolutely: G holds `=MAX(0,D2-F2)` and writing a number there would replace
- * the formula with a constant for that row.
+ * `null` marks the one column that is not a value: G holds
+ * `=MAX(0,D2-F2)`, and writing a number there would replace the formula with
+ * a constant for that row.
+ *
+ * It is not left alone, though. The formula does not extend itself down the
+ * sheet -- every filled row carries its own copy, written when the row was
+ * added, and a row added without one leaves Remaining permanently blank.
+ * Because the formula names its own row, it can only be built once the row
+ * number is known, which is at write time rather than here.
  */
 export const COLUMNS = [
   'dueDate',          // A
@@ -62,6 +68,21 @@ export const COLUMNS = [
 
 /** The ID column, zero-based: J. */
 export const ID_COLUMN_INDEX = 9;
+
+/** The Remaining column, zero-based: G. */
+export const FORMULA_COLUMN_INDEX = 6;
+
+/**
+ * The Remaining formula for one row.
+ *
+ * Written rather than inherited: Sheets does not extend a formula into a row
+ * that an API call created, so a row added without this shows nothing in
+ * Remaining while every row above it shows a number. The accountant reads
+ * that column.
+ */
+export function remainingFormula(rowNumber: number): string {
+  return `=MAX(0,D${rowNumber}-F${rowNumber})`;
+}
 
 /**
  * How a value should be sent to Sheets.
@@ -185,15 +206,33 @@ export interface CellSpan {
   mode: 'RAW' | 'USER_ENTERED';
 }
 
-export function spansFor(row: (string | number | null)[]): CellSpan[] {
+export function spansFor(
+  row: (string | number | null)[],
+  /** Needed for the Remaining formula, which names its own row. */
+  rowNumber?: number,
+): CellSpan[] {
   const spans: CellSpan[] = [];
   let current: CellSpan | null = null;
 
   row.forEach((value, i) => {
     const key = COLUMNS[i];
-    /* A null column is the formula: it ends whatever run was open and is
-       never written. */
-    if (key === null || value === null) { current = null; return; }
+
+    /*
+     * The formula column. Given a row number it is written as its own span,
+     * USER_ENTERED so Sheets stores a formula rather than the text of one.
+     * Without a row number it is skipped, which is what the tests that only
+     * check the value row want.
+     */
+    if (key === null) {
+      if (rowNumber) {
+        spans.push({ start: i, values: [remainingFormula(rowNumber)],
+                     mode: 'USER_ENTERED' });
+      }
+      current = null;
+      return;
+    }
+
+    if (value === null) { current = null; return; }
 
     const mode: CellSpan['mode'] = RAW_COLUMNS.has(key) ? 'RAW' : 'USER_ENTERED';
     if (current && current.start + current.values.length === i && current.mode === mode) {

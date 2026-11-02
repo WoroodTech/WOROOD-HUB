@@ -168,7 +168,9 @@ export class SheetsWorker implements OnModuleInit {
     const target = await this.findRow(
       tab, reference, hint?.sheet_tab === tab ? hint.sheet_row : null);
 
-    await this.sheets.writeRow(tab, target.row, spansFor(row));
+    /* The row number reaches the mapping here, because the Remaining formula
+       names its own row and cannot be built before the row is chosen. */
+    await this.sheets.writeRow(tab, target.row, spansFor(row, target.row));
 
     await query(
       `UPDATE fin_sheet_events
