@@ -154,15 +154,31 @@ export class SheetsQueueService {
     return { request, row: toRow(request, tab), tab };
   }
 
+  /**
+   * Who approved it last, and when.
+   *
+   * The column is `created_at`, not `at`. It was `at` here, which is not a
+   * column, so the query threw, the catch swallowed it, and column R came out
+   * empty on every single row -- a value silently missing rather than a
+   * failure anybody would see. The dry run is what caught it.
+   *
+   * The catch stays, because a missing approval trail must not stop a row
+   * reaching the sheet. It now logs, so the next time something like this
+   * happens it says so instead of disappearing.
+   */
   private async trail(r: any, run: Function): Promise<string> {
     const rows = await run(
-      `SELECT u.full_name, a.at FROM fin_request_approvals a
+      `SELECT u.full_name, a.created_at FROM fin_request_approvals a
          JOIN core_users u ON u.id = a.decided_by_id
         WHERE a.request_id = $1 AND a.decision = 'APPROVED'
-        ORDER BY a.at DESC LIMIT 1`, [r.id]).catch(() => []);
+        ORDER BY a.created_at DESC LIMIT 1`, [r.id])
+      .catch((e: any) => {
+        this.log.warn(`could not read the approval trail for ${r.reference}: ${e?.message ?? e}`);
+        return [];
+      });
     const last = (rows as any[])[0];
     if (!last) return '';
-    const d = new Date(last.at);
+    const d = new Date(last.created_at);
     const month = d.toLocaleString('en-GB', { month: 'short', timeZone: 'Africa/Cairo' });
     const day = d.toLocaleString('en-GB', { day: '2-digit', timeZone: 'Africa/Cairo' });
     const time = d.toLocaleString('en-GB', {
