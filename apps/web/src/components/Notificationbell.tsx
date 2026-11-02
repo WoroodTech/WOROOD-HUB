@@ -109,7 +109,10 @@ export function NotificationBell() {
           /* The tag collapses repeats of the same notification -- a second tab,
              or a re-render -- into one on the desktop. */
           tag: n.id,
-          icon: '/favicon.svg',
+          /* The orange mark: a desktop notification is drawn on the
+             operating system's own surface, which is neither this app's light
+             nor its dark theme, and the orange reads on both. */
+          icon: '/brand/worood-icon-512.png',
         });
         note.onclick = () => {
           window.focus();
