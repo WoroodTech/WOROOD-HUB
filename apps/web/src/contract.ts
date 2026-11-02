@@ -716,10 +716,30 @@ export interface AnnouncementImage {
   /** Short-lived signed URLs; refetch the announcement rather than caching them. */
   url: string;
   thumbUrl: string | null;
+  /** A picture to show, or a document to open. Never guess this from the URL. */
+  kind: 'image' | 'document';
+  contentType: string | null;
+  /** The name it was uploaded under, which a signed URL does not carry. */
+  name: string | null;
   width: number | null;
   height: number | null;
   caption: string | null;
   captionAr: string | null;
+}
+
+/**
+ * The fixed set, by name rather than by glyph — so the picture can change
+ * without the stored data meaning something else.
+ */
+export type ReactionKind =
+  | 'seen' | 'like' | 'love' | 'celebrate' | 'clap'
+  | 'thanks' | 'funny' | 'sad' | 'curious';
+
+export interface AnnouncementReactions {
+  /** How many people chose each. Only kinds somebody chose appear. */
+  counts: Partial<Record<ReactionKind, number>>;
+  /** What you said, if anything. Sending it again takes it back. */
+  mine: ReactionKind | null;
 }
 
 export interface AnnouncementComment {
@@ -748,6 +768,7 @@ export interface Announcement {
   author: { id: string; fullName: string };
   createdAt: string;
   canManage: boolean;
+  reactions: AnnouncementReactions;
   images: AnnouncementImage[];
 }
 
@@ -759,6 +780,10 @@ export interface AnnouncementsResponse {
   announcements: Announcement[];
   total: number;
 }
+
+/** Which slice of the board a manager is looking at. */
+export type AnnouncementFilter =
+  'live' | 'draft' | 'scheduled' | 'expired' | 'archived' | 'all';
 
 export interface AnnouncementUploadTicket {
   imageId: string;

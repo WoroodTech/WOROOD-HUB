@@ -12,6 +12,9 @@ import { ZohoAccountsService } from './zoho/accounts.service';
 import { CashFlowService } from './cashflow.service';
 import { PurchaseOrdersService } from './zoho/purchase-orders.service';
 import { FinanceImportService } from './migration/import.service';
+import { SheetsClient } from './sheets/sheets-client';
+import { SheetsQueueService } from './sheets/sheets-queue.service';
+import { SheetsWorker } from './sheets/sheets-worker';
 
 export { FINANCE_MODULE };
 
@@ -20,8 +23,10 @@ export { FINANCE_MODULE };
   controllers: [FinanceController],
   providers: [FinanceRequestsService, FinanceEditsService, FinanceFilesService,
              FinancePaymentsService, ZohoTokenManager, ZohoBooksClient,
-             ZohoQueueService, ZohoWorker, ZohoAccountsService, CashFlowService, PurchaseOrdersService, FinanceImportService],
+             ZohoQueueService, ZohoWorker, ZohoAccountsService, CashFlowService, PurchaseOrdersService, FinanceImportService,
+           SheetsClient, SheetsQueueService, SheetsWorker],
   exports: [FinanceRequestsService, FinanceEditsService, FinanceFilesService,
-           FinancePaymentsService, ZohoQueueService, ZohoWorker, ZohoAccountsService, CashFlowService, PurchaseOrdersService, FinanceImportService],
+           FinancePaymentsService, ZohoQueueService, ZohoWorker, ZohoAccountsService, CashFlowService, PurchaseOrdersService, FinanceImportService,
+           SheetsClient, SheetsQueueService, SheetsWorker],
 })
 export class FinanceModule {}

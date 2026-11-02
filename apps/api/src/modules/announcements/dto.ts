@@ -8,7 +8,7 @@
  */
 import { Type } from 'class-transformer';
 import {
-  ArrayMaxSize, IsArray, IsBoolean, IsDateString, IsInt, IsOptional, IsString,
+  ArrayMaxSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsOptional, IsString,
   IsUUID, Max, MaxLength, Min, MinLength,
 } from 'class-validator';
 
@@ -44,6 +44,18 @@ export class UpdateAnnouncement extends CreateAnnouncement {}
 export class ListAnnouncements {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(50) limit?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) offset?: number;
+
+  /**
+   * Which notices to return, for whoever looks after the board.
+   *
+   * Without it, a manager opening the news page saw drafts and expired
+   * notices threaded in among the live ones -- the board as the database
+   * holds it rather than as the company sees it, with no way to tell which
+   * was which at a glance. Everyone else gets what is live whatever they ask
+   * for; this only ever narrows what a manager can already see.
+   */
+  @IsOptional() @IsIn(['live', 'draft', 'scheduled', 'expired', 'archived', 'all'])
+  status?: 'live' | 'draft' | 'scheduled' | 'expired' | 'archived' | 'all';
 }
 
 export class RequestImageUpload {
@@ -61,4 +73,21 @@ export class ReorderImages {
 
 export class CommentOnAnnouncement {
   @IsString() @MinLength(1) @MaxLength(2000) body!: string;
+}
+
+/**
+ * The fixed set, by name.
+ *
+ * Named rather than sent as the character itself: a name survives the day
+ * somebody wants a different glyph, can be labelled in another language, and
+ * cannot carry an arbitrary codepoint into the database.
+ */
+export const REACTION_KINDS = [
+  'seen', 'like', 'love', 'celebrate', 'clap',
+  'thanks', 'funny', 'sad', 'curious',
+] as const;
+
+export class ReactToAnnouncement {
+  @IsIn(REACTION_KINDS as unknown as string[])
+  kind!: (typeof REACTION_KINDS)[number];
 }

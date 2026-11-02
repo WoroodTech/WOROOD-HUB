@@ -13,7 +13,7 @@ import { CurrentUser, Permissions, type Principal } from '../../common/auth';
 import { registerHubModule } from '../../core/hub-registry';
 import { AnnouncementsService } from './announcements.service';
 import {
-  CommentOnAnnouncement, CreateAnnouncement, ListAnnouncements,
+  CommentOnAnnouncement, ReactToAnnouncement, CreateAnnouncement, ListAnnouncements,
   ReorderImages, RequestImageUpload, UpdateAnnouncement,
 } from './dto';
 
@@ -26,11 +26,24 @@ export const ANNOUNCEMENTS_MODULE = registerHubModule({
   tablePrefix: 'hr_',
   enabled: true,
   navigation: [
-    /* One entry, for everyone. Writing happens inside the page -- whoever may
-       publish gets a button there -- so a second "Manage" link would point at
-       the same screen. It also pointed at /news/manage, which the router reads
-       as /news/:id and the API then rejects as a malformed id. */
+    /* Reading is for everyone. Writing happens inside this page: whoever may
+       publish gets the composer there. */
     { label: 'Company News', labelAr: 'أخبار الشركة', path: '/news', icon: 'bell' },
+
+    /*
+     * And a second entry, for whoever looks after the board.
+     *
+     * This path existed once before and was removed, because there was no page
+     * at /news/manage: the router read "manage" as /news/:id and the API
+     * rejected it as a malformed id. Both halves of that are fixed now -- the
+     * route is declared ahead of /news/:id, and the page exists -- and the
+     * entry earns its place rather than duplicating the first, because the
+     * two screens answer different questions. /news is the board as the
+     * company sees it; this is everything that exists, drafts and taken-down
+     * notices included.
+     */
+    { label: 'Manage News', labelAr: 'إدارة الأخبار', path: '/news/manage',
+      icon: 'settings', requiresAnyPermission: ['announcements.manage'] },
   ],
   portlets: [
     /* Wide and first. A noticeboard below the fold is a noticeboard nobody
@@ -56,7 +69,7 @@ export class AnnouncementsController {
 
   @Get()
   list(@CurrentUser() p: Principal, @Query() q: ListAnnouncements) {
-    return this.news.list(p, { limit: q.limit, offset: q.offset });
+    return this.news.list(p, { limit: q.limit, offset: q.offset, status: q.status });
   }
 
   @Get(':id')
@@ -133,6 +146,14 @@ export class AnnouncementsController {
   @Get(':id/comments')
   comments(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string) {
     return this.news.comments(p, id);
+  }
+
+  /** Reacting is for everybody: no permission, and it works on what is up. */
+  @Post(':id/reactions')
+  react(@CurrentUser() p: Principal,
+        @Param('id', ParseUUIDPipe) id: string,
+        @Body() dto: ReactToAnnouncement) {
+    return this.news.react(p, id, dto.kind);
   }
 
   @Post(':id/comments')

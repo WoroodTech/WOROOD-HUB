@@ -46,6 +46,7 @@ export const qk = {
   news: ['news', 'live'] as const,
   newsList: (limit: number, offset: number) => ['news', 'list', limit, offset] as const,
   newsItem: (id: string) => ['news', 'item', id] as const,
+  newsManage: (status: string) => ['news', 'manage', status] as const,
   roomCalendarRange: (roomId: string, date: string, days: number) =>
     ['mr', 'room-calendar', roomId, date, days] as const,
 };
