@@ -228,13 +228,18 @@ export class FinanceController {
     return this.payments.record(p, id, dto);
   }
 
-  @Post('payments/:paymentId/reverse')
-  @Permissions('finance.payment.record')
-  reversePayment(@CurrentUser() p: Principal,
-                 @Param('paymentId', ParseUUIDPipe) paymentId: string,
-                 @Body() dto: ReversePayment) {
-    return this.payments.reverse(p, paymentId, dto.reason);
-  }
+  /*
+   * There is no reverse endpoint.
+   *
+   * Finance records a payment only once the bank has moved the money and the
+   * receipt is in hand, so there is nothing to take back. An overpayment is
+   * settled with the supplier and corrected in Zoho directly, which is
+   * outside this module.
+   *
+   * `PaymentsService.reverse` and the ledger's negative-row support both
+   * remain: payments reversed while the control existed must keep adding up,
+   * and the day a reason for this appears, the route is three lines.
+   */
 
   /* ------------------------------------------------------- cash flow ---- */
   /* The forecast Finance works from. Behind a permission: it is every

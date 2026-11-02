@@ -12,7 +12,6 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   FinanceApprovalsResponse, FinanceEdit, FinanceFile, FinanceFileUploadTicket,
-  FinancePayment,
   FinanceFormConfig, FinanceOutstanding, FinancePayments, FinanceRequest,
   FinanceRequestDetail, FinanceRequestsResponse, PurchaseOrder,
   ZohoAccountLists, ZohoVendor,
@@ -1358,36 +1357,11 @@ function PaymentsCard({ requestId, requestType, data, canRecord, onChanged }: {
      off the record: it cannot be styled, cannot be read on a phone, and is
      dismissed by accident. The reason is kept on the request's notes as well,
      where somebody reading the request will actually come across it. */
-  const [reversing, setReversing] = useState<string | null>(null);
 
-  const reverse = async (paymentId: string, why: string) => {
-    setBusy(true);
-    setError(null);
-    try {
-      await api(`/finance/payments/${paymentId}/reverse`, {
-        method: 'POST', body: { reason: why },
-      });
-      setReversing(null);
-      onChanged();
-    } catch (e: any) {
-      setError(e?.message ?? 'The payment could not be reversed.');
-    } finally {
-      setBusy(false);
-    }
-  };
 
-  const beingReversed = data?.payments.find((x) => x.id === reversing) ?? null;
 
   return (
     <Card title="Payments">
-      {beingReversed ? (
-        <ReverseDialog
-          payment={beingReversed}
-          busy={busy}
-          onCancel={() => setReversing(null)}
-          onConfirm={(why) => void reverse(beingReversed.id, why)}
-        />
-      ) : null}
 
       {data && data.paid !== null ? (
         <dl className="kv">
@@ -1416,12 +1390,11 @@ function PaymentsCard({ requestId, requestType, data, canRecord, onChanged }: {
                 {pm.reference ? ` · ${pm.reference}` : ''}
                 {pm.isReversal ? ' · reversed' : ''}
               </span>
-              {pm.canReverse ? (
-                <button type="button" className="linkbtn" disabled={busy}
-                        onClick={() => setReversing(pm.id)}>
-                  Reverse
-                </button>
-              ) : null}
+              {/* No reverse control. Finance records a payment once the bank
+                  has moved the money and the receipt is in hand, so there is
+                  nothing to take back; an overpayment is settled with the
+                  supplier and corrected in Zoho. Rows created while the
+                  control existed still show as reversed above. */}
             </li>
           ))}
         </ul>
@@ -1613,50 +1586,6 @@ export function FinanceToPay() {
  * the request's notes, so somebody reading the request later finds out why the
  * figure moved without having to go looking for an audit log.
  */
-function ReverseDialog({ payment, busy, onCancel, onConfirm }: {
-  payment: FinancePayment;
-  busy: boolean;
-  onCancel: () => void;
-  onConfirm: (reason: string) => void;
-}) {
-  const [reason, setReason] = useState('');
-
-  return (
-    <div className="modal" role="dialog" aria-modal="true" aria-label="Reverse a payment">
-      <button type="button" className="modal__scrim" aria-label="Close" onClick={onCancel} />
-      <div className="modal__panel">
-        <header className="modal__head">
-          <h2 className="modal__title">Reverse {money(payment.amount)}?</h2>
-        </header>
-        <div className="modal__body">
-          <p className="muted">
-            Recorded {formatDate(payment.paidAt)}
-            {payment.recordedBy ? ` by ${payment.recordedBy}` : ''}
-            {payment.reference ? ` · ${payment.reference}` : ''}.
-          </p>
-          <p className="field__hint">
-            The payment stays on the record and a matching reversal is added
-            beside it. Nothing is deleted.
-          </p>
-          <label className="field">
-            <span className="field__label">Why is it being reversed?</span>
-            <textarea className="input" rows={3} value={reason} maxLength={1000} autoFocus
-                      placeholder="Paid to the wrong supplier"
-                      onChange={(e) => setReason(e.target.value)} />
-          </label>
-        </div>
-        <footer className="modal__foot">
-          <button type="button" className="btn btn--ghost" onClick={onCancel}>Cancel</button>
-          <button type="button" className="btn btn--danger"
-                  disabled={!reason.trim() || busy}
-                  onClick={() => onConfirm(reason.trim())}>
-            {busy ? 'Reversing…' : 'Reverse the payment'}
-          </button>
-        </footer>
-      </div>
-    </div>
-  );
-}
 
 /* ------------------------------------------------------ purchase orders -- */
 

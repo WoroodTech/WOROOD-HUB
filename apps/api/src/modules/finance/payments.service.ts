@@ -354,7 +354,20 @@ export class FinancePaymentsService {
       note: row.note ?? null,
       recordedBy: row.recorded_by_name ?? null,
       isReversal: !!row.reversal_of_id,
-      canReverse: !row.reversal_of_id && can(p, RECORD),
+      /*
+       * Nobody reverses a payment here.
+       *
+       * Finance records a payment only once the bank has actually moved the
+       * money and the receipt is in hand, so there is nothing to take back:
+       * an overpayment is settled with the supplier and corrected directly in
+       * Zoho, outside this module. The control existed on the assumption that
+       * a payment could be entered before it happened, which is not how the
+       * work is done.
+       *
+       * Reported as false rather than removed from the shape, because rows
+       * created while the control existed still have to render.
+       */
+      canReverse: false,
     };
   }
 
