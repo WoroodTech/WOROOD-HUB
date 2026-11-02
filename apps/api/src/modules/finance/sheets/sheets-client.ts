@@ -68,8 +68,15 @@ export class SheetsClient {
     return this.api;
   }
 
-  private assertUsable() {
-    if (this.mode === 'off') {
+  /**
+   * Refuse anything that would reach Google, unless this is only a read.
+   *
+   * `off` means "do not write", the same way `dry` does for Zoho. Reads are
+   * how a connection is checked before it is switched on, and blocking them
+   * made the setup check fail for the one reason that was expected.
+   */
+  private assertUsable(readOnly = false) {
+    if (this.mode === 'off' && !readOnly) {
       throw new Error('The sheet integration is switched off (SHEETS_MODE=off).');
     }
     if (!this.configured) {
@@ -88,12 +95,66 @@ export class SheetsClient {
    * time during a real write.
    */
   async describe() {
-    this.assertUsable();
+    /*
+     * Deliberately NOT assertUsable().
+     *
+     * Checking the connection is the one thing that has to work while the
+     * integration is still off — that is the whole point of switching it on
+     * in stages. Refusing here meant the first setup check returned a 500
+     * whose only cause was that nothing had been switched on yet, which sends
+     * somebody looking at keys and sharing instead.
+     */
+    if (!config.sheets.spreadsheetId) {
+      return this.cannot('SHEETS_SPREADSHEET_ID is not set.');
+    }
+    if (!config.sheets.serviceAccountKey) {
+      return this.cannot('SHEETS_SA_KEY_B64 is not set.');
+    }
+
+    try {
+      return await this.describeNow();
+    } catch (e: any) {
+      /* Google's own words, with what they usually mean beside them. Each of
+         these fails differently and sends people to a different place. */
+      const said = String(e?.message ?? e);
+      const likely =
+          /permission/i.test(said)
+            ? 'The service account has not been given access. Share the spreadsheet '
+              + 'with its e-mail address as an Editor.'
+        : /not found|notFound/i.test(said)
+            ? 'No spreadsheet has that id. Check SHEETS_SPREADSHEET_ID against the '
+              + 'part of the sheet URL between /d/ and /edit.'
+        : /base64|JSON|private_key|client_email/i.test(said)
+            ? 'The key could not be read. SHEETS_SA_KEY_B64 should be the whole '
+              + 'service-account JSON file, base64-encoded on one line.'
+        : /invalid_grant|JWT|signature/i.test(said)
+            ? 'Google rejected the key. It may have been revoked, or the server '
+              + 'clock may be wrong.'
+        : null;
+      return this.cannot(said, likely);
+    }
+  }
+
+  private cannot(said: string, likely?: string | null) {
+    return {
+      reachable: false, title: null, timeZone: null, tabs: [],
+      mode: this.mode,
+      spreadsheetId: config.sheets.spreadsheetId || null,
+      said,
+      likely: likely ?? null,
+    };
+  }
+
+  private async describeNow() {
     const res = await this.client().spreadsheets.get({
       spreadsheetId: config.sheets.spreadsheetId,
       fields: 'properties(title,timeZone),sheets.properties(title,gridProperties)',
     });
     return {
+      reachable: true,
+      spreadsheetId: config.sheets.spreadsheetId,
+      said: null,
+      likely: null,
       title: res.data.properties?.title ?? null,
       /* Worth seeing: the sheet's own timezone is what a date written without
          an offset will be read in. */
@@ -109,7 +170,7 @@ export class SheetsClient {
 
   /** One column of a tab, as plain strings. */
   async readColumn(tab: string, columnIndex: number, limit = 5000): Promise<string[]> {
-    this.assertUsable();
+    this.assertUsable(true);
     const letter = String.fromCharCode(65 + columnIndex);
     const res = await this.client().spreadsheets.values.get({
       spreadsheetId: config.sheets.spreadsheetId,
@@ -122,7 +183,7 @@ export class SheetsClient {
 
   /** The header row, for checking the columns are still where we think. */
   async readHeader(tab: string): Promise<string[]> {
-    this.assertUsable();
+    this.assertUsable(true);
     const res = await this.client().spreadsheets.values.get({
       spreadsheetId: config.sheets.spreadsheetId,
       range: `'${tab.replace(/'/g, "''")}'!1:1`,
