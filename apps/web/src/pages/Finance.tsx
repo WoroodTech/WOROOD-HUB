@@ -13,10 +13,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   FinanceApprovalsResponse, FinanceEdit, FinanceFile, FinanceFileUploadTicket,
   FinanceFormConfig, FinanceOutstanding, FinancePayments, FinanceRequest,
-  FinanceRequestDetail, FinanceRequestsResponse, PurchaseOrder,
+  FinanceRequestDetail, FinanceRequestsResponse, FinanceScopeDepartment,
+  FinanceSummary, PurchaseOrder,
   ZohoAccountLists, ZohoVendor,
 } from '../contract';
 import { api } from '../lib/api';
+import { formatMoney, formatMoneyShort } from '../lib/format';
 import { qk } from '../lib/keys';
 import { Card } from '../components/Card';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
@@ -92,11 +94,38 @@ export function Finance() {
 
 export function FinanceAll() {
   const [state, setState] = useState('');
+  const [departmentId, setDepartmentId] = useState('');
+
+  const qs = (extra = '') =>
+    `${state ? `&state=${state}` : ''}${departmentId ? `&departmentId=${departmentId}` : ''}${extra}`;
+
   const list = useQuery({
-    queryKey: qk.financeList(`all:${state}`),
+    queryKey: qk.financeList(`all:${state}:${departmentId}`),
     queryFn: () => api<FinanceRequestsResponse>(
-      `/finance/requests?limit=100${state ? `&state=${state}` : ''}`),
+      `/finance/requests?limit=100${qs()}`),
   });
+
+  /* The options come from what this person can see rather than from the
+     department table: a list naming every department in the company would
+     tell a requester which exist and how many, which is not theirs to learn
+     from a filter control. */
+  const scope = useQuery({
+    queryKey: qk.financeList('departments'),
+    queryFn: () => api<FinanceScopeDepartment[]>('/finance/requests/departments'),
+  });
+
+  /* Totals by department. Deliberately not filtered by the chosen
+     department — the cards are how somebody decides which one to look at, and
+     narrowing them to the current choice would leave one card saying what the
+     table below already says. The state filter does apply, because "approved
+     only" is a different question rather than a narrower one. */
+  const summary = useQuery({
+    queryKey: qk.financeList(`summary:${state}`),
+    queryFn: () => api<FinanceSummary>(
+      `/finance/requests/summary${state ? `?state=${state}` : ''}`),
+  });
+
+  const departments = scope.data ?? [];
 
   return (
     <div className="page">
@@ -108,7 +137,20 @@ export function FinanceAll() {
           </p>
         </div>
         <div className="pagehead__tools">
+          {/* Offered only when there is a choice to make. One department is
+              not a filter, it is a label. */}
+          {departments.length > 1 ? (
+            <select className="input input--sm" value={departmentId}
+                    aria-label="Department"
+                    onChange={(e) => setDepartmentId(e.target.value)}>
+              <option value="">Every department</option>
+              {departments.map((d) => (
+                <option key={d.departmentId} value={d.departmentId}>{d.name}</option>
+              ))}
+            </select>
+          ) : null}
           <select className="input input--sm" value={state}
+                  aria-label="State"
                   onChange={(e) => setState(e.target.value)}>
             <option value="">Any state</option>
             <option value="open">Still open</option>
@@ -118,12 +160,93 @@ export function FinanceAll() {
         </div>
       </header>
 
+      {summary.data?.meaningful ? (
+        <DepartmentTotals data={summary.data}
+                          selected={departmentId}
+                          onSelect={setDepartmentId} />
+      ) : null}
+
       {list.isLoading ? <LoadingState label="Loading" />
        : list.isError ? <ErrorState error={list.error} onRetry={() => void list.refetch()} />
        : !list.data?.requests.length
          ? <EmptyState icon="table" title="Nothing matches" hint="Try another state." />
          : <RequestTable items={list.data.requests} showRequester />}
     </div>
+  );
+}
+
+/**
+ * What each department has asked for, across the top of the list.
+ *
+ * For the people who need the shape of company spending rather than any one
+ * request: which team is asking for most, and how much of it is still owed.
+ *
+ * Built as the sales dashboard's KPI tiles rather than as something of its
+ * own — same `kpi` markup, same `tile` grid cell, same money formatters. Two
+ * kinds of figure card in one portal is two things to keep in step, and the
+ * reader has to learn which is which.
+ *
+ * Shown only when the viewer can see more than one department: the API says
+ * so. For everybody else these would be one tile restating the table below.
+ *
+ * Each tile is also the filter. Seeing that one department is high and then
+ * hunting for it in a dropdown is two steps where one will do, so the tile is
+ * a button with `aria-pressed` saying which is chosen.
+ */
+function DepartmentTotals({ data, selected, onSelect }: {
+  data: FinanceSummary;
+  selected: string;
+  onSelect: (id: string) => void;
+}) {
+  const tile = (key: string, name: string, chosen: boolean, onClick: () => void,
+                requested: number, requests: number, outstanding: number,
+                unpriced: number) => (
+    <div key={key} className="tile">
+      <button type="button"
+              className={`kpi kpi--pick${chosen ? ' is-on' : ''}`}
+              aria-pressed={chosen}
+              onClick={onClick}>
+        <div className="kpi__top">
+          <p className="kpi__label">{name}</p>
+        </div>
+        {/* Abbreviated on the tile, exact in the title — the dashboard's own
+            rule, so a reader who needs the precise number can get it without
+            leaving the page. */}
+        <p className="kpi__value" title={formatMoney(requested)}>
+          {formatMoneyShort(requested)}
+        </p>
+        <div className="kpi__foot">
+          <span className="kpi__sub">
+            {requests} request{requests === 1 ? '' : 's'}
+          </span>
+          {outstanding > 0 ? (
+            <span className="kpi__sub kpi__sub--owed" title={formatMoney(outstanding)}>
+              {formatMoneyShort(outstanding)} still owed
+            </span>
+          ) : (
+            <span className="kpi__sub kpi__sub--clear">all paid</span>
+          )}
+          {/* Said plainly rather than left to make the total look wrong. */}
+          {unpriced > 0 ? (
+            <span className="kpi__sub kpi__sub--warn">
+              {unpriced} not priced yet
+            </span>
+          ) : null}
+        </div>
+      </button>
+    </div>
+  );
+
+  return (
+    <section className="totalsgrid" aria-label="Totals by department">
+      {tile('all', 'Everything', !selected, () => onSelect(''),
+            data.total.requested, data.total.requests,
+            data.total.outstanding, data.total.unpriced)}
+      {data.departments.map((d) =>
+        tile(d.departmentId, d.name, selected === d.departmentId,
+             () => onSelect(selected === d.departmentId ? '' : d.departmentId),
+             d.requested, d.requests, d.outstanding, d.unpriced))}
+    </section>
   );
 }
 

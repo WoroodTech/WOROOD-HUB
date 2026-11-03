@@ -116,6 +116,33 @@ export class FinanceController {
   }
 
   /**
+   * What each department has asked for and been paid.
+   *
+   * No permission of its own, and that is the design: it aggregates exactly
+   * the rows `GET /requests` would return for this person, so somebody who
+   * can see one department sees one card, and somebody who can see the
+   * company sees all of them. A separate permission would be a second notion
+   * of who-sees-what to keep in step with the first.
+   */
+  @Get('requests/summary')
+  summary(@CurrentUser() p: Principal, @Query() q: ListRequests) {
+    return this.requests.summary(p, { state: q.state });
+  }
+
+  /**
+   * The departments this person can actually filter by.
+   *
+   * Derived from what they can see rather than from the department table: a
+   * list naming every department in the company would tell a requester which
+   * departments exist and how many, which is not theirs to learn from a
+   * filter control.
+   */
+  @Get('requests/departments')
+  requestDepartments(@CurrentUser() p: Principal) {
+    return this.requests.departmentsInScope(p);
+  }
+
+  /**
    * Everything waiting for this person: new requests and changes to approved
    * ones, in one answer.
    *
