@@ -484,6 +484,109 @@ export class FinanceRequestsService {
     return { sql: 'r.requester_id = $1', params: [p.id] };
   }
 
+  /**
+   * What each department has asked for and been paid, for the page header.
+   *
+   * Built on the same `visibility` clause the list uses, deliberately. The
+   * numbers here are an aggregate of exactly the rows the person could already
+   * open one by one, so the cards can never reveal a department somebody is
+   * not allowed to see -- and nobody has to keep two notions of who sees what
+   * in step as the rules change.
+   *
+   * A consequence worth stating: a department manager sees their own
+   * department's totals and nothing else. That is not a reduced version of an
+   * executive's view; it is the same query answering a narrower question.
+   *
+   * Drafts are excluded whatever the viewer's rights. A draft is money nobody
+   * has committed to asking for, and counting it would make a department's
+   * total move when somebody opens a form and wanders off.
+   */
+  async summary(p: Principal, opts: { state?: string } = {}) {
+    const v = this.visibility(p);
+    const params: any[] = [...v.params];
+    const where: string[] = [
+      'r.deleted_at IS NULL',
+      v.sql,
+      `r.approval_state <> 'DRAFT'`,
+    ];
+
+    if (opts.state === 'open') where.push(`r.approval_state IN
+      ('MANAGER_PENDING','PURCHASES_PENDING','FINANCE_PENDING')`);
+    if (opts.state === 'approved') where.push(`r.approval_state = 'APPROVED'`);
+    if (opts.state === 'rejected') where.push(`r.approval_state = 'REJECTED'`);
+
+    const rows = await query<any>(
+      `SELECT r.department_id,
+              d.name AS department_name, d.name_ar AS department_name_ar,
+              f.code AS department_code,
+              count(*) AS requests,
+              /* Unpriced requests are real requests with no number yet — a
+                 Purchases-routed one carries none until Purchases prices it.
+                 Counted in the count, absent from the money, and reported
+                 separately so a total that looks low is explained rather
+                 than just wrong. */
+              count(*) FILTER (WHERE r.requested_amount IS NULL) AS unpriced,
+              COALESCE(sum(r.requested_amount), 0) AS requested,
+              COALESCE(sum(paid.total), 0) AS paid
+         FROM fin_requests r
+         JOIN core_departments d ON d.id = r.department_id
+         LEFT JOIN fin_departments f ON f.department_id = r.department_id
+         LEFT JOIN LATERAL (
+           SELECT sum(amount) AS total FROM fin_payments WHERE request_id = r.id
+         ) paid ON true
+        WHERE ${where.join(' AND ')}
+        GROUP BY r.department_id, d.name, d.name_ar, f.code
+        ORDER BY sum(r.requested_amount) DESC NULLS LAST`,
+      params);
+
+    const departments = rows.map((r) => ({
+      departmentId: r.department_id,
+      name: r.department_name,
+      nameAr: r.department_name_ar,
+      code: r.department_code ?? null,
+      requests: Number(r.requests),
+      unpriced: Number(r.unpriced),
+      requested: Number(r.requested),
+      paid: Number(r.paid),
+      outstanding: Number(r.requested) - Number(r.paid),
+    }));
+
+    return {
+      departments,
+      total: {
+        requests: departments.reduce((n, d) => n + d.requests, 0),
+        unpriced: departments.reduce((n, d) => n + d.unpriced, 0),
+        requested: departments.reduce((n, d) => n + d.requested, 0),
+        paid: departments.reduce((n, d) => n + d.paid, 0),
+        outstanding: departments.reduce((n, d) => n + d.outstanding, 0),
+      },
+      /* The page shows the cards only when they say something: one department
+         is the person's own list with a heading on it. */
+      meaningful: departments.length > 1,
+    };
+  }
+
+  /**
+   * The departments this person has any requests visible in.
+   *
+   * Built from the same clause, so the filter can only offer what the list
+   * would answer. Naming every department in the company instead would tell a
+   * requester which departments exist and how many — not theirs to learn from
+   * a dropdown.
+   */
+  async departmentsInScope(p: Principal) {
+    const v = this.visibility(p);
+    const rows = await query<any>(
+      `SELECT DISTINCT r.department_id, d.name, d.name_ar
+         FROM fin_requests r
+         JOIN core_departments d ON d.id = r.department_id
+        WHERE r.deleted_at IS NULL AND ${v.sql}
+        ORDER BY d.name`, v.params);
+    return rows.map((r) => ({
+      departmentId: r.department_id, name: r.name, nameAr: r.name_ar,
+    }));
+  }
+
   async list(p: Principal, opts: {
     mine?: boolean; departmentId?: string; state?: string;
     limit?: number; offset?: number;

@@ -895,6 +895,40 @@ export interface FinanceRequestsResponse {
   total: number;
 }
 
+/**
+ * What each department has asked for and been paid.
+ *
+ * Aggregated from exactly the requests the viewer could open one by one, so
+ * a department manager sees one entry and Finance sees them all. Drafts are
+ * never counted: money nobody has committed to asking for.
+ */
+export interface FinanceDepartmentTotals {
+  departmentId: string;
+  name: string;
+  nameAr: string | null;
+  code: string | null;
+  requests: number;
+  /** Counted above, absent from the money: Purchases has not priced them. */
+  unpriced: number;
+  requested: number;
+  paid: number;
+  outstanding: number;
+}
+
+export interface FinanceSummary {
+  departments: FinanceDepartmentTotals[];
+  total: Omit<FinanceDepartmentTotals,
+              'departmentId' | 'name' | 'nameAr' | 'code'>;
+  /** False when the viewer sees one department: cards would say nothing. */
+  meaningful: boolean;
+}
+
+export interface FinanceScopeDepartment {
+  departmentId: string;
+  name: string;
+  nameAr: string | null;
+}
+
 export interface FinanceFormFields {
   type: boolean;
   amount: boolean;
