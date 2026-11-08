@@ -35,6 +35,8 @@ const PERMISSIONS: [string, string, string][] = [
   ['sales.dashboard.assign', 'sales-dashboard', 'Assign dashboards to roles and to individuals'],
   ['sales.order.view', 'sales-dashboard', 'Browse individual orders (no customer identity)'],
   ['sales.customer.view', 'sales-dashboard', 'See customer name, e-mail, phone and address'],
+  ['sales.order.note.write', 'sales-dashboard',
+   'Add notes to an order, published to its Shopify timeline'],
   ['sales.sync.manage', 'sales-dashboard', 'Trigger backfills, inspect sync health, re-register webhooks'],
   ['tasks.item.view-any', 'tasks', 'Read every ticket in the company'],
   ['tasks.item.manage-any', 'tasks', 'Act on any ticket regardless of department'],
@@ -78,7 +80,12 @@ const ROLES: Record<string, { name: string; nameAr: string; perms: string[] }> =
 
   'finance': {
     name: 'Finance', nameAr: 'المالية',
-    perms: ['sales.dashboard.view', 'sales.order.view', 'sales.customer.view']
+    /* Finance writes order notes: they reconcile payments against orders,
+       and what they find there is what the rest of the company needs on the
+       order itself. Granted on a live database by migration 0041, not by
+       running this file — see the note there. */
+    perms: ['sales.dashboard.view', 'sales.order.view', 'sales.customer.view',
+            'sales.order.note.write']
   },
 
   'marketing': {

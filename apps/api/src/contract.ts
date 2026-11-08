@@ -388,6 +388,32 @@ export interface OrderListItem {
   /** Null when the caller lacks sales.customer.view -- omitted, not blanked. */
   customer: { displayName: string | null; email: string | null; city: string | null } | null;
 }
+/** One note staff added to an order, published to its Shopify note. */
+export interface OrderNote {
+  id: string;
+  body: string;
+  authorName: string;
+  createdAt: string;
+  edited: boolean;
+  /** Yours to change. Somebody else's is a record of what they said. */
+  mine: boolean;
+}
+
+export interface OrderNotesResponse {
+  orderName: string;
+  canWrite: boolean;
+  notes: OrderNote[];
+  publishedAt: string | null;
+  /**
+   * Why the last publish failed, if it did.
+   *
+   * Surfaced rather than logged: a note that never reached Shopify looks
+   * exactly like one that did, and the person who wrote it is the one who
+   * needs to know.
+   */
+  publishError: string | null;
+}
+
 export interface OrderListResponse {
   orders: OrderListItem[]; total: number; page: number; pageSize: number;
   customerDataRedacted: boolean;
