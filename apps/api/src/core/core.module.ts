@@ -57,9 +57,18 @@ export class NotificationsService {
   }
 
   /** Fan out to everyone holding a permission -- used for sync alerts. */
+  /**
+   * Tell everybody who can act on something.
+   *
+   * `link` is passed through to each notification. Without it these arrive as
+   * a sentence with nowhere to go, and the reader has to work out which
+   * screen the work is on -- which is the one thing the notification was
+   * supposed to save them.
+   */
   async notifyPermissionHolders(permissionKey: string, moduleKey: string,
                                 title: string, body?: string,
-                                severity: 'INFO' | 'WARNING' | 'CRITICAL' = 'WARNING') {
+                                severity: 'INFO' | 'WARNING' | 'CRITICAL' = 'WARNING',
+                                link?: string) {
     const users = await query(
       `SELECT DISTINCT u.id FROM core_users u
          JOIN core_user_roles ur ON ur.user_id = u.id
@@ -68,7 +77,9 @@ export class NotificationsService {
         WHERE p.key = $1 AND u.deleted_at IS NULL AND u.status = 'ACTIVE'`,
       [permissionKey],
     );
-    for (const u of users) await this.notify(u.id, moduleKey, title, body, severity);
+    for (const u of users) {
+      await this.notify(u.id, moduleKey, title, body, severity, link);
+    }
   }
 }
 

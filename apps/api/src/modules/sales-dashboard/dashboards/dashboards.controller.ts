@@ -124,6 +124,10 @@ export class DashboardsController {
     const page = Math.max(parseInt(String(pageRaw), 10) || 1, 1);
     const pageSize = Math.min(Math.max(parseInt(String(sizeRaw), 10) || 25, 1), 100);
     const showCustomer = can(p, PERMISSIONS.CUSTOMER_VIEW);
+    /* Finance's, for reconciling a settlement statement. A permission of its
+       own rather than part of order.view: a gateway reference is a key into
+       the payment provider's records, not part of an order anybody needs. */
+    const showPayment = can(p, 'sales.order.payment.view');
 
     /* Deleted orders are excluded here rather than at each call site, so the
        list and the totals below cannot drift apart -- they share this clause.
@@ -172,9 +176,34 @@ export class DashboardsController {
         customer: showCustomer
           ? { displayName: r.display_name, email: r.customer_email, city: r.ship_city }
           : null,
+        /*
+         * Left out of the response entirely, not hidden in the table.
+         *
+         * A column hidden with CSS is still in the JSON, and the network tab
+         * is one key away — so a reference nobody is cleared to see would be
+         * there for anybody who looked.
+         *
+         * All three identifiers travel together: gateways disagree about
+         * which one they fill, and sending only `id` would make an empty cell
+         * read as "unpaid" when it means "this gateway uses another field".
+         */
+        payment: showPayment
+          ? {
+              id: r.payment_id,
+              authorization: r.payment_authorization,
+              gateway: r.payment_gateway,
+              /* Whether there is a receipt to look at, not the receipt
+                 itself: it can be kilobytes per order and carries card
+                 details on some gateways. */
+              hasReceipt: !!r.payment_receipt,
+            }
+          : null,
       })),
       total: Number(totalsRow.n), page, pageSize,
       customerDataRedacted: !showCustomer,
+      /* So the table knows the column is missing by rule rather than because
+         every order happened to have no reference. */
+      paymentDataRedacted: !showPayment,
       totals: {
         sales: Number(totalsRow.sales), collected: Number(totalsRow.collected),
         outstanding: Number(totalsRow.outstanding), currency: shop.currency_code,
@@ -186,6 +215,10 @@ export class DashboardsController {
   @Permissions(PERMISSIONS.ORDER_VIEW)
   async order(@CurrentUser() p: Principal, @Req() req: any, @Param('id') id: string) {
     const showCustomer = can(p, PERMISSIONS.CUSTOMER_VIEW);
+    /* Finance's, for reconciling a settlement statement. A permission of its
+       own rather than part of order.view: a gateway reference is a key into
+       the payment provider's records, not part of an order anybody needs. */
+    const showPayment = can(p, 'sales.order.payment.view');
     const o = await one(
       `SELECT o.*, c.display_name, c.email AS customer_email, c.phone AS customer_phone
          FROM sd_orders o LEFT JOIN sd_customers c ON c.id = o.customer_id

@@ -3,6 +3,8 @@ import type { ReactNode } from 'react';
 import { useAuth } from './lib/auth';
 import { Shell } from './components/Shell';
 import { Login } from './pages/Login';
+import { Signup } from './pages/Signup';
+import { Signups } from './pages/Signups';
 import { Home } from './pages/Home';
 import { BookRoom } from './pages/BookRoom';
 import { MyReservations } from './pages/MyReservations';
@@ -52,6 +54,9 @@ export function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      {/* Public, like the sign-in page: somebody without an account cannot
+          be behind the session guard. */}
+      <Route path="/signup" element={<Signup />} />
       <Route element={<RequireAuth><Shell /></RequireAuth>}>
         <Route path="/" element={<Home />} />
 
@@ -107,6 +112,7 @@ export function App() {
         <Route path="/admin/people" element={<People />} />
         <Route path="/admin/departments" element={<Departments />} />
         <Route path="/admin/roles" element={<Roles />} />
+        <Route path="/admin/signups" element={<Signups />} />
 
         <Route path="/sales" element={<SalesIndex />} />
         <Route path="/sales/d/:key" element={<SalesDashboard />} />
