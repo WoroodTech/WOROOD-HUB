@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { Icon, WoroodLogo } from '../components/Icon';
 
@@ -92,6 +92,9 @@ export function Login() {
           <button className="btn btn--primary btn--block" type="submit" disabled={busy || !email || !password}>
             {busy ? 'Signing in…' : !email ? 'Enter email' : !password ? 'Enter password' : 'Sign in'}
           </button>
+          <p className="login__alt">
+            No account yet? <Link to="/signup">Ask for one</Link>
+          </p>
         </form>
       </div>
     </div>

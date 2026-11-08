@@ -15,12 +15,15 @@
  */
 
 import {
-  Body, Controller, Delete, Get, Module, Param, ParseUUIDPipe, Patch, Post, Put, Query,
+  Body, Controller, Delete, Get, Module, Param, ParseUUIDPipe, Patch, Post, Put,
+  Query, Req,
 } from '@nestjs/common';
-import { CurrentUser, Permissions, Principal } from '../../common/auth';
+import { IsEmail, IsString, IsUUID, Matches, MaxLength, MinLength } from 'class-validator';
+import { CurrentUser, Permissions, Principal, Public } from '../../common/auth';
 import { registerHubModule } from '../../core/hub-registry';
 import { CoreModule } from '../../core/core.module';
 import { CORE_PERMISSIONS } from './permissions';
+import { SignupService } from './signup.service';
 import {
   CreateUser, ListUsersQuery, SetPassword, SetRolePermissions,
   SetDepartmentManager, SetUserDashboards, UpdateUser, UpsertRole,CreateDepartment
@@ -42,6 +45,11 @@ export const ADMINISTRATION_MODULE = registerHubModule({
       requiresAnyPermission: [CORE_PERMISSIONS.USER_MANAGE] },
     { label: 'Roles', labelAr: 'الأدوار', path: '/admin/roles', icon: 'lock',
       requiresAnyPermission: [CORE_PERMISSIONS.ROLE_MANAGE] },
+    /* Its own entry rather than a tab under People: these are not people yet,
+       and a queue nobody can see is a queue nobody clears. */
+    { label: 'Account requests', labelAr: 'طلبات الحسابات',
+      path: '/admin/signups', icon: 'user',
+      requiresAnyPermission: ['core.signup.review'] },
     /* Added with Module 3, which made the org chart load-bearing: who runs a
        department decides who may hand work out, and until this screen it could
        only be changed in SQL. */
@@ -60,13 +68,104 @@ export const ADMINISTRATION_MODULE = registerHubModule({
   ],
 });
 
+/** The address of whoever is at the keyboard, behind the proxy. */
+const ipOf = (req: any) =>
+  (req.headers['x-forwarded-for']?.split(',')[0] || req.socket?.remoteAddress || '')
+    .trim() || null;
+
+/**
+ * Asking for an account.
+ *
+ * Validated here rather than only in the service, because this form is open
+ * to the internet: everything arriving is a string somebody chose, and the
+ * first thing that should happen to it is being checked.
+ */
+class SignupRequestDto {
+  @IsEmail({}, { message: 'That does not look like an e-mail address.' })
+  @MaxLength(254)
+  email!: string;
+
+  /*
+   * Eight characters and more than one kind of thing in them.
+   *
+   * Not a wall of rules: a long list of requirements pushes people towards
+   * the one password they already use everywhere, which is worse than a short
+   * one they chose for this.
+   */
+  @IsString()
+  @MinLength(8, { message: 'Use at least 8 characters.' })
+  @MaxLength(200)
+  @Matches(/(?=.*[a-zA-Z])(?=.*[0-9!@#$%^&*(),.?":{}|<>_\-])/, {
+    message: 'Mix letters with at least one number or symbol.',
+  })
+  password!: string;
+
+  @IsString()
+  @MinLength(2, { message: 'Tell us your name.' })
+  @MaxLength(120)
+  fullName!: string;
+
+  /* A uuid from the list we served a moment ago. Anything else is a tampered
+     form rather than somebody making a mistake. */
+  @IsUUID('4', { message: 'Choose a department from the list.' })
+  departmentId!: string;
+}
+
+class SignupRejectDto {
+  @IsString()
+  @MinLength(3, { message: 'Give a reason — it is sent to them.' })
+  @MaxLength(500)
+  reason!: string;
+}
+
 @Controller('admin')
 export class AdministrationController {
   constructor(
     private readonly users: AdminUsersService,
     private readonly roles: AdminRolesService,
     private readonly depts: AdminDepartmentsService,
+    private readonly signup: SignupService,
   ) {}
+
+  /* ------------------------------------------------------- sign-ups ---- */
+  /*
+   * The form is open to anyone who can reach the portal. That is the design:
+   * approval is the gate, not the form. What it costs is handled in the
+   * service — one answer whatever happens, a ceiling per hour, and nothing
+   * becoming a user until somebody says so.
+   */
+
+  /** The departments the sign-up form offers. Public: it is on the form. */
+  @Public() @Get('signup/departments')
+  signupDepartments() { return this.signup.departments(); }
+
+  @Public() @Post('signup')
+  requestAccount(@Body() dto: SignupRequestDto, @Req() req: any) {
+    return this.signup.request(dto, ipOf(req));
+  }
+
+  @Get('signup/pending')
+  @Permissions('core.signup.review')
+  pendingSignups(@CurrentUser() p: Principal) { return this.signup.pending(p); }
+
+  @Get('signup/decided')
+  @Permissions('core.signup.review')
+  decidedSignups(@CurrentUser() p: Principal) { return this.signup.decided(p); }
+
+  @Post('signup/:id/approve')
+  @Permissions('core.signup.review')
+  approveSignup(@CurrentUser() p: Principal,
+                @Param('id', ParseUUIDPipe) id: string) {
+    return this.signup.approve(p, id);
+  }
+
+  @Post('signup/:id/reject')
+  @Permissions('core.signup.review')
+  rejectSignup(@CurrentUser() p: Principal,
+               @Param('id', ParseUUIDPipe) id: string,
+               @Body() dto: SignupRejectDto) {
+    return this.signup.reject(p, id, dto.reason);
+  }
 
   /* --------------------------------------------------------------- people */
 
@@ -204,6 +303,7 @@ export class AdministrationController {
 @Module({
   imports: [CoreModule],
   controllers: [AdministrationController],
-  providers: [AdminUsersService, AdminRolesService, AdminDepartmentsService],
+  providers: [AdminUsersService, AdminRolesService, AdminDepartmentsService,
+              SignupService],
 })
 export class AdministrationModule {}

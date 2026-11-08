@@ -387,6 +387,8 @@ export interface OrderListItem {
   currency: string; test: boolean; cancelledAt: string | null; itemCount: number;
   /** Null when the caller lacks sales.customer.view -- omitted, not blanked. */
   customer: { displayName: string | null; email: string | null; city: string | null } | null;
+  /** Null when the caller lacks sales.order.payment.view -- likewise omitted. */
+  payment?: OrderPaymentReference | null;
 }
 /** One note staff added to an order, published to its Shopify note. */
 export interface OrderNote {
@@ -414,10 +416,61 @@ export interface OrderNotesResponse {
   publishError: string | null;
 }
 
+/** A department the sign-up form can offer. Public, so names only. */
+export interface SignupDepartment { id: string; name: string; }
+
+/**
+ * The reply to a sign-up.
+ *
+ * The same whatever happened — an address that already has an account, one
+ * with a request waiting, and a new one all get this. A different answer for
+ * each would let anybody ask the portal who works here.
+ */
+export interface SignupReply { received: boolean; message: string; }
+
+export interface PendingSignup {
+  id: string;
+  email: string;
+  fullName: string;
+  departmentName: string;
+  requestedAt: string;
+}
+
+export interface DecidedSignup {
+  id: string;
+  email: string;
+  fullName: string;
+  status: 'APPROVED' | 'REJECTED';
+  departmentName: string;
+  decidedBy: string | null;
+  decidedAt: string;
+  reason: string | null;
+}
+
+/**
+ * The gateway's reference for an order's payment.
+ *
+ * Present only for somebody holding `sales.order.payment.view`; `null`
+ * otherwise, and the response says so with `paymentDataRedacted`.
+ *
+ * Three identifiers because gateways disagree about which they fill. An
+ * empty `id` next to a filled `authorization` is normal, and does not mean
+ * the order is unpaid.
+ */
+export interface OrderPaymentReference {
+  id: string | null;
+  authorization: string | null;
+  gateway: string | null;
+  /** Whether a gateway receipt was stored. Not the receipt itself. */
+  hasReceipt: boolean;
+}
+
 export interface OrderListResponse {
   orders: OrderListItem[]; total: number; page: number; pageSize: number;
   customerDataRedacted: boolean;
   totals: { sales: number; collected: number; outstanding: number; currency: string };
+  /** True when the viewer may not see gateway references. */
+  paymentDataRedacted?: boolean;
 }
 
 /* ---------------------------------------------------------------- admin -- */

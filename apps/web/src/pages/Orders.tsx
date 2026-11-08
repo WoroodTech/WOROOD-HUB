@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import type { OrderListResponse } from '../contract';
+import type { OrderListResponse, OrderPaymentReference } from '../contract';
 import { api } from '../lib/api';
 import { qk } from '../lib/keys';
 import { ErrorState, LoadingState, EmptyState } from '../components/States';
@@ -10,6 +10,45 @@ import { Icon } from '../components/Icon';
 import { formatDateTime, formatInteger, formatMoney } from '../lib/format';
 
 const PAGE_SIZES = [25, 50, 100];
+
+/**
+ * The gateway's reference for an order's payment.
+ *
+ * Shows the first identifier the gateway actually filled, and says which one
+ * it was. Gateways disagree about where they put the number, so two orders
+ * paid through different providers can show different fields — and without
+ * the label underneath, somebody matching a statement would paste one into a
+ * column meant for the other.
+ */
+function PaymentReference({ payment }: { payment?: OrderPaymentReference | null }) {
+  if (!payment) return <span className="muted">—</span>;
+
+  const found = payment.id ? { value: payment.id, from: 'payment id' }
+    : payment.authorization ? { value: payment.authorization, from: 'authorization' }
+    : null;
+
+  if (!found) {
+    /* The gateway sent neither. Said as "none given" rather than left blank,
+       because a blank cell reads as "this order was not paid". */
+    return (
+      <span className="muted" title={payment.gateway
+        ? `${payment.gateway} returned no reference for this order`
+        : 'No successful payment transaction on this order'}>
+        none given
+      </span>
+    );
+  }
+
+  return (
+    <span className="payref">
+      <span className="payref__value">{found.value}</span>
+      <span className="payref__from">
+        {found.from}{payment.gateway ? ` · ${payment.gateway}` : ''}
+        {payment.hasReceipt ? ' · receipt' : ''}
+      </span>
+    </span>
+  );
+}
 
 export function Orders() {
   /* Which order's notes are open, with its name — the dialog's heading needs
@@ -25,6 +64,11 @@ export function Orders() {
   });
 
   const pages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
+
+  /* The server decides, not this component. `paymentDataRedacted` says the
+     column is absent by rule rather than because every order on this page
+     happened to have no reference — which would otherwise look the same. */
+  const showPayment = data ? data.paymentDataRedacted !== true : false;
   const redacted = !!data?.customerDataRedacted;
 
   return (
@@ -76,6 +120,9 @@ export function Orders() {
                   <th scope="col" className="is-end">Ordered</th>
                   <th scope="col" className="is-end">Collected</th>
                   <th scope="col" className="is-end">Outstanding</th>
+                  {/* Present only when the API sent references at all — the
+                      permission decides, not this component. */}
+                  {showPayment ? <th scope="col">Gateway reference</th> : null}
                   <th scope="col"><span className="visually-hidden">Notes</span></th>
                 </tr>
               </thead>
@@ -104,6 +151,9 @@ export function Orders() {
                     <td className={`is-end${o.outstanding > 0 ? ' is-transit' : ''}`}>
                       {formatMoney(o.outstanding, o.currency)}
                     </td>
+                    {showPayment ? (
+                      <td><PaymentReference payment={o.payment} /></td>
+                    ) : null}
                     <td>
                       {/* Opens for everybody who can see the order: reading
                           the notes is part of reading the order. Whether the

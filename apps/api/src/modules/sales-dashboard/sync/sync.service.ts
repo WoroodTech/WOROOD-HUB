@@ -65,6 +65,57 @@ export class SyncService {
    * watermark, the backfill owns `orders_backfill` and has no watermark to
    * advance.
    */
+  /**
+   * The gateway's reference for what was actually paid.
+   *
+   * The successful sale or capture, not the last transaction: a refunded
+   * order's last transaction is the refund, and matching a statement line to
+   * that would put the order against the wrong row.
+   *
+   * Falls back to a successful authorization, because a gateway that
+   * authorises and captures separately may carry the reference only on the
+   * first of the two.
+   *
+   * All three identifiers are kept. Gateways disagree about where they put
+   * the number — some fill `paymentId`, some only `authorizationCode`, some
+   * bury it in the receipt — and keeping one would make an empty cell read as
+   * "this order is unpaid" when it means "this gateway uses a different
+   * field". Somebody reconciling would then mark the order as missing from
+   * the statement.
+   */
+  private paymentReference(order: any): {
+    id: string | null; authorization: string | null;
+    gateway: string | null; receipt: any;
+  } {
+    const all: any[] = Array.isArray(order?.transactions) ? order.transactions : [];
+    const successful = all.filter((t) => t?.status === 'SUCCESS');
+
+    const paid = successful.find((t) => t?.kind === 'SALE' || t?.kind === 'CAPTURE')
+      ?? successful.find((t) => t?.kind === 'AUTHORIZATION');
+
+    if (!paid) return { id: null, authorization: null, gateway: null, receipt: null };
+
+    let receipt: any = null;
+    if (paid.receiptJson) {
+      try {
+        receipt = typeof paid.receiptJson === 'string'
+          ? JSON.parse(paid.receiptJson) : paid.receiptJson;
+      } catch {
+        /* Some gateways send something that is not JSON at all. Kept as the
+           text it came as rather than dropped — it may still hold the number
+           somebody is looking for. */
+        receipt = { raw: String(paid.receiptJson).slice(0, 4000) };
+      }
+    }
+
+    return {
+      id: paid.paymentId ?? null,
+      authorization: paid.authorizationCode ?? null,
+      gateway: paid.gateway ?? null,
+      receipt,
+    };
+  }
+
   async upsertOrders(orders: any[]): Promise<number> {
     const shop = await this.shops.get();
     let n = 0;
@@ -116,6 +167,10 @@ export class SyncService {
           linkedCustomer = cu.id;
         }
 
+        /* The gateway's reference, out of the transactions the query brought
+           with the order. */
+        const payment = this.paymentReference(o);
+
         const row = await first(
           `INSERT INTO sd_orders (shop_id, shopify_gid, name, order_number, customer_id,
               shopify_created_at, processed_at, cancelled_at, cancel_reason, shopify_updated_at,
@@ -124,9 +179,10 @@ export class SyncService {
               total_price, current_total_price, subtotal_price, current_subtotal_price,
               total_discounts, total_tax, total_shipping, total_refunded, net_payment,
               total_outstanding, presentment_total_price,
-              ship_city, ship_province, ship_country)
+              ship_city, ship_province, ship_country,
+              payment_id, payment_authorization, payment_gateway, payment_receipt)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-                   $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
+                   $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35)
            ON CONFLICT (shopify_gid) DO UPDATE SET
              -- Never null an existing customer link.
              --
@@ -183,7 +239,18 @@ export class SyncService {
              -- address seconds after a webhook delivered it.
              ship_city = COALESCE(EXCLUDED.ship_city, sd_orders.ship_city),
              ship_province = COALESCE(EXCLUDED.ship_province, sd_orders.ship_province),
-             ship_country = COALESCE(EXCLUDED.ship_country, sd_orders.ship_country)
+             ship_country = COALESCE(EXCLUDED.ship_country, sd_orders.ship_country),
+
+             -- Additive, like the address above and for the same reason: the
+             -- hydration read omits transactions, so a plain assignment would
+             -- blank a reference seconds after the sync had fetched it.
+             payment_id = COALESCE(EXCLUDED.payment_id, sd_orders.payment_id),
+             payment_authorization =
+               COALESCE(EXCLUDED.payment_authorization, sd_orders.payment_authorization),
+             payment_gateway =
+               COALESCE(EXCLUDED.payment_gateway, sd_orders.payment_gateway),
+             payment_receipt =
+               COALESCE(EXCLUDED.payment_receipt, sd_orders.payment_receipt)
 
            -- The ordering guard, enforced by the database rather than by a read
            -- taken moments earlier.
@@ -214,7 +281,9 @@ export class SyncService {
            shopMoney(o.netPaymentSet), shopMoney(o.totalOutstandingSet),
            money(o.totalPriceSet?.presentmentMoney?.amount),
            o.shippingAddress?.city ?? null, o.shippingAddress?.province ?? null,
-           o.shippingAddress?.country ?? null]);
+           o.shippingAddress?.country ?? null,
+           payment.id, payment.authorization, payment.gateway,
+           payment.receipt ? JSON.stringify(payment.receipt) : null]);
 
         /* No row means the guard refused this payload: what is stored is newer.
            Nothing else on the order is written either -- line items and refunds
@@ -937,6 +1006,16 @@ export class SyncService {
                  totalRefundedSet       { shopMoney { amount } }
                  netPaymentSet          { shopMoney { amount } }
                  totalOutstandingSet    { shopMoney { amount } }
+                 # The gateway's own reference, for reconciling a settlement
+                 # statement. Here rather than from
+                 # /orders/{id}/transactions.json, which is one request per
+                 # order -- fifty on a page would be fifty calls to Shopify
+                 # every time somebody opened it. Ten is well past what any
+                 # order needs: an authorization, a capture, and room for
+                 # refunds.
+                 transactions(first: 10) {
+                   kind status gateway paymentId authorizationCode receiptJson
+                 }
                  shippingAddress { city province country zip }
                  customer { id displayName email phone numberOfOrders createdAt }
                  lineItems(first: 100) {

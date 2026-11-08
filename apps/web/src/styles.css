@@ -3292,3 +3292,144 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 
 .notecompose__error { margin: 0; font-size: 12.5px; color: var(--danger); }
+/* -------------------------------------------------------------- sign-up -- */
+
+/* The link between the two panels. */
+.login__alt {
+  margin: 14px 0 0;
+  font-size: 13px;
+  text-align: center;
+  color: var(--muted);
+}
+.login__alt a { color: var(--accent); font-weight: 550; }
+
+/*
+ * What happened, on the page.
+ *
+ * Not a browser alert: that is a grey box with an OK button, cannot be
+ * styled, and is gone the moment it is dismissed — so somebody who closes it
+ * too fast has nothing left to read. This stays until they leave.
+ */
+.signupdone { text-align: center; }
+
+.signupdone__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 44px;
+  block-size: 44px;
+  margin-block-end: 14px;
+  color: #fff;
+  background: var(--accent);
+  border-radius: 50%;
+}
+
+.signupdone__title { margin: 0 0 10px; font-size: 19px; }
+
+.signupdone__body {
+  margin: 0 0 10px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink-2, var(--muted));
+}
+
+.signupdone__body--quiet { color: var(--muted); font-size: 13px; }
+
+.signupdone .btn { margin-block-start: 18px; }
+
+/*
+ * The password rules, filling in as they type.
+ *
+ * A list rather than one line of changing text: somebody can see what is
+ * left to do instead of discovering it one message at a time. Unmet rules
+ * are grey, not red — they are still typing, and nothing has gone wrong yet.
+ */
+.pwmeter { margin-block-start: 8px; }
+
+.pwmeter__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+
+.pwmeter__rule {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  color: var(--muted);
+  transition: color .15s ease;
+}
+
+.pwmeter__rule.is-met { color: var(--good-ink, var(--accent)); }
+
+.pwmeter__tick {
+  display: inline-flex;
+  inline-size: 14px;
+  justify-content: center;
+  opacity: .55;
+}
+.pwmeter__rule.is-met .pwmeter__tick { opacity: 1; }
+
+/*
+ * How much more than the minimum this is.
+ *
+ * Shown only once the rules are met, so it never reads as a fourth thing to
+ * satisfy. Nothing here refuses a password — it is encouragement.
+ */
+.pwbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-block-start: 8px;
+}
+
+.pwbar__track { display: flex; gap: 3px; flex: 1; }
+
+.pwbar__seg {
+  block-size: 4px;
+  flex: 1;
+  background: var(--line);
+  border-radius: 99px;
+  transition: background-color .18s ease;
+}
+
+/* One colour per level, so the bar says the same thing as the word. */
+.pwbar__seg.is-on.is-1 { background: var(--warning, #c2410c); }
+.pwbar__seg.is-on.is-2 { background: var(--accent); }
+.pwbar__seg.is-on.is-3 { background: var(--good-ink, #15803d); }
+
+.pwbar__word { font-size: 12px; font-weight: 550; min-inline-size: 42px; }
+.pwbar__word.is-1 { color: var(--warning-ink, var(--muted)); }
+.pwbar__word.is-2 { color: var(--accent); }
+.pwbar__word.is-3 { color: var(--good-ink, var(--muted)); }
+
+/* The buttons at the end of a table row. */
+.rowtools { display: flex; gap: 8px; flex-wrap: nowrap; }
+
+/* ------------------------------------------------- order payment reference */
+
+/*
+ * The gateway's reference, with the field it came from underneath.
+ *
+ * The label is not decoration: gateways disagree about which identifier they
+ * fill, so two orders can show different fields, and somebody matching a
+ * settlement statement needs to know which column to paste it into.
+ */
+.payref { display: inline-flex; flex-direction: column; gap: 1px; }
+
+.payref__value {
+  /* Monospace and tabular: these get compared by eye against a statement. */
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.payref__from {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: lowercase;
+}
