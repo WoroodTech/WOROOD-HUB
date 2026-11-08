@@ -3211,3 +3211,84 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .kpi__sub--owed { color: var(--ink-2, var(--muted)); font-weight: 550; }
 .kpi__sub--clear { color: var(--good-ink, var(--muted)); }
 .kpi__sub--warn { color: var(--warning-ink, var(--muted)); }
+/* ---------------------------------------------------------- order notes -- */
+
+/*
+ * Notes staff add to an order, shown in a dialog over the list.
+ *
+ * They are published into the order's note in Shopify, which is why each one
+ * carries its author on the line: Shopify's note has no author field, and its
+ * timeline event says only that the note changed.
+ */
+
+.notelist { list-style: none; margin: 0 0 var(--space-4, 16px); padding: 0; }
+
+.notelist__item {
+  padding-block: 10px;
+  border-block-end: 1px solid var(--line);
+}
+.notelist__item:last-child { border-block-end: 0; }
+
+.notelist__meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+}
+
+.notelist__when { color: var(--muted); }
+
+.notelist__body {
+  margin: 4px 0 0;
+  /* Kept as typed: somebody writing a short list in a note means the line
+     breaks, and collapsing them would change what they said. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * Edit and Remove, as filled buttons in the brand accent.
+ *
+ * Both of them the same colour: each acts on your own note, which you wrote a
+ * moment ago and can write again. Painting Remove red would borrow the weight
+ * the portal keeps for the things that cannot be undone.
+ *
+ * White text on the accent in both themes -- the dark palette's accent is a
+ * lighter orange, and both are dark enough behind white to stay readable.
+ */
+.notelist__tools { display: flex; gap: 8px; margin-block-start: 8px; }
+
+.notebtn {
+  padding: 4px 12px;
+  font-size: 12.5px;
+  font-weight: 550;
+  color: #fff;
+  background: var(--accent);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 6px);
+  cursor: pointer;
+  /* Only the fill moves. Animating the padding would shift the button
+     beside it. */
+  transition: background-color .12s ease;
+}
+
+.notebtn:hover:not(:disabled) { background: var(--accent-hover); }
+
+.notebtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.notebtn:disabled { opacity: .55; cursor: default; }
+
+.notecompose { display: flex; flex-direction: column; gap: 8px; }
+
+.notecompose__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.notecompose__error { margin: 0; font-size: 12.5px; color: var(--danger); }

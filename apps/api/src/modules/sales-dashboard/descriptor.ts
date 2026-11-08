@@ -50,6 +50,10 @@ export const SALES_DASHBOARD_MODULE = registerHubModule({
     { key: 'sales.dashboard.manage', description: 'Create, edit and delete dashboards; see all of them' },
     { key: 'sales.dashboard.assign', description: 'Assign dashboards to roles and to individuals' },
     { key: 'sales.order.view',       description: 'Browse individual orders (no customer identity)' },
+    /* Writing, not reading. A note added here is published to the order in
+       Shopify, where the merchant and every staff member can see it, so it
+       is nothing like permission to look at an order. */
+    { key: 'sales.order.note.write', description: 'Add notes to an order, published to its Shopify timeline' },
     { key: 'sales.customer.view',    description: 'See customer name, e-mail, phone and address' },
     { key: 'sales.sync.manage',      description: 'Trigger backfills, inspect sync health, re-register webhooks' },
   ],

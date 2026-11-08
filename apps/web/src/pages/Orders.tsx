@@ -4,6 +4,7 @@ import type { OrderListResponse } from '../contract';
 import { api } from '../lib/api';
 import { qk } from '../lib/keys';
 import { ErrorState, LoadingState, EmptyState } from '../components/States';
+import { OrderNotesDialog } from '../components/OrderNotes';
 import { StatusPill } from '../charts/DataTable';
 import { Icon } from '../components/Icon';
 import { formatDateTime, formatInteger, formatMoney } from '../lib/format';
@@ -11,6 +12,9 @@ import { formatDateTime, formatInteger, formatMoney } from '../lib/format';
 const PAGE_SIZES = [25, 50, 100];
 
 export function Orders() {
+  /* Which order's notes are open, with its name — the dialog's heading needs
+     it and the row already has it, so it travels rather than being fetched. */
+  const [notesFor, setNotesFor] = useState<{ id: string; name: string } | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
 
@@ -24,6 +28,9 @@ export function Orders() {
   const redacted = !!data?.customerDataRedacted;
 
   return (
+    /* The dialog is a sibling of the page, not a child of it: nesting it
+       inside the table would put a modal inside a scrolling container. */
+    <>
     <div className="page">
       <header className="pagehead">
         <div>
@@ -69,6 +76,7 @@ export function Orders() {
                   <th scope="col" className="is-end">Ordered</th>
                   <th scope="col" className="is-end">Collected</th>
                   <th scope="col" className="is-end">Outstanding</th>
+                  <th scope="col"><span className="visually-hidden">Notes</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -95,6 +103,18 @@ export function Orders() {
                     <td className="is-end">{formatMoney(o.netPayment, o.currency)}</td>
                     <td className={`is-end${o.outstanding > 0 ? ' is-transit' : ''}`}>
                       {formatMoney(o.outstanding, o.currency)}
+                    </td>
+                    <td>
+                      {/* Opens for everybody who can see the order: reading
+                          the notes is part of reading the order. Whether the
+                          compose box appears is the API's answer, not this
+                          button's. */}
+                      <button type="button" className="iconbtn"
+                              aria-label={`Notes on ${o.name}`}
+                              title="Notes"
+                              onClick={() => setNotesFor({ id: o.id, name: o.name })}>
+                        <Icon name="list" size={15} />
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -133,5 +153,11 @@ export function Orders() {
         </div>
       ) : null}
     </div>
+
+    {notesFor ? (
+      <OrderNotesDialog orderId={notesFor.id} orderName={notesFor.name}
+                        onClose={() => setNotesFor(null)} />
+    ) : null}
+    </>
   );
 }

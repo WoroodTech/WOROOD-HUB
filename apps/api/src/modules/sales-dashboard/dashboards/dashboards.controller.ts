@@ -1,17 +1,31 @@
 import {
-  Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Put, Query, Req,
+  Body, Controller, Delete, Get, NotFoundException, Param, ParseUUIDPipe, Patch,
+  Post, Put, Query, Req,
 } from '@nestjs/common';
+import { IsString, MaxLength, MinLength } from 'class-validator';
 import { CurrentUser, Permissions, Principal, can } from '../../../common/auth';
 import { query, one, tx } from '../../../common/db';
 import { AuditService } from '../../../core/core.module';
 import { AccessService } from './access.service';
 import { MetricsService, RangeKey, CompareDays } from '../metrics/metrics.service';
 import { ShopifyService } from '../shopify/shopify.service';
+import { OrderNotesService } from '../orders/order-notes.service';
 import { ShopContext } from '../analytics/snapshot.service';
 import { PERMISSIONS, DashboardDataResponse, OrderListResponse } from '../../../contract';
 
 const ipOf = (req: any) =>
   (req?.headers?.['x-forwarded-for']?.split(',')[0] || req?.socket?.remoteAddress || '').trim() || null;
+
+/**
+ * One note on an order.
+ *
+ * Bounded because it is published into the merchant's own order note, which
+ * is a single field shared with whatever they wrote themselves -- an
+ * unbounded paste would push their text out of sight.
+ */
+class OrderNoteBody {
+  @IsString() @MinLength(1) @MaxLength(2000) body!: string;
+}
 
 @Controller('sales')
 export class DashboardsController {
@@ -21,6 +35,7 @@ export class DashboardsController {
     private shops: ShopContext,
     private audit: AuditService,
     private shopify: ShopifyService,
+    private notes: OrderNotesService,
   ) {}
 
   /* ------------------------------------------------------------ viewing -- */
@@ -206,6 +221,55 @@ export class DashboardsController {
       },
       items, refunds, customerDataRedacted: !showCustomer,
     };
+  }
+
+  /* ------------------------------------------------------ order notes -- */
+  /*
+   * Shopify cannot be told to add a timeline comment -- `CommentEvent` is
+   * read-only in the Admin API and no mutation creates one. What can be
+   * written is the order's `note`, and changing that does appear in the
+   * timeline, as a note-changed event carrying the text.
+   *
+   * Since `note` is one string rather than a list, the notes live here with
+   * their authors and the order's Shopify note is rebuilt from them after
+   * every change.
+   */
+
+  @Get('orders/:id/notes')
+  @Permissions('sales.order.view')
+  orderNotes(@CurrentUser() p: Principal,
+             @Param('id', ParseUUIDPipe) id: string) {
+    return this.notes.list(p, id);
+  }
+
+  @Post('orders/:id/notes')
+  @Permissions('sales.order.note.write')
+  addOrderNote(@CurrentUser() p: Principal,
+               @Param('id', ParseUUIDPipe) id: string,
+               @Body() dto: OrderNoteBody) {
+    return this.notes.add(p, id, dto.body);
+  }
+
+  @Patch('orders/notes/:noteId')
+  @Permissions('sales.order.note.write')
+  editOrderNote(@CurrentUser() p: Principal,
+                @Param('noteId', ParseUUIDPipe) noteId: string,
+                @Body() dto: OrderNoteBody) {
+    return this.notes.edit(p, noteId, dto.body);
+  }
+
+  @Delete('orders/notes/:noteId')
+  @Permissions('sales.order.note.write')
+  removeOrderNote(@CurrentUser() p: Principal,
+                  @Param('noteId', ParseUUIDPipe) noteId: string) {
+    return this.notes.remove(p, noteId);
+  }
+
+  /** Republish the orders whose notes could not be written. */
+  @Post('orders/notes/retry')
+  @Permissions('sales.sync.manage')
+  retryOrderNotes(@CurrentUser() p: Principal) {
+    return this.notes.retryFailed(p);
   }
 
   /* ---------------------------------------------------------- composing -- */
