@@ -1707,11 +1707,11 @@ function PaymentsCard({ requestId, requestType, data, canRecord, onChanged }: {
                       value={expenseAccount} onChange={setExpenseAccount}
                       placeholder="Search expense accounts…"
                       options={accounts.data!.expense.map((a) => ({
+                        /* No hint line, so this reads like Paid from and
+                           Into which petty cash beside it. Three fields in a
+                           row where one is a line taller than the others
+                           looks like a mistake rather than extra detail. */
                         value: a.id, label: a.name,
-                        /* The parent as a hint rather than a prefix: it makes
-                           the account itself the thing being read, and the
-                           search still matches on both. */
-                        hint: a.parentName ?? undefined,
                       }))} />
                   </label>
                 )}

@@ -43,7 +43,7 @@ export function SearchSelect({
      list that always drops downward ends up off the bottom of the window —
      so the options are there but nobody can reach them without scrolling the
      field itself out of view. */
-  const [up, setUp] = useState(false);
+  const [up, setUp] = useState(true);
   const box = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLUListElement>(null);
 
@@ -74,11 +74,20 @@ export function SearchSelect({
       const r = box.current?.getBoundingClientRect();
       if (!r) return;
       const below = window.innerHeight - r.bottom;
-      /* The list is 260px at most, plus its margin. Opens upward only when
-         below cannot hold it and above can — otherwise down, where a list
-         that has to scroll at least starts in the usual place. */
+      /*
+       * Upward wherever it fits.
+       *
+       * These sit near the bottom of long forms, and opening downward there
+       * puts the options under the fold — the list is open and nobody can
+       * see it without scrolling the field itself out of view.
+       *
+       * Still measured: a field near the top of the window has nowhere to go
+       * upward, and forcing it there would be the same fault mirrored.
+       */
       const needed = 268;
-      setUp(below < needed && r.top > below);
+      const roomAbove = r.top >= needed;
+      const roomBelow = below >= needed;
+      setUp(roomAbove || (!roomBelow && r.top > below));
     };
     place();
     window.addEventListener('resize', place);
