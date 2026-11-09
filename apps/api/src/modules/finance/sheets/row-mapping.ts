@@ -40,6 +40,20 @@ export const TAB_FOR_DEPARTMENT: Record<string, string> = {
   OFC: 'Purchases Log',
   WKS: 'Purchases Log',
   WRH: 'Purchases Log',
+
+  /*
+   * The departments opened up in 0044.
+   *
+   * Each needs a tab of this name in the accountant's spreadsheet. Until it
+   * exists the write fails and the event stays FAILED and retryable, which
+   * is visible — an unmapped code, by contrast, is only a log line, and the
+   * request would vanish quietly.
+   */
+  FIN: 'Finance Log',
+  OPS: 'Operations Log',
+  EXC: 'Executive Log',
+  SLS: 'Sales Log',
+  FAC: 'Facilities Log',
 };
 
 /**

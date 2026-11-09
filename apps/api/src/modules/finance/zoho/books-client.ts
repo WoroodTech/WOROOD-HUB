@@ -100,6 +100,16 @@ export class ZohoTokenManager {
 }
 
 @Injectable()
+/**
+ * Raised when a write is attempted while the connection is in dry mode.
+ *
+ * Its own class so the queue can tell "not sent on purpose" from "Zoho
+ * refused this", and back off gently rather than burning retries.
+ */
+export class ZohoDryModeError extends Error {
+  readonly dryMode = true;
+}
+
 export class ZohoBooksClient {
   private readonly log = new Logger('ZohoBooks');
 
@@ -157,7 +167,22 @@ export class ZohoBooksClient {
      */
     if (this.mode === 'dry' && method !== 'GET') {
       this.log.log(`[dry] ${method} ${path} ${JSON.stringify(opts.body ?? {})}`);
-      return { dry: true, [idFieldFor(path)]: `dry-${Date.now()}` };
+      /*
+       * Refused, not faked.
+       *
+       * This used to return a stub id, and the worker wrote it down and
+       * marked the event POSTED. So a real payment recorded while the
+       * connection was in dry mode was never sent — it looked done, carried
+       * an id beginning `dry-`, and switching to live did not bring it back
+       * because nothing was left pending.
+       *
+       * Five payments were lost that way before anybody noticed. Throwing
+       * instead leaves the event FAILED and retryable, so turning the
+       * connection on is all it takes.
+       */
+      throw new ZohoDryModeError(
+        `Zoho is in dry mode, so this ${method} was not sent. `
+        + 'The event stays queued and will be sent when ZOHO_MODE=live.');
     }
 
     let res: Response;

@@ -1,10 +1,12 @@
 import {
   Body, Controller, Delete, Get, NotFoundException, Param, ParseUUIDPipe, Patch,
-  Post, Put, Query, Req,
+  Post, Put, Query, Req, Res,
 } from '@nestjs/common';
 import { IsString, MaxLength, MinLength } from 'class-validator';
 import { CurrentUser, Permissions, Principal, can } from '../../../common/auth';
 import { query, one, tx } from '../../../common/db';
+import { PaymentExportService } from '../orders/payment-export.service';
+import { BulkCommentsService } from '../orders/bulk-comments.service';
 import { AuditService } from '../../../core/core.module';
 import { AccessService } from './access.service';
 import { MetricsService, RangeKey, CompareDays } from '../metrics/metrics.service';
@@ -34,6 +36,8 @@ export class DashboardsController {
     private metrics: MetricsService,
     private shops: ShopContext,
     private audit: AuditService,
+    private paymentExport: PaymentExportService,
+    private bulk: BulkCommentsService,
     private shopify: ShopifyService,
     private notes: OrderNotesService,
   ) {}
@@ -114,6 +118,67 @@ export class DashboardsController {
   }
 
   /* ------------------------------------------------------------- orders -- */
+
+  /* --------------------------------------------- bulk order comments ---- */
+
+  /**
+   * Start a run.
+   *
+   * The references arrive already parsed: the file is read in the browser,
+   * which keeps a spreadsheet parser out of the API and means an unreadable
+   * file is caught before anything is uploaded.
+   */
+  @Post('orders/bulk-comment')
+  @Permissions('sales.order.note.write')
+  startBulkComment(@CurrentUser() p: Principal,
+                   @Body() dto: { body: string; references: string[] }) {
+    return this.bulk.start(p, dto?.body, dto?.references ?? []);
+  }
+
+  @Get('orders/bulk-comment/recent')
+  @Permissions('sales.order.note.write')
+  recentBulkComments(@CurrentUser() p: Principal) { return this.bulk.recent(p); }
+
+  @Get('orders/bulk-comment/:id')
+  @Permissions('sales.order.note.write')
+  bulkCommentStatus(@CurrentUser() p: Principal,
+                    @Param('id', ParseUUIDPipe) id: string) {
+    return this.bulk.status(p, id);
+  }
+
+  @Post('orders/bulk-comment/:id/cancel')
+  @Permissions('sales.order.note.write')
+  cancelBulkComment(@CurrentUser() p: Principal,
+                    @Param('id', ParseUUIDPipe) id: string) {
+    return this.bulk.cancel(p, id);
+  }
+
+  /* ------------------------------------------------- payment export ---- */
+
+  /** What the next export would cover, so the button can say so. */
+  @Get('orders/payment-export/preview')
+  @Permissions('sales.order.payment.view')
+  exportPreview() { return this.paymentExport.preview(); }
+
+  /**
+   * Take the export.
+   *
+   * A POST rather than a GET because it moves the boundary: the next one
+   * starts where this one ended, so taking it twice is not the same as
+   * taking it once, and a browser must not do it on a refresh.
+   */
+  @Post('orders/payment-export')
+  @Permissions('sales.order.payment.view')
+  async takeExport(@CurrentUser() p: Principal, @Res() res: any) {
+    const { rows, from, to } = await this.paymentExport.take(p, 'csv');
+    const csv = this.paymentExport.toCsv(rows);
+    const name = `payment-references-${from.slice(0, 10)}-to-${to.slice(0, 10)}.csv`;
+    res.header('Content-Type', 'text/csv; charset=utf-8');
+    res.header('Content-Disposition', `attachment; filename="${name}"`);
+    /* So the page can say how many without parsing the file. */
+    res.header('X-Export-Rows', String(rows.length));
+    res.send(csv);
+  }
 
   @Get('orders')
   @Permissions(PERMISSIONS.ORDER_VIEW)

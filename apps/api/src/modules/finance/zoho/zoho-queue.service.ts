@@ -257,6 +257,30 @@ export class ZohoQueueService {
    * somebody's screen the better. Everything else backs off.
    */
   private async recordFailure(row: any, e: any) {
+    /*
+     * Dry mode is not a failure, so it must not spend an attempt.
+     *
+     * The connection being switched off is a decision somebody made, not
+     * something wrong with this payment. Counting it would let a weekend in
+     * dry mode exhaust the retries and kill events that were always going to
+     * be fine the moment it was switched on.
+     *
+     * Held back without aging, and checked again in a few minutes.
+     */
+    if (e?.dryMode) {
+      await query(
+        `UPDATE fin_zoho_events
+            SET status = 'FAILED', error = $2,
+                -- Given back: the claim incremented it, and waiting for a
+                -- switch to be turned on is not an attempt at anything.
+                attempts = GREATEST(0, attempts - 1),
+                next_attempt_at = now() + interval '5 minutes',
+                lease_owner = NULL, lease_expires_at = NULL
+          WHERE id = $1`,
+        [row.id, 'Waiting: Zoho is in dry mode.']);
+      return;
+    }
+
     const retryable = e instanceof ZohoError ? e.retryable : true;
     const attempts = Number(row.attempts);
     const exhausted = attempts >= MAX_ATTEMPTS;

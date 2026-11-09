@@ -10,6 +10,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { SearchSelect } from '../components/Searchselect';
 import type {
   FinanceApprovalsResponse, FinanceEdit, FinanceFile, FinanceFileUploadTicket,
   FinanceFormConfig, FinanceOutstanding, FinancePayments, FinanceRequest,
@@ -1208,6 +1209,71 @@ function ChangeList({ changes, onDecide, onWithdraw, busy, error }: {
  * spending, because it is the same question answered by somebody else. The
  * server validates all of it again: this is the form, not the rule.
  */
+/**
+ * What a payment number has to look like, by the method chosen.
+ *
+ * These are checked while somebody types rather than only on the server,
+ * because a wrong number here is not refused by anybody downstream: it is
+ * approved, paid, and the money lands somewhere else. The one person who can
+ * still fix it cheaply is the one typing it.
+ *
+ * Each rule says what is wrong rather than that something is — "wallet
+ * numbers are 11 digits starting 010, 011, 012 or 015" is actionable where
+ * "invalid format" is not.
+ */
+function paymentNumberRule(method: string):
+  { check: (v: string) => string | null } | null {
+  const digits = (v: string) => v.replace(/[\s-]/g, '');
+
+  switch (method) {
+    case 'Wallet Number':
+    case 'InstaPay Number':
+      return {
+        check: (v) => {
+          const d = digits(v);
+          if (!/^[0-9]+$/.test(d)) return 'Digits only.';
+          /* Egyptian mobile numbers: 11 digits, and the prefix is one of the
+             four networks. A wallet is tied to a mobile line, so anything
+             else is not a wallet that exists. */
+          if (!/^01[0125][0-9]{8}$/.test(d)) {
+            return 'An Egyptian mobile number: 11 digits starting 010, 011, 012 or 015.';
+          }
+          return null;
+        },
+      };
+
+    case 'IBAN':
+      return {
+        check: (v) => {
+          const d = v.replace(/\s/g, '').toUpperCase();
+          /* Egyptian IBANs are EG followed by 27 characters, 29 in total. */
+          if (!/^EG[0-9]{2}[0-9A-Z]{25}$/.test(d)) {
+            return 'An Egyptian IBAN: EG, then 27 more characters (29 in all).';
+          }
+          return null;
+        },
+      };
+
+    case 'Bank Account Number':
+      return {
+        check: (v) => {
+          const d = digits(v);
+          if (!/^[0-9]+$/.test(d)) return 'Digits only.';
+          /* Egyptian banks use different lengths, so this is a sanity range
+             rather than a format: short enough to catch a typo, wide enough
+             not to refuse a real account. */
+          if (d.length < 8 || d.length > 20) {
+            return 'Between 8 and 20 digits.';
+          }
+          return null;
+        },
+      };
+
+    default:
+      return null;
+  }
+}
+
 function PricingFields({ value, onChange, banks }: {
   value: Record<string, string>;
   onChange: (v: Record<string, string>) => void;
@@ -1217,6 +1283,24 @@ function PricingFields({ value, onChange, banks }: {
   const needsBeneficiary =
     value.paymentMethod === 'Bank Account Number' || value.paymentMethod === 'IBAN';
   const needsBank = value.paymentMethod === 'Bank Account Number';
+
+  /* The names Zoho knows, so a supplier typed here is one the purchase order
+     can later be raised against. Cached for the hour: the list changes when
+     somebody adds a supplier in Zoho, not between keystrokes. */
+  const suppliers = useQuery({
+    queryKey: qk.financeVendors,
+    queryFn: () => api<ZohoVendor[]>('/finance/vendors'),
+    staleTime: 60 * 60_000,
+  });
+
+  /* What a payment number has to look like, by the method chosen.
+
+     Checked here as well as on the server because a wrong wallet number is
+     not refused by anybody — it is accepted, paid, and lands somewhere else.
+     The person who can still fix it cheaply is the one typing it. */
+  const numberRule = paymentNumberRule(value.paymentMethod);
+  const numberProblem = value.accountNumber && numberRule
+    ? numberRule.check(value.accountNumber) : null;
 
   return (
     <div className="pricingblock">
@@ -1245,10 +1329,21 @@ function PricingFields({ value, onChange, banks }: {
       <div className="formrow">
         <label className="field">
           <span className="field__label">
-            Supplier <span className="field__opt">optional</span>
+            Supplier{value.type === 'Petty Cash' ? null : (
+              <span className="field__opt">optional</span>
+            )}
           </span>
-          <input className="input" value={value.vendorName} maxLength={200}
-                 onChange={(e) => set('vendorName', e.target.value)} />
+          {/* Petty cash is money moved into somebody's float — there is no
+              supplier to name, and a box that accepts one invites a request
+              that cannot be fulfilled as written. */}
+          <SearchSelect
+            value={value.vendorName} onChange={(v: string) => set('vendorName', v)}
+            placeholder="Search suppliers…"
+            disabled={value.type === 'Petty Cash'}
+            disabledReason="Not for petty cash"
+            options={(suppliers.data ?? []).map((v) => ({
+              value: v.name, label: v.name,
+            }))} />
         </label>
         <label className="field">
           <span className="field__label">How should the money be sent?</span>
@@ -1281,7 +1376,13 @@ function PricingFields({ value, onChange, banks }: {
              : value.paymentMethod || 'Number'}
           </span>
           <input className="input mono" value={value.accountNumber} maxLength={200}
+                 aria-invalid={!!numberProblem}
                  onChange={(e) => set('accountNumber', e.target.value)} />
+          {/* Only once they have typed something: an empty field is not yet
+              wrong, and a red message on an untouched box is noise. */}
+          {numberProblem ? (
+            <span className="field__hint is-bad">{numberProblem}</span>
+          ) : null}
         </label>
         {needsBeneficiary ? (
           <label className="field">
@@ -1539,7 +1640,15 @@ function PaymentsCard({ requestId, requestType, data, canRecord, onChanged }: {
               <span className="field__label">
                 Paid on <span className="field__opt">today if left empty</span>
               </span>
+              {/* No future date: a payment is recorded after the bank has
+                  moved the money, so a date that has not arrived describes
+                  something that has not happened.
+
+                  No floor on the past — see the note in the reply. Blocking
+                  earlier days would stop Finance recording a transfer the
+                  bank made yesterday, which is the ordinary case. */}
               <input className="input" type="date" value={paidAt}
+                     max={today()}
                      onChange={(e) => setPaidAt(e.target.value)} />
             </label>
           </div>
@@ -1560,25 +1669,23 @@ function PaymentsCard({ requestId, requestType, data, canRecord, onChanged }: {
               <div className="formrow">
                 <label className="field">
                   <span className="field__label">Paid from</span>
-                  <select className="input" value={payFrom}
-                          onChange={(e) => setPayFrom(e.target.value)}>
-                    <option value="">Choose…</option>
-                    {accounts.data!.payFrom.map((a) => (
-                      <option key={a.id} value={a.id}>{a.name}</option>
-                    ))}
-                  </select>
+                  <SearchSelect
+                    value={payFrom} onChange={setPayFrom}
+                    placeholder="Search accounts…"
+                    options={accounts.data!.payFrom.map((a) => ({
+                      value: a.id, label: a.name,
+                    }))} />
                 </label>
 
                 {isPettyCash ? (
                   <label className="field">
                     <span className="field__label">Into which petty cash</span>
-                    <select className="input" value={custodyTo}
-                            onChange={(e) => setCustodyTo(e.target.value)}>
-                      <option value="">Choose…</option>
-                      {accounts.data!.custody.map((a) => (
-                        <option key={a.id} value={a.id}>{a.name}</option>
-                      ))}
-                    </select>
+                    <SearchSelect
+                      value={custodyTo} onChange={setCustodyTo}
+                      placeholder="Search petty cash…"
+                      options={accounts.data!.custody.map((a) => ({
+                        value: a.id, label: a.name,
+                      }))} />
                   </label>
                 ) : isVendorPayment ? null : (
                   <label className="field">
@@ -1836,13 +1943,12 @@ function PurchaseOrderCard({ requestId, canDraft, onChanged }: {
         <div className="formrow">
           <label className="field">
             <span className="field__label">Supplier</span>
-            <select className="input" value={vendorId}
-                    onChange={(e) => setVendorId(e.target.value)}>
-              <option value="">Choose…</option>
-              {vendors.data?.map((v) => (
-                <option key={v.id} value={v.id}>{v.name}</option>
-              ))}
-            </select>
+            <SearchSelect
+              value={vendorId} onChange={setVendorId}
+              placeholder="Search suppliers…"
+              options={(vendors.data ?? []).map((v) => ({
+                value: v.id, label: v.name,
+              }))} />
           </label>
           <label className="field">
             <span className="field__label">
