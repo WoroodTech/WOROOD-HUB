@@ -110,6 +110,11 @@ export class ZohoDryModeError extends Error {
   readonly dryMode = true;
 }
 
+/* `@Injectable()` matters here: without it Nest cannot read the constructor's
+   parameter types, so `tokens` arrives undefined and every call dies on
+   `Cannot read properties of undefined (reading 'getToken')` — which is what
+   happened when this decorator was displaced by the class above. */
+@Injectable()
 export class ZohoBooksClient {
   private readonly log = new Logger('ZohoBooks');
 
