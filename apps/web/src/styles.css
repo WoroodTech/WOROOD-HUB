@@ -3433,3 +3433,176 @@ button, input, select, textarea { font: inherit; color: inherit; }
   color: var(--muted);
   text-transform: lowercase;
 }
+/* ------------------------------------------------------- search select -- */
+
+/*
+ * A select you can type into, for the lists that are too long to scroll:
+ * expense accounts, bank accounts, suppliers.
+ */
+.ssel { position: relative; }
+
+.ssel__box { position: relative; display: flex; align-items: center; }
+
+.ssel__input { padding-inline-end: 30px; }
+
+.ssel__caret,
+.ssel__clear {
+  position: absolute;
+  inset-inline-end: 8px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  padding: 2px;
+  cursor: pointer;
+}
+.ssel__caret { pointer-events: none; }
+.ssel__clear:hover { color: var(--ink); }
+
+.ssel__list {
+  position: absolute;
+  z-index: 40;
+  inset-inline: 0;
+  margin: 4px 0 0;
+  padding: 4px;
+  list-style: none;
+  /* Tall enough to show a useful number, short enough not to cover the rest
+     of the form. */
+  max-block-size: 260px;
+  overflow-y: auto;
+  background: var(--surface, #fff);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
+}
+
+.ssel__opt {
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* Keyboard and mouse share one highlight, so arrowing and hovering never
+   show two different "current" rows. */
+.ssel__opt.is-active { background: var(--accent-soft); }
+.ssel__opt.is-chosen .ssel__label { font-weight: 600; color: var(--accent); }
+
+.ssel__label { font-size: 13.5px; }
+.ssel__hint { font-size: 11.5px; color: var(--muted); }
+
+.ssel__empty { padding: 10px; font-size: 13px; color: var(--muted); }
+
+/* Disabled: the reason, where the value would be. A greyed-out box with a
+   value still in it reads as though the value counts. */
+.ssel--off .ssel__off {
+  display: block;
+  padding: 9px 11px;
+  font-size: 13px;
+  color: var(--muted);
+  background: var(--surface-2, var(--bg));
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+}
+
+/* A field saying what is wrong with what was just typed. Red only here —
+   an empty field is not yet wrong, so nothing shows until there is input. */
+.field__hint.is-bad { color: var(--danger-ink, var(--danger)); }
+.input[aria-invalid="true"] { border-color: var(--danger, #b91c1c); }
+
+/* A gateway name where a reference would be — not a code, so not monospace. */
+.payref__value--plain {
+  font-family: inherit;
+  font-size: 13px;
+}
+
+
+
+/*
+ * The order reference, which opens that order's notes.
+ *
+ * It is a button, and it must not look like one: this column gets scanned
+ * against a courier manifest and a settlement statement, so the reference has
+ * to stay the same colour and the same monospace as the text around it.
+ * Only the underline on hover says it does anything.
+ */
+.ordername {
+  font: inherit;
+  color: inherit;
+  padding: 0;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.ordername:hover { text-decoration: underline; text-underline-offset: 2px; }
+.ordername:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* The actions that belong to the page rather than to one row. */
+.pagehead__tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pagehead__hint { font-size: 12px; color: var(--muted); }
+
+/*
+ * The order number, which opens that order's notes.
+ *
+ * It keeps the colour and weight it had as plain text — it is the row's
+ * identifier first and a control second, and recolouring it would make the
+ * column read as a list of links rather than as order numbers.
+ */
+.ordername {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.ordername:hover { text-decoration: underline; }
+.ordername:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------------------------------------------------- bulk commenting -- */
+
+.modal__panel--wide { max-inline-size: 580px; }
+
+.bulkrun__line { margin: 0 0 8px; font-size: 14px; }
+.bulkrun__bad { color: var(--danger-ink, var(--danger)); }
+
+.bulkrun__track {
+  block-size: 6px;
+  background: var(--line);
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.bulkrun__fill {
+  display: block;
+  block-size: 100%;
+  background: var(--accent);
+  /* Eased, so a run that jumps several orders between polls does not look
+     like the bar is stuttering. */
+  transition: inline-size .4s ease;
+}
+
+.bulkrun__hint {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.bulkrun__fails {
+  margin-block-start: 14px;
+  padding: 10px 12px;
+  background: var(--surface-2, var(--bg));
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  /* Capped and scrolling: fifty failures must not push the buttons off the
+     bottom of the dialog. */
+  max-block-size: 180px;
+  overflow-y: auto;
+}
+
+.bulkrun__failhead { margin: 0 0 6px; font-size: 12.5px; font-weight: 600; }
+.bulkrun__fails ul { margin: 0; padding-inline-start: 16px; }
+.bulkrun__fails li { font-size: 12.5px; margin-block-end: 3px; }

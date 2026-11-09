@@ -73,9 +73,25 @@ export function firstState(
   r: { requesterId: string; route: 'finance' | 'purchases' },
   departmentManagerIds: string[],
 ): ApprovalState {
-  const needsManager = departmentManagerIds.length > 0
-    && !departmentManagerIds.includes(r.requesterId);
-  if (needsManager) return 'MANAGER_PENDING';
+  /*
+   * A department with no manager yet still has a manager step.
+   *
+   * This used to skip straight past it when `departmentManagerIds` was
+   * empty, which is how a request raised before anybody was appointed ended
+   * up at FINANCE_PENDING — permanently past a step nobody had taken. The
+   * manager appointed an hour later never saw it, and nothing anywhere said
+   * the department's own approval had been bypassed.
+   *
+   * It waits instead. Whoever is appointed picks it up in their inbox, in
+   * the state it is actually in. Finance can see it meanwhile — see the
+   * visibility rule, which no longer hides a MANAGER_PENDING request whose
+   * department has nobody to wait for.
+   *
+   * The requester approving their own request is still skipped: that is a
+   * step that would be taken by the person who just took it.
+   */
+  const requesterIsTheManager = departmentManagerIds.includes(r.requesterId);
+  if (!requesterIsTheManager) return 'MANAGER_PENDING';
   return r.route === 'purchases' ? 'PURCHASES_PENDING' : 'FINANCE_PENDING';
 }
 

@@ -9,6 +9,8 @@ import { CustomerMetricsService } from './metrics/customer-metrics.service';
 import { AbandonedCheckoutService } from './sync/abandoned-checkout.service';
 import { StoreCreditService } from './sync/store-credit.service';
 import { AccessService } from './dashboards/access.service';
+import { PaymentExportService } from './orders/payment-export.service';
+import { BulkCommentsService } from './orders/bulk-comments.service';
 import { OrderNotesService } from './orders/order-notes.service';
 import { DashboardsController } from './dashboards/dashboards.controller';
 import { PortletsController } from './portlets/portlets.controller';
@@ -31,7 +33,7 @@ import { SalesGateway } from './realtime/sales.gateway';
     ShopifyHealthTracker, TokenManager, CostGovernor, ShopifyService,
     ShopContext, SnapshotService, MetricsService, CustomerMetricsService, AbandonedCheckoutService, StoreCreditService, AccessService,
     WebhookProcessor, SyncService, BackfillService, SalesScheduler, SalesGateway,
-    OrderNotesService,
+    OrderNotesService, PaymentExportService, BulkCommentsService,
   ],
   exports: [WebhookWorker, ShopContext, SnapshotService, SyncService, BackfillService, MetricsService],
 })

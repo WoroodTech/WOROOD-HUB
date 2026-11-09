@@ -93,7 +93,18 @@ export class SyncService {
     const paid = successful.find((t) => t?.kind === 'SALE' || t?.kind === 'CAPTURE')
       ?? successful.find((t) => t?.kind === 'AUTHORIZATION');
 
-    if (!paid) return { id: null, authorization: null, gateway: null, receipt: null };
+    /* Named on the order itself. Used when no transaction carries one, and
+       as the answer for an order that has no transaction at all. */
+    const declared: string | null =
+      Array.isArray(order?.paymentGatewayNames) && order.paymentGatewayNames.length
+        ? String(order.paymentGatewayNames[0]) : null;
+
+    if (!paid) {
+      /* No successful payment yet -- cash on delivery before the courier
+         collects, most often. The gateway still says how it will be paid,
+         and that is what explains the missing reference. */
+      return { id: null, authorization: null, gateway: declared, receipt: null };
+    }
 
     let receipt: any = null;
     if (paid.receiptJson) {
@@ -111,7 +122,7 @@ export class SyncService {
     return {
       id: paid.paymentId ?? null,
       authorization: paid.authorizationCode ?? null,
-      gateway: paid.gateway ?? null,
+      gateway: paid.gateway ?? declared,
       receipt,
     };
   }
@@ -1016,6 +1027,12 @@ export class SyncService {
                  transactions(first: 10) {
                    kind status gateway paymentId authorizationCode receiptJson
                  }
+                 # The order's own gateways, which exist even when no
+                 # transaction does. A cash-on-delivery order has none until
+                 # the courier collects, so without this its gateway column
+                 # is empty and the screen cannot say why there is no
+                 # reference -- which is the commonest case in this shop.
+                 paymentGatewayNames
                  shippingAddress { city province country zip }
                  customer { id displayName email phone numberOfOrders createdAt }
                  lineItems(first: 100) {

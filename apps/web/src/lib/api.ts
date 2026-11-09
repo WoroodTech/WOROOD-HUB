@@ -160,3 +160,52 @@ export async function logout() {
     });
   } catch { /* signing out locally is what matters */ }
 }
+
+/**
+ * The same call, but handing back the response itself.
+ *
+ * `api` parses JSON and returns the body, which is right nearly everywhere.
+ * A file download is the exception: the bytes are not JSON, and the headers
+ * carry things the page needs — the filename, and how many rows came back,
+ * which would otherwise mean parsing the whole CSV to count lines.
+ *
+ * Refreshes the session once on a 401, exactly as `api` does, so a download
+ * started on a stale token behaves like every other call rather than
+ * dropping the person at the sign-in screen.
+ */
+export async function apiRaw(
+  path: string, options: RequestOptions = {},
+): Promise<Response> {
+  const { method = 'GET', body, signal, retried } = options;
+  const headers: Record<string, string> = {};
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+
+  const res = await fetch(`${BASE}${path}`, {
+    method, headers, signal,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+
+  if (res.status === 401 && !retried) {
+    try {
+      await refreshOnce();
+    } catch {
+      clearSession();
+      announceAuthLost();
+      throw new ApiError(401, 'Your session has expired. Please sign in again.');
+    }
+    return apiRaw(path, { ...options, retried: true });
+  }
+
+  if (!res.ok) {
+    /* The error body is still JSON even when the success body is not. */
+    let message = `Request failed (${res.status})`;
+    try {
+      const j = await res.json();
+      message = j?.error?.message ?? message;
+    } catch { /* not JSON; the status is all there is */ }
+    throw new ApiError(res.status, message);
+  }
+
+  return res;
+}

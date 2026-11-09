@@ -460,7 +460,16 @@ export class FinanceRequestsService {
        Own requests and a manager's own departments are always visible, which
        is what lets the requester watch his draft and the manager see what is
        waiting for him. */
-    const departmentPrivate = `r.approval_state NOT IN ('DRAFT', 'MANAGER_PENDING')`;
+    const departmentPrivate = `(
+      r.approval_state NOT IN ('DRAFT', 'MANAGER_PENDING')
+      /* Except one waiting on a department that has nobody to wait for.
+         Hiding it would strand it: the requester can see it and nobody else,
+         until a manager is appointed — which may be never. */
+      OR (r.approval_state = 'MANAGER_PENDING'
+          AND NOT EXISTS (
+            SELECT 1 FROM core_department_managers m
+             WHERE m.department_id = r.department_id))
+    )`;
 
     if (financeEyes) {
       if (managed.length) {
