@@ -98,8 +98,41 @@ export class PurchaseOrdersService {
   async syncVendors(p: Principal) {
     if (!can(p, MANAGE)) throw new ForbiddenException('Only Finance can do that.');
 
-    const contacts = await this.books.listAll('/contacts', 'contacts',
-      { contact_type: 'vendor', filter_by: 'Status.Active' });
+    /*
+     * `contact_type` alone, and the activity check done here.
+     *
+     * Zoho's `filter_by` on contacts is one parameter covering two different
+     * things: a category (Status.Customers, Status.Vendors) or a level of
+     * activity (Status.Active, Status.Inactive). Sending `contact_type=vendor`
+     * together with `filter_by=Status.Active` asked it to narrow by category
+     * and by activity at once, and it answered with nothing — which this
+     * method then reported as "Zoho returned no suppliers at all".
+     *
+     * Asking only for vendors and dropping the inactive ones here does not
+     * depend on how those two interact.
+     */
+    let all: any[];
+    try {
+      all = await this.books.listAll('/contacts', 'contacts',
+        { contact_type: 'vendor' });
+    } catch (e: any) {
+      /*
+       * Zoho said no, and what it said is the whole answer.
+       *
+       * A `ZohoError` carries the status and the message Zoho sent — an
+       * expired token, a missing scope, the wrong organisation. Left to
+       * escape, it arrives as a bare 500 saying "Something went wrong", and
+       * the only way to learn any of that is to read the server logs.
+       */
+      this.log.error(`vendor sync: ${e?.status ?? ''} ${e?.message ?? e}`);
+      throw new BadRequestException(
+        `Zoho refused the request for suppliers: ${e?.message ?? e}`);
+    }
+
+    /* `status` is 'active' or 'inactive'; anything else is a shape we do not
+       know, and dropping a supplier because of an unexpected value would be
+       worse than keeping one that is dormant. */
+    const contacts = all.filter((c: any) => c?.status !== 'inactive');
 
     const seen: string[] = [];
     for (const c of contacts) {
@@ -125,9 +158,19 @@ export class PurchaseOrdersService {
        returns some, so none means the question was wrong rather than the
        answer being empty. */
     if (!seen.length) {
-      throw new Error(
-        'Zoho returned no suppliers at all. Run GET /api/v1/finance/zoho/diagnose '
-        + 'to see what each endpoint actually answered.');
+      /*
+       * A BadRequest, not a bare Error.
+       *
+       * A bare one leaves the handler with nothing to say and the caller gets
+       * `{"status":500,"message":"Something went wrong"}` — which is how this
+       * failure looked for as long as it took somebody to read the logs. The
+       * message below is the useful part, and it should reach whoever pressed
+       * the button.
+       */
+      throw new BadRequestException(
+        `Zoho returned no suppliers. ${all.length} contact(s) came back for `
+        + 'contact_type=vendor, and none survived the active check. '
+        + 'GET /api/v1/finance/zoho/diagnose shows what each endpoint answered.');
     }
     this.log.log(`synced ${seen.length} supplier(s)`);
     return { vendors: seen.length };
