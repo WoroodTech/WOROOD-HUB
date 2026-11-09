@@ -231,7 +231,25 @@ export class ZohoQueueService {
         recordId = out?.expense_id ?? out?.vendor_payment_id
           ?? out?.transaction_id ?? out?.id ?? null;
         if (!recordId) {
-          throw new ZohoError(502, 'Zoho accepted the record but returned no id', undefined, true);
+          /*
+           * Not retryable, and that is the whole point.
+           *
+           * Zoho took the record: the expense exists in their books. What is
+           * missing is the id, which is ours to keep, not theirs to have.
+           * Retrying would send the same expense again and leave two of them
+           * against one payment -- and the only way to find that out is for
+           * somebody to notice the books do not reconcile.
+           *
+           * So it stops here, on somebody's screen, where the right move is
+           * to look the record up in Zoho and attach its id by hand.
+           */
+          throw new ZohoError(
+            502,
+            'Zoho accepted the record but returned no id. It was NOT sent again, '
+            + 'because that would create a second copy — find it in Zoho Books and '
+            + 'record its id against this payment.',
+            undefined,
+            false);
         }
       }
 
