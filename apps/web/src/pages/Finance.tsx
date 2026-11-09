@@ -10,7 +10,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { SearchSelect } from '../components/SearchSelect';
+import { SearchSelect } from '../components/Searchselect';
 import type {
   FinanceApprovalsResponse, FinanceEdit, FinanceFile, FinanceFileUploadTicket,
   FinanceFormConfig, FinanceOutstanding, FinancePayments, FinanceRequest,
