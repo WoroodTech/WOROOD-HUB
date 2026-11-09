@@ -117,6 +117,22 @@ export class ZohoQueueService {
     const date = new Date(pm.paid_at).toISOString().slice(0, 10);
     const reference = pm.reference;
     const description = `${reference} — ${pm.description}`.slice(0, 500);
+
+    /*
+     * What the reference field shows in Zoho.
+     *
+     * Our own key -- MKT-6490ab2 -- means nothing to anybody reading the
+     * books: it identifies the request in this portal, and Finance reconciling
+     * an expense wants to know what it was for. So the description goes in
+     * the field they read, and the key stays in the description line, where
+     * it is still there to trace a record back here.
+     *
+     * Zoho caps reference_number at 100 characters.
+     */
+    const referenceShown = String(pm.description ?? '').trim().slice(0, 100)
+      /* An empty description would leave Zoho's own reference blank and
+         nothing would tie the record to anything. */
+      || reference;
     const branch = pm.zoho_branch_id ? { branch_id: pm.zoho_branch_id } : {};
 
     if (kind === 'CUSTODY_TRANSFER') {
@@ -128,7 +144,7 @@ export class ZohoQueueService {
         /* Bank transactions take no attachment in Zoho, so a receipt can only
            be referred to in words. The legacy app does the same. */
         description,
-        reference_number: reference,
+        reference_number: referenceShown,
         ...branch,
       };
     }
@@ -137,7 +153,7 @@ export class ZohoQueueService {
         /* Applied to no bill: an advance against the purchase order, which is
            what the legacy app does. */
         amount, date,
-        reference_number: reference,
+        reference_number: referenceShown,
         description,
         vendor_name: pm.vendor_name,
         paid_through_account_id: pm.zoho_paid_through_account_id,
@@ -148,7 +164,7 @@ export class ZohoQueueService {
       amount, date,
       account_id: pm.zoho_expense_account_id,
       paid_through_account_id: pm.zoho_paid_through_account_id,
-      reference_number: reference,
+      reference_number: referenceShown,
       description,
       ...branch,
     };
@@ -219,6 +235,13 @@ export class ZohoQueueService {
       /* The step that makes an uncertain outcome survivable. If a previous
          attempt timed out after Zoho had already created the record, this
          finds it and adopts it instead of creating a second. */
+      /*
+       * `reference` is read out of the payload's own `reference_number`, so
+       * it is whatever was written into that field -- the description now,
+       * rather than our key. The duplicate check searches the same field,
+       * and the two stay in step without either knowing what the other put
+       * there.
+       */
       let recordId = reference
         ? await this.books.findByReference(path.slice(1), reference)
         : null;
@@ -228,8 +251,26 @@ export class ZohoQueueService {
           `${reference} was already in Zoho; adopting ${recordId} rather than posting again`);
       } else {
         const out = await this.books.call('POST', path, { body: payload });
-        recordId = out?.expense_id ?? out?.vendor_payment_id
-          ?? out?.transaction_id ?? out?.id ?? null;
+        /*
+         * Zoho wraps the record it just made.
+         *
+         *   { code: 0, message: "...", expense: { expense_id: "...", ... } }
+         *
+         * This used to read `out.expense_id` only, which is never there — so
+         * every expense that posted perfectly well came back with no id and
+         * was marked DEAD. The record was in their books the whole time; what
+         * was missing was ours. The purchase-order path had this right
+         * already, and this is the same shape.
+         *
+         * Both are tried, nested first, because an envelope is what Zoho
+         * documents and a flat body is what some of its endpoints send.
+         */
+        recordId = out?.expense?.expense_id
+          ?? out?.vendorpayment?.vendor_payment_id
+          ?? out?.banktransaction?.transaction_id
+          ?? out?.payment?.payment_id
+          ?? out?.expense_id ?? out?.vendor_payment_id
+          ?? out?.transaction_id ?? out?.payment_id ?? out?.id ?? null;
         if (!recordId) {
           /*
            * Not retryable, and that is the whole point.
