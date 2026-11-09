@@ -10,7 +10,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { SearchSelect } from '../components/Searchselect';
+import { SearchSelect } from '../components/SearchSelect';
 import type {
   FinanceApprovalsResponse, FinanceEdit, FinanceFile, FinanceFileUploadTicket,
   FinanceFormConfig, FinanceOutstanding, FinancePayments, FinanceRequest,
@@ -497,11 +497,19 @@ export function FinanceNew() {
   }
 
   const label = isArabic() ? (dept.nameAr ?? dept.name) : dept.name;
+  /* What the number has to look like for the method chosen. Shown as they
+     type, and it stops the submit — a wrong wallet number is not refused by
+     anybody downstream: it is approved, paid, and the money goes elsewhere. */
+  const numberRule = paymentNumberRule(paymentMethod);
+  const numberProblem = accountNumber && numberRule
+    ? numberRule.check(accountNumber) : null;
+
   const ready = description.trim() && dueDate
     && (!fields?.moreDetailsRequired || moreDetails.trim())
     && (!fields?.type || type)
     && (!fields?.amount || Number(amount) > 0)
     && (!fields?.payment || (paymentMethod && accountNumber.trim().length >= 4
+        && !numberProblem
         && (!needsBeneficiary || beneficiaryName.trim().length >= 2)
         && (!needsBank || bankName)));
 
@@ -595,15 +603,13 @@ export function FinanceNew() {
                 {needsBank ? (
                   <label className="field">
                     <span className="field__label">Bank</span>
-                    <select className="input" value={bankName}
-                            onChange={(e) => setBank(e.target.value)}>
-                      <option value="">Choose…</option>
-                      {form.data?.banks.map((b) => (
-                        <option key={b.name} value={b.name}>
-                          {isArabic() ? (b.nameAr ?? b.name) : b.name}
-                        </option>
-                      ))}
-                    </select>
+                    <SearchSelect
+                      value={bankName} onChange={setBank}
+                      placeholder="Search banks…"
+                      options={(form.data?.banks ?? []).map((b) => ({
+                        value: b.name,
+                        label: isArabic() ? (b.nameAr ?? b.name) : b.name,
+                      }))} />
                   </label>
                 ) : null}
               </div>
@@ -616,7 +622,14 @@ export function FinanceNew() {
                      : paymentMethod ? paymentMethod : 'Number'}
                   </span>
                   <input className="input mono" value={accountNumber} maxLength={200}
+                         aria-invalid={!!numberProblem}
                          onChange={(e) => setAccount(e.target.value)} />
+                  {/* The same rule as the pricing form. It lived only there
+                      until now, so a wallet number typed on this screen — the
+                      one most requests are raised from — was never checked. */}
+                  {numberProblem ? (
+                    <span className="field__hint is-bad">{numberProblem}</span>
+                  ) : null}
                 </label>
 
                 {/* A bank transfer has to say who is being paid: the account
@@ -1690,15 +1703,16 @@ function PaymentsCard({ requestId, requestType, data, canRecord, onChanged }: {
                 ) : isVendorPayment ? null : (
                   <label className="field">
                     <span className="field__label">Expense account</span>
-                    <select className="input" value={expenseAccount}
-                            onChange={(e) => setExpenseAccount(e.target.value)}>
-                      <option value="">Choose…</option>
-                      {accounts.data!.expense.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.parentName ? `${a.parentName} › ` : ''}{a.name}
-                        </option>
-                      ))}
-                    </select>
+                    <SearchSelect
+                      value={expenseAccount} onChange={setExpenseAccount}
+                      placeholder="Search expense accounts…"
+                      options={accounts.data!.expense.map((a) => ({
+                        value: a.id, label: a.name,
+                        /* The parent as a hint rather than a prefix: it makes
+                           the account itself the thing being read, and the
+                           search still matches on both. */
+                        hint: a.parentName ?? undefined,
+                      }))} />
                   </label>
                 )}
               </div>

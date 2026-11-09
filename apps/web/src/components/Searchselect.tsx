@@ -39,6 +39,11 @@ export function SearchSelect({
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState('');
   const [active, setActive] = useState(0);
+  /* Which way the list opens. These fields sit low in a long form, and a
+     list that always drops downward ends up off the bottom of the window —
+     so the options are there but nobody can reach them without scrolling the
+     field itself out of view. */
+  const [up, setUp] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLUListElement>(null);
 
@@ -56,6 +61,33 @@ export function SearchSelect({
       return words.every((w) => hay.includes(w));
     });
   }, [options, typed]);
+
+  /*
+   * Decide the direction as it opens, and again if the window changes.
+   *
+   * Measured rather than assumed: a field halfway down a short form has room
+   * below it, and flipping that one upward would be just as wrong.
+   */
+  useEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const r = box.current?.getBoundingClientRect();
+      if (!r) return;
+      const below = window.innerHeight - r.bottom;
+      /* The list is 260px at most, plus its margin. Opens upward only when
+         below cannot hold it and above can — otherwise down, where a list
+         that has to scroll at least starts in the usual place. */
+      const needed = 268;
+      setUp(below < needed && r.top > below);
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [open]);
 
   /* Close when the click lands anywhere else. */
   useEffect(() => {
@@ -138,7 +170,8 @@ export function SearchSelect({
       </div>
 
       {open ? (
-        <ul className="ssel__list" ref={list} role="listbox">
+        <ul className={`ssel__list${up ? ' ssel__list--up' : ''}`}
+            ref={list} role="listbox">
           {matches.length === 0 ? (
             <li className="ssel__empty">Nothing matches “{typed.trim()}”</li>
           ) : matches.map((o, i) => (

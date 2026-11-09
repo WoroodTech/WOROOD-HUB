@@ -174,6 +174,25 @@ mv -Tf "${CURRENT_LINK}.new" "$CURRENT_LINK"
 ok "current -> ${RELEASE_ID}"
 
 systemctl restart "${API_SERVICE}.service"
+
+# The worker runs the queues and the schedulers: Zoho, Google Sheets, the
+# order sync. It loads its code at start like any other process, so leaving it
+# alone here meant every deploy swapped the symlink under it and left it
+# running whatever it had loaded, for as long as nobody restarted it by hand.
+#
+# That is not visible from outside. The health gate below checks the API, the
+# API is fine, and the worker reports itself active — while running code from
+# whenever it last started. One instance went eleven days and several releases
+# that way, writing to Zoho with logic that had been fixed twice since.
+#
+# Restarted only when it is enabled, because it is optional (Module 2).
+if systemctl is-enabled --quiet "${WORKER_SERVICE}.service" 2>/dev/null; then
+  systemctl restart "${WORKER_SERVICE}.service"
+  WORKER_RESTARTED=1
+else
+  WORKER_RESTARTED=0
+fi
+
 systemctl reload nginx
 
 # ---------------------------------------------------------------------------
@@ -203,6 +222,21 @@ for (( i = 0; i < HEALTH_TIMEOUT_SECONDS; i++ )); do
   sleep 1
 done
 
+# The worker has no HTTP endpoint, so "did it come back" is the whole check.
+# A few seconds, because the thing that kills it is a bad migration or a
+# missing variable, and both happen at once.
+if (( healthy )) && (( WORKER_RESTARTED )); then
+  sleep 3
+  if ! systemctl is-active --quiet "${WORKER_SERVICE}.service"; then
+    warn "the worker did not come back — treating this release as failed"
+    printf '\n\033[1;31mWorker failed to start.\033[0m Last 40 log lines:\n\n'
+    journalctl -u "${WORKER_SERVICE}.service" -n 40 --no-pager | sed 's/^/    /'
+    healthy=0
+  else
+    ok "worker restarted"
+  fi
+fi
+
 if (( healthy )); then
   ok "healthy after ${i}s at ${HEALTH_URL}"
 else
@@ -214,6 +248,11 @@ else
     ln -sfn "$PREVIOUS_RELEASE" "${CURRENT_LINK}.new"
     mv -Tf "${CURRENT_LINK}.new" "$CURRENT_LINK"
     systemctl restart "${API_SERVICE}.service" || true
+    # Back to the old code too, or the rollback leaves the worker on the
+    # release that just failed — which is the bug this whole block exists for.
+    if (( WORKER_RESTARTED )); then
+      systemctl restart "${WORKER_SERVICE}.service" || true
+    fi
     systemctl reload nginx || true
     warn "rolled back. The failed release is kept at ${RELEASE_DIR} for inspection."
     trap - EXIT
