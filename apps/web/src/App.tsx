@@ -5,6 +5,12 @@ import { Shell } from './components/Shell';
 import { Login } from './pages/Login';
 import { Signup } from './pages/Signup';
 import { Signups } from './pages/Signups';
+import { WarehousePost } from './pages/WarehousePost';
+import { WarehouseDashboard } from './pages/WarehouseDashboard';
+import {
+  WarehouseItemCard, WarehouseFind, WarehouseNewItem,
+} from './pages/WarehouseItems';
+import { WarehouseApprovals } from './pages/WarehouseApprovals';
 import { Home } from './pages/Home';
 import { BookRoom } from './pages/BookRoom';
 import { MyReservations } from './pages/MyReservations';
@@ -113,6 +119,20 @@ export function App() {
         <Route path="/admin/departments" element={<Departments />} />
         <Route path="/admin/roles" element={<Roles />} />
         <Route path="/admin/signups" element={<Signups />} />
+
+        {/* The sidebar's Receiving, Transfer and Returns are the same form
+            arriving with its kind already chosen — which is what the Apps
+            Script's three separate tabs are underneath. */}
+        <Route path="/warehouse" element={<WarehouseDashboard />} />
+        <Route path="/warehouse/post" element={<WarehousePost />} />
+        <Route path="/warehouse/receiving" element={<WarehousePost fixedType="RECEIVING" />} />
+        <Route path="/warehouse/transfer" element={<WarehousePost fixedType="TRANSFER" />} />
+        <Route path="/warehouse/returns" element={<WarehousePost fixedType="RETURN" />} />
+        <Route path="/warehouse/orders" element={<WarehousePost fixedType="NEW_ORDER" />} />
+        <Route path="/warehouse/item" element={<WarehouseItemCard />} />
+        <Route path="/warehouse/find" element={<WarehouseFind />} />
+        <Route path="/warehouse/new-item" element={<WarehouseNewItem />} />
+        <Route path="/warehouse/approvals" element={<WarehouseApprovals />} />
 
         <Route path="/sales" element={<SalesIndex />} />
         <Route path="/sales/d/:key" element={<SalesDashboard />} />

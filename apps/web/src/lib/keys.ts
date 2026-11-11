@@ -16,6 +16,16 @@ export const qk = {
   availability: (filters: string) => ['mr', 'availability', filters] as const,
   reservations: (filters: string) => ['mr', 'reservations', filters] as const,
 
+  whItems: ['wh', 'items'] as const,
+  whWarehouses: ['wh', 'warehouses'] as const,
+  whTypes: ['wh', 'types'] as const,
+  whCoding: ['wh', 'coding'] as const,
+  whBalances: ['wh', 'balances'] as const,
+  whItemBalances: (name: string) => ['wh', 'item-balances', name] as const,
+  whMovements: (filters: string) => ['wh', 'movements', filters] as const,
+  whApprovals: ['wh', 'approvals'] as const,
+  whSheetHealth: ['wh', 'sheet-health'] as const,
+
   adminUsers: (filters: string) => ['admin', 'users', filters] as const,
   adminUser: (id: string) => ['admin', 'user', id] as const,
   adminRoles: ['admin', 'roles'] as const,
