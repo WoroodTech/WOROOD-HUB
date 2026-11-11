@@ -1210,3 +1210,100 @@ export interface ZohoVendor {
   name: string;
   companyName: string | null;
 }
+
+/* ---------------------------------------------------------- warehouse -- */
+
+/** An item as the warehouse sheet knows it. */
+export interface WarehouseItem {
+  /** The computed code — Item Code in the sheet. */
+  code: string;
+  /** The computed description. This is what the ledger calls the item. */
+  name: string;
+  group: string;
+  color: string;
+  kind: string;
+  material: string;
+}
+
+export interface WarehousePlace {
+  code: string;
+  /** Empty for a warehouse with no sub-locations — WH-01 and WH-03. */
+  locations: string[];
+}
+
+export interface WarehouseBalance {
+  item: string;
+  warehouse: string;
+  location: string;
+  balance: number;
+}
+
+/**
+ * One of the nine kinds of movement.
+ *
+ * `mode` says what it does to stock: `sel` means the person chooses the
+ * direction, `none` means the row records something without moving anything.
+ */
+export interface WarehouseTxType {
+  key: string;
+  kind: string;
+  mode: 'in' | 'out' | 'transfer' | 'sel' | 'none';
+  needsOrder: boolean;
+  needsLocation: boolean;
+  duplicateBy: 'order' | 'patch' | null;
+  managerOnly: boolean;
+}
+
+export interface WarehouseMovement {
+  rowNumber: number;
+  date: string;
+  item: string;
+  nationalOrder: string;
+  globalOrder: string;
+  patch: string;
+  stockIn: number;
+  stockOut: number;
+  warehouse: string;
+  location: string;
+  kind: string;
+  enteredBy: string;
+}
+
+export interface WarehousePostLine { item: string; quantity: number; }
+
+export interface WarehousePostInput {
+  type: string;
+  lines: WarehousePostLine[];
+  warehouse: string;
+  location?: string;
+  toWarehouse?: string;
+  toLocation?: string;
+  nationalOrder?: string;
+  globalOrder?: string;
+  patch?: string;
+  direction?: 'in' | 'out';
+  notes?: string;
+  /** The browser's own key, so a retry does not post twice. */
+  opId?: string;
+}
+
+export interface WarehouseApproval {
+  id: string;
+  kind: 'EDIT' | 'DELETE';
+  rowNumber: number;
+  changes: Record<string, string | number>;
+  snapshot: WarehouseMovement | null;
+  reason: string;
+  requestedBy: string;
+  requestedByName: string;
+  requestedAt: string;
+}
+
+/** Whether movements are reaching the sheet. */
+export interface WarehouseSheetHealth {
+  mode: 'off' | 'dry' | 'live';
+  configured: boolean;
+  byStatus: Record<string, number>;
+  oldestWaitingAt: string | null;
+  dead: { id: string; kind: string; error: string; attempts: number }[];
+}

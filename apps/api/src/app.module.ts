@@ -7,6 +7,7 @@ import { SalesDashboardModule } from './modules/sales-dashboard/sales-dashboard.
 import { TasksModule } from './modules/tasks/tasks.module';
 import { AnnouncementsModule } from './modules/announcements';
 import { FinanceModule } from './modules/finance';
+import { WarehouseModule } from './modules/warehouse/index';
 import { JwtAuthGuard, PermissionsGuard } from './common/auth';
 import { config } from './common/config';
 
@@ -25,7 +26,7 @@ import { config } from './common/config';
      imports it, so leaving it out costs nothing elsewhere. */
   imports: [
     CoreModule, AdministrationModule, MeetingRoomsModule, SalesDashboardModule,
-    AnnouncementsModule, FinanceModule,
+    AnnouncementsModule, FinanceModule, WarehouseModule,
     ...(config.tasks.enabled ? [TasksModule] : []),
   ],
   providers: [

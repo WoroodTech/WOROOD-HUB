@@ -84,6 +84,23 @@ export const config = {
     serviceAccountKey: process.env.SHEETS_SA_KEY_B64 || '',
   },
 
+  /*
+   * The warehouse spreadsheet.
+   *
+   * Its own connection rather than a second tab on the finance one: they are
+   * different documents, owned by different teams, and a service account that
+   * can write the warehouse ledger has no business in the accountant's cash
+   * flow. Separate credentials also mean either can be switched off without
+   * taking the other down.
+   */
+  warehouseSheets: {
+    mode: (['off', 'dry', 'live'] as const)
+      .includes(process.env.WAREHOUSE_SHEETS_MODE as any)
+      ? (process.env.WAREHOUSE_SHEETS_MODE as 'off' | 'dry' | 'live') : 'off',
+    spreadsheetId: process.env.WAREHOUSE_SPREADSHEET_ID || '',
+    serviceAccountKey: process.env.WAREHOUSE_SA_KEY_B64 || '',
+  },
+
   attachments: {
     bucket: process.env.S3_ATTACHMENTS_BUCKET || '',
     /* Its own variable, falling back to AWS_REGION. SES and the bucket do not
