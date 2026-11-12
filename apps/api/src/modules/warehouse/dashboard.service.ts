@@ -12,6 +12,7 @@
 import { Injectable } from '@nestjs/common';
 import { DateTime } from 'luxon';
 import { WarehouseReaderService } from './sheets/warehouse-reader.service';
+import { counts, WAREHOUSE_PURPOSE } from './sheets/tabs';
 
 const TZ = 'Africa/Cairo';
 
@@ -54,6 +55,10 @@ export class WarehouseDashboardService {
     const negative: { item: string; where: string; balance: number }[] = [];
 
     for (const b of balances) {
+      /* Retired warehouses are history, not stock. Counting them put every
+         total about four thousand pieces above what the ledger means. */
+      if (!counts(b.warehouse)) continue;
+
       if (b.balance > 0) inStock += b.balance;
 
       if (b.balance < 0) {
@@ -148,7 +153,7 @@ export class WarehouseDashboardService {
     const byWarehouse = new Map<string, number>();
 
     for (const b of balances) {
-      if (!b.warehouse || b.balance <= 0) continue;
+      if (!counts(b.warehouse) || b.balance <= 0) continue;
       byWarehouse.set(b.warehouse, (byWarehouse.get(b.warehouse) ?? 0) + b.balance);
     }
 

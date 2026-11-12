@@ -308,6 +308,43 @@ export class WarehouseReaderService {
   }
 
   /**
+   * The next Receiving serial.
+   *
+   * `R.O 001`, `R.O 002`, … taken from the highest already in the Patch
+   * column of a Receiving row, plus one. Handed out here rather than typed on
+   * the screen, because two people receiving at the same moment would
+   * otherwise both pick the same number — and the duplicate check would then
+   * refuse the second one for a reason neither of them caused.
+   *
+   * Read from the sheet every time, never cached: a cached serial is a
+   * serial two postings can share.
+   */
+  async nextReceivingSerial(): Promise<string> {
+    const rows = await this.sheet.read(TX_TAB);
+    let highest = 0;
+    let width = 3;
+
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i] ?? [];
+      if (String(r[TX.kind] ?? '').trim() !== 'Receiving') continue;
+
+      const patch = String(r[TX.patch] ?? '').trim();
+      const m = patch.match(/^R\.O\s*(\d+)$/i);
+      if (!m) continue;
+
+      const n = Number(m[1]);
+      if (Number.isFinite(n) && n > highest) {
+        highest = n;
+        /* Keep whatever padding the sheet already uses, so a run of R.O 001
+           does not suddenly become R.O 1000 at the thousandth. */
+        width = Math.max(width, m[1].length);
+      }
+    }
+
+    return `R.O ${String(highest + 1).padStart(width, '0')}`;
+  }
+
+  /**
    * Whether this reference has already been posted.
    *
    * The ledger is the only place that can answer this: HUB's queue knows what

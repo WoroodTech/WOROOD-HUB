@@ -79,30 +79,33 @@ export function WarehouseItemCard() {
         <>
           <div className="grid">
             <div className="grid__cell" style={{ '--span': 4 } as any}>
-              <div className="kpi">
+              <div className="tile"><div className="kpi">
                 <div className="kpi__top"><p className="kpi__label">On hand</p></div>
                 <p className="kpi__value">{total.toLocaleString()}</p>
                 <p className="kpi__sub">
                   across {(balances.data ?? []).filter((b) => b.balance !== 0).length} places
                 </p>
               </div>
+              </div>
             </div>
             {chosen ? (
               <>
                 <div className="grid__cell" style={{ '--span': 4 } as any}>
-                  <div className="kpi">
+                  <div className="tile"><div className="kpi">
                     <div className="kpi__top"><p className="kpi__label">Code</p></div>
                     <p className="kpi__value mono">{chosen.code}</p>
                     <p className="kpi__sub">{chosen.group}</p>
                   </div>
+                  </div>
                 </div>
                 <div className="grid__cell" style={{ '--span': 4 } as any}>
-                  <div className="kpi">
+                  <div className="tile"><div className="kpi">
                     <div className="kpi__top"><p className="kpi__label">Made of</p></div>
                     <p className="kpi__value" style={{ fontSize: '1.1rem' }}>
                       {chosen.material}
                     </p>
                     <p className="kpi__sub">{chosen.color} · {chosen.kind}</p>
+                  </div>
                   </div>
                 </div>
               </>
@@ -338,19 +341,21 @@ export function WarehouseNewItem() {
           {preview.data.code ? (
             <div className="grid">
               <div className="grid__cell" style={{ '--span': 6 } as any}>
-                <div className="kpi">
+                <div className="tile"><div className="kpi">
                   <div className="kpi__top"><p className="kpi__label">Code</p></div>
                   <p className="kpi__value mono">{preview.data.code}</p>
                   <p className="kpi__sub">{preview.data.group}</p>
                 </div>
+                </div>
               </div>
               <div className="grid__cell" style={{ '--span': 6 } as any}>
-                <div className="kpi">
+                <div className="tile"><div className="kpi">
                   <div className="kpi__top"><p className="kpi__label">Name in the ledger</p></div>
                   <p className="kpi__value" style={{ fontSize: '1.05rem' }}>
                     {preview.data.name}
                   </p>
                   <p className="kpi__sub">this is what movements will say</p>
+                </div>
                 </div>
               </div>
             </div>
