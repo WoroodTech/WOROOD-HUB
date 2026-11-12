@@ -87,34 +87,41 @@ export function WarehouseDashboard() {
           classes — so a change to how a KPI looks reaches all three. */}
       <div className="grid">
         <div className="grid__cell" style={{ '--span': 3 } as any}>
-          <div className="kpi">
+          <div className="tile"><div className="kpi">
             <div className="kpi__top"><p className="kpi__label">Pieces in stock</p></div>
             <p className="kpi__value">{t.inStock.toLocaleString()}</p>
             <p className="kpi__sub">across {t.warehouses} warehouses</p>
           </div>
+          </div>
         </div>
 
         <div className="grid__cell" style={{ '--span': 3 } as any}>
-          <div className="kpi">
+          <div className="tile"><div className="kpi">
             <div className="kpi__top"><p className="kpi__label">Running low</p></div>
             <p className="kpi__value">{t.low.toLocaleString()}</p>
             {/* The threshold is on the tile rather than in the code: "47
                 running low" means nothing without it. */}
             <p className="kpi__sub">at {t.lowAt} pieces or fewer · sellable</p>
           </div>
+          </div>
         </div>
 
         <div className="grid__cell" style={{ '--span': 3 } as any}>
-          <div className="kpi">
+          <div className="tile"><div className="kpi">
             <div className="kpi__top"><p className="kpi__label">Out of stock</p></div>
             <p className="kpi__value">{t.outOfStock.toLocaleString()}</p>
             {/* Sellable places only. A piece in the workshop was never
                 sellable, so counting it here would make the number lie. */}
             <p className="kpi__sub">items in WH-02 · Local and Global</p>
           </div>
+          </div>
         </div>
 
         <div className="grid__cell" style={{ '--span': 3 } as any}>
+          {/* `.tile` is what the stylesheet draws the card with — the rule
+              is `.tile .kpi`, so a bare `.kpi` renders with no background at
+              all. The sales and finance tiles wrap it the same way. */}
+          <div className="tile">
           <button type="button"
                   className={`kpi kpi--pick${showNegative ? ' is-on' : ''}`}
                   aria-pressed={showNegative}
@@ -128,6 +135,7 @@ export function WarehouseDashboard() {
                 : 'nothing below zero'}
             </p>
           </button>
+          </div>
         </div>
       </div>
 

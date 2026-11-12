@@ -17,7 +17,9 @@ import { AuditService } from '../../core/core.module';
 import { WarehouseReaderService } from './sheets/warehouse-reader.service';
 import { WarehouseQueueService } from './sheets/warehouse-queue.service';
 import { WarehouseSheetClient } from './sheets/warehouse-sheet.client';
-import { TX, TX_TYPES, TxType, WAREHOUSE_LOCATIONS } from './sheets/tabs';
+import {
+  RECEIVING_WAREHOUSE, TX, TX_TYPES, TxType, WAREHOUSE_LOCATIONS,
+} from './sheets/tabs';
 
 /** Cairo, because a movement is dated by the day it happened there. */
 const TZ = 'Africa/Cairo';
@@ -99,6 +101,26 @@ export class WarehouseTransactionsService {
          with no physical movement behind them. */
       throw new ForbiddenException(
         `${type.kind} can only be posted by somebody who can manage the ledger.`);
+    }
+
+    /*
+     * A Receiving always lands in WH-01, and always gets the next serial.
+     *
+     * WH-01 is the receiving warehouse — that is what it is for, and letting
+     * somebody choose another means stock arriving in a place nothing moves
+     * it out of. The serial is handed out here for the same reason the Apps
+     * Script hands it out server-side: two people receiving at once would
+     * otherwise pick the same number.
+     *
+     * Both overwrite whatever the screen sent.
+     */
+    if (dto.type === 'RECEIVING') {
+      dto = {
+        ...dto,
+        warehouse: RECEIVING_WAREHOUSE,
+        location: '',
+        patch: await this.reader.nextReceivingSerial(),
+      };
     }
 
     const lines = this.cleanLines(dto.lines);

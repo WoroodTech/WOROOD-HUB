@@ -152,6 +152,48 @@ export const PATCH_LOG_TAB = 'Patch Log';
  */
 export const WAREHOUSES = ['WH-01', 'WH-02', 'WH-03', 'WH-04', 'WH-05'] as const;
 
+/**
+ * Warehouses the ledger still mentions but that are no longer counted.
+ *
+ * The sheet has 49,888 pieces across every name it has ever used; 45,161 of
+ * those are in the five above. The rest sit in places that were retired —
+ * an old transit location, a bazaar, warehouses numbered past five — and
+ * counting them makes every total on the dashboard about four thousand
+ * pieces too high.
+ *
+ * They are excluded from totals, not deleted: the rows are real history and
+ * the item card still shows them, because somebody looking for a piece wants
+ * to know it is in WH-06 rather than be told it does not exist.
+ *
+ * This list is the Apps Script's own `WH_HIDE`.
+ */
+export const RETIRED_WAREHOUSES = new Set([
+  'WH-06', 'WH-07', 'WH-08', 'WH-09', 'BAZZAR', 'Global', 'WH-05 (Old Transit)',
+]);
+
+/** Whether a warehouse name counts towards a total. */
+export function counts(warehouse: string): boolean {
+  const w = String(warehouse ?? '').trim();
+  return !!w && !RETIRED_WAREHOUSES.has(w);
+}
+
+/**
+ * What each warehouse is for.
+ *
+ * WH-01 is where everything received arrives — which is why Receiving does
+ * not ask for a warehouse.
+ */
+export const WAREHOUSE_PURPOSE: Record<string, string> = {
+  'WH-01': 'Receiving',
+  'WH-02': 'Sellable',
+  'WH-03': 'Store',
+  'WH-04': 'Workshop',
+  'WH-05': 'Quality',
+};
+
+/** Where a receiving lands, always. */
+export const RECEIVING_WAREHOUSE = 'WH-01';
+
 export const WAREHOUSE_LOCATIONS: Record<string, string[]> = {
   'WH-01': [],
   'WH-02': ['Local', 'Global'],
