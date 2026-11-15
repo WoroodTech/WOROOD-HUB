@@ -281,7 +281,10 @@ export class WarehouseReaderService {
 
       const row = {
         rowNumber: i + 1,
-        date: String(r[TX.date] ?? ''),
+        /* Left as it came: a serial number for a real date, a string for a
+           hand-typed one. Whoever reads it decides, because turning it into
+           text here would lose the only reliable form. */
+        date: r[TX.date] ?? '',
         item,
         nationalOrder: String(r[TX.nationalOrder] ?? '').trim(),
         globalOrder: String(r[TX.globalOrder] ?? '').trim(),

@@ -390,9 +390,25 @@ export class WarehouseTransactionsService {
     p: Principal, type: TxType, dto: PostInput,
     lines: PostLine[], direction: 'in' | 'out' | 'none',
   ): any[][] {
-    /* The server runs in UTC. A movement posted at one in the morning Cairo
-       time belongs to that day there, not to the one before it. */
-    const date = DateTime.now().setZone(TZ).toFormat('dd/LL/yyyy');
+    /*
+     * A real date, not a string that looks like one.
+     *
+     * Column A holds dates — the sheet stores them as serial numbers and
+     * every formula over the ledger (the monthly totals, the week column,
+     * the cash-flow SUMPRODUCTs) does date arithmetic on them. A row written
+     * as the text "12/11/2026" sorts as text, filters as text, and is
+     * skipped by every one of those formulas, silently.
+     *
+     * Sheets counts days from 30 December 1899, so that is the epoch rather
+     * than the Unix one. `RAW` keeps it a number, which is exactly what the
+     * column wants.
+     *
+     * The server runs in UTC. A movement posted at one in the morning Cairo
+     * time belongs to that day there, not to the one before it.
+     */
+    const today = DateTime.now().setZone(TZ).startOf('day');
+    const date = Math.round(
+      today.diff(DateTime.fromISO('1899-12-30', { zone: TZ }), 'days').days);
     const by = WarehouseSheetClient.safe(p.fullName ?? p.email ?? '');
 
     const rows: any[][] = [];

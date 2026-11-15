@@ -10,6 +10,7 @@
  * already exists.
  */
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   WarehouseBalance, WarehouseItem, WarehouseMovement,
@@ -24,7 +25,14 @@ import { ErrorState, EmptyState, LoadingState } from '../components/States';
 /* ===================================================== item card ======== */
 
 export function WarehouseItemCard() {
-  const [item, setItem] = useState('');
+  /* Opened with ?item= from the dashboard's forecast and defect lists, so
+     tapping a row there lands on the right item rather than an empty box. */
+  const [params, setParams] = useSearchParams();
+  const item = params.get('item') ?? '';
+  const setItem = (v: string) => {
+    if (v) setParams({ item: v }, { replace: true });
+    else setParams({}, { replace: true });
+  };
 
   const items = useQuery({
     queryKey: qk.whItems,
@@ -381,6 +389,24 @@ export function WarehouseNewItem() {
 
 /* ===================================================== shared =========== */
 
+/**
+ * A ledger date, as the sheet holds it.
+ *
+ * Column A holds real dates, and the API returns those as serial numbers —
+ * days since 30 December 1899. Rows typed by hand come back as text instead,
+ * so both are handled and anything unrecognised is shown as it arrived
+ * rather than as "Invalid Date".
+ */
+function ledgerDate(v: string | number): string {
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    const ms = Date.UTC(1899, 11, 30) + v * 86_400_000;
+    return new Date(ms).toLocaleDateString(undefined, {
+      day: '2-digit', month: 'short', year: 'numeric',
+    });
+  }
+  return String(v ?? '');
+}
+
 function MovementTable({ rows, withRow }: {
   rows: WarehouseMovement[]; withRow?: boolean;
 }) {
@@ -403,7 +429,7 @@ function MovementTable({ rows, withRow }: {
         <tbody>
           {rows.map((m) => (
             <tr key={m.rowNumber}>
-              <td className="mono">{m.date}</td>
+              <td className="mono">{ledgerDate(m.date)}</td>
               <td>{m.kind}</td>
               {withRow ? <td>{m.item}</td> : null}
               <td className="mono">

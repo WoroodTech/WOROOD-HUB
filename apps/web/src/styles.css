@@ -3666,3 +3666,327 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 /* The row an edit would actually change — the others are context. */
 .table tr.is-changing td { background: var(--accent-soft); }
+
+/* ------------------------------------- warehouse · dashboard panels -- */
+
+/*
+ * A card per warehouse. `auto-fill` rather than a fixed column count so five
+ * warehouses sit comfortably on a desktop and stack on a phone without a
+ * breakpoint for each width in between.
+ */
+.whgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(208px, 1fr));
+  gap: 12px;
+}
+
+.whbox {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+
+.whbox__head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+}
+.whbox__code { font-size: 13px; font-weight: 650; }
+.whbox__purpose { font-size: 11.5px; color: var(--muted); }
+
+.whbox__total {
+  font-size: 24px; font-weight: 620; letter-spacing: -0.02em;
+  margin-block: 6px 10px; font-variant-numeric: tabular-nums;
+}
+.whbox__total small { font-size: 11.5px; font-weight: 500; color: var(--muted); }
+.whbox__share { display: block; margin-block-start: 2px; }
+
+.whbox__locs { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+.whbox__locs li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 46px auto;
+  align-items: center; gap: 8px;
+  font-size: 12px;
+}
+.whbox__loc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The share as a bar: the split is the point, and five numbers in a column
+   take longer to compare than five bars. */
+.whbox__bar {
+  block-size: 4px; border-radius: 2px;
+  background: var(--line);
+  position: relative; overflow: hidden;
+}
+.whbox__bar::after {
+  content: ''; position: absolute; inset-block: 0; inset-inline-start: 0;
+  inline-size: var(--w, 0%); background: var(--accent); border-radius: 2px;
+}
+
+.whbox__n { font-size: 12px; font-variant-numeric: tabular-nums; text-align: end; }
+.whbox__n small { display: block; font-size: 10.5px; color: var(--muted); }
+.whbox__none { font-size: 12px; color: var(--muted); margin: 0; }
+
+.whfind__total { font-size: 14px; margin-block: 14px 10px; }
+.whfind__retired { font-size: 12.5px; margin-block-start: 12px; }
+
+/* -------------------------------------------- run-out forecast ------- */
+
+.fcleg { display: flex; gap: 12px; font-size: 11.5px; color: var(--muted); }
+.fcleg span { display: inline-flex; align-items: center; gap: 5px; }
+.fcleg__dot { inline-size: 8px; block-size: 8px; border-radius: 50%; }
+
+/* The three bands are the Apps Script's own, and carry the same meaning —
+   so the colours match what people already read there. */
+.fcleg__dot.is-urgent, .fcrow__fill.is-urgent { background: var(--danger); }
+.fcleg__dot.is-soon, .fcrow__fill.is-soon { background: var(--warn, #f2b94e); }
+.fcleg__dot.is-ok, .fcrow__fill.is-ok { background: var(--good); }
+
+.fclist, .attlist { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+
+.fcrow, .attrow {
+  inline-size: 100%; text-align: start;
+  background: none; border: 0; cursor: pointer;
+  padding: 9px 8px; border-radius: 8px;
+  font: inherit; color: inherit;
+}
+.fcrow:hover, .attrow:hover { background: var(--surface-2); }
+.fcrow:focus-visible, .attrow:focus-visible { outline: 2px solid var(--accent); }
+
+.fcrow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) 72px;
+  align-items: center; gap: 12px;
+}
+.fcrow__name {
+  font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fcrow__track {
+  block-size: 6px; border-radius: 3px; background: var(--line);
+  position: relative; overflow: hidden;
+}
+.fcrow__fill {
+  position: absolute; inset-block: 0; inset-inline-start: 0;
+  inline-size: var(--w, 2%); border-radius: 3px;
+}
+.fcrow__days { font-size: 12px; text-align: end; font-variant-numeric: tabular-nums; }
+.fcrow__days.is-urgent { color: var(--danger-ink, var(--danger)); }
+.fcrow__days.is-soon { color: var(--warn-ink, #8a6400); }
+.fcrow__days.is-ok { color: var(--good-ink, var(--good)); }
+
+@media (max-width: 640px) {
+  /* The bar is the first thing to go: the name and the number still say
+     everything, and a 40px track says nothing. */
+  .fcrow { grid-template-columns: minmax(0, 1fr) 68px; }
+  .fcrow__track { display: none; }
+}
+
+.attrow {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+}
+.attrow__name {
+  font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.attrow__n { font-size: 13px; font-variant-numeric: tabular-nums; }
+
+/* ------------------------------------------------- warehouse · rolls -- */
+
+/*
+ * A roll's place in the cycle, as a pill.
+ *
+ * The six states shade from arrival to closed, so a column of them reads as
+ * progress rather than as six unrelated labels. Anything else came from
+ * somebody typing in the sheet and is shown plainly rather than guessed at.
+ */
+.rollpill {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 550;
+  white-space: nowrap;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  border: 1px solid var(--line);
+}
+.rollpill.is-s0 { background: var(--accent-soft); color: var(--accent-ink, var(--ink)); }
+.rollpill.is-s1 { background: var(--surface-2); }
+.rollpill.is-s2 { background: var(--warn-soft, #fdf3e0); color: var(--warn-ink, #8a6400); }
+.rollpill.is-s3 { background: var(--warn-soft, #fdf3e0); color: var(--warn-ink, #8a6400); }
+.rollpill.is-s4 { background: var(--good-soft); color: var(--good-ink); }
+.rollpill.is-s5 { background: var(--surface-2); color: var(--muted); }
+/* Not a state this knows. Marked so it looks like what it is. */
+.rollpill.is-unknown {
+  background: var(--danger-soft, #fdeaea);
+  color: var(--danger-ink, var(--danger));
+  border-style: dashed;
+}
+
+.jobstat {
+  display: inline-flex; align-items: baseline; gap: 6px;
+  font-size: 12px; color: var(--muted); white-space: nowrap;
+}
+.jobstat small { font-variant-numeric: tabular-nums; font-weight: 600; }
+.jobstat small.is-bad { color: var(--danger-ink, var(--danger)); }
+
+.attrow.is-on { background: var(--accent-soft); }
+
+.subhead {
+  font-size: 13px; font-weight: 600; color: var(--muted);
+  margin-block: 20px 10px; text-transform: uppercase; letter-spacing: 0.04em;
+}
+
+.kpi__value.is-bad { color: var(--danger-ink, var(--danger)); }
+
+.tabs__n {
+  font-size: 11px; font-variant-numeric: tabular-nums;
+  opacity: 0.7; margin-inline-start: 4px;
+}
+
+/* --------------------------------------------- warehouse · quality -- */
+
+.qcsummary { font-size: 13px; margin-block: 0 16px; }
+
+.qcrounds { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+
+/*
+ * A hand-back. The left border carries its state, so a column of them reads
+ * at a glance: waiting on the warehouse, confirmed, or sent back.
+ */
+.qcround {
+  border: 1px solid var(--line);
+  border-inline-start-width: 3px;
+  border-radius: var(--radius);
+  padding: 11px 13px;
+  background: var(--surface-2);
+}
+.qcround.is-waiting { border-inline-start-color: var(--warn, #f2b94e); }
+.qcround.is-confirmed { border-inline-start-color: var(--good); }
+.qcround.is-recalled { border-inline-start-color: var(--muted); opacity: 0.75; }
+
+.qcround__head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 10px; font-size: 12.5px; margin-block-end: 8px;
+}
+.qcround__status { font-size: 11.5px; color: var(--muted); }
+
+.qcround__lines { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.qcround__lines li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 64px;
+  gap: 10px; font-size: 12px; align-items: baseline;
+}
+.qcround__lines li > :last-child { text-align: end; }
+
+/* Quality offered one number, the keeper took another. The ledger got the
+   second, so it is the one in bold. */
+.qcround__took { color: var(--accent-ink, var(--accent)); }
+
+.qcround__note { font-size: 12px; color: var(--muted); margin-block: 8px 0; }
+
+.qcform {
+  margin-block-start: 14px; padding-block-start: 14px;
+  border-block-start: 1px solid var(--line);
+  display: grid; gap: 10px;
+}
+.qcform > .muted { font-size: 12.5px; margin: 0; }
+
+.qcform__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 88px;
+  gap: 10px; align-items: center; font-size: 13px;
+}
+.qcform__row .muted { font-size: 12px; }
+
+.qcform__hand {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) 80px minmax(0, 1fr) minmax(0, 1fr) 32px;
+  gap: 8px; align-items: center;
+}
+
+@media (max-width: 760px) {
+  /* Each control keeps a usable width rather than all five sharing one row
+     and none of them being tappable. */
+  .qcform__hand { grid-template-columns: minmax(0, 1fr) 72px 32px; }
+  .qcform__row { grid-template-columns: minmax(0, 1fr) 76px; }
+  .qcform__row .muted { grid-column: 1 / -1; }
+}
+
+/* -------------------------------------------- warehouse · QR labels -- */
+
+/*
+ * Labels are measured in millimetres, not pixels.
+ *
+ * A label that is 5% out does not fit the stock it prints on, and the
+ * warehouse buys 50 × 30 mm rolls. `mm` is honoured by every print engine;
+ * a pixel size is whatever the browser decides it is.
+ */
+.labelsheet { display: grid; gap: 4mm; margin-block-start: 16px; }
+
+.labelsheet--label { grid-template-columns: 50mm; }
+
+.labelsheet--a4 {
+  grid-template-columns: repeat(4, 48mm);
+  gap: 3mm;
+}
+
+.qrlabel {
+  inline-size: 50mm;
+  block-size: 30mm;
+  display: grid;
+  grid-template-columns: 26mm 1fr;
+  align-items: center;
+  gap: 1.5mm;
+  padding: 1.5mm;
+  border: 1px solid var(--line);
+  border-radius: 1mm;
+  background: #fff;
+  color: #000;
+  overflow: hidden;
+}
+
+.labelsheet--a4 .qrlabel { inline-size: 48mm; block-size: 28mm; }
+
+.qrlabel__qr {
+  inline-size: 26mm;
+  block-size: 26mm;
+  display: block;
+  /* Crisp edges: a QR module smoothed across a pixel boundary is a module a
+     cheap scanner reads as the wrong colour. */
+  shape-rendering: crispEdges;
+}
+
+.qrlabel__text {
+  display: flex; flex-direction: column; gap: 0.8mm;
+  min-inline-size: 0;
+}
+
+.qrlabel__code {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 3.4mm;
+  letter-spacing: 0.02em;
+}
+
+.qrlabel__name {
+  font-size: 2.6mm;
+  line-height: 1.25;
+  /* Three lines at most: a long item name must not push the code off the
+     label. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+@media print {
+  /* Only the labels. Everything else on the page is for choosing them. */
+  .no-print, .sidebar, .topbar, .pagehead { display: none !important; }
+  .page { padding: 0 !important; }
+  .labelsheet { gap: 0; margin: 0; }
+  .qrlabel {
+    border: none;
+    /* One label per page on a label printer; never split across a page
+       break on A4. */
+    break-inside: avoid;
+  }
+  .labelsheet--label .qrlabel { break-after: page; }
+  @page { margin: 0; }
+}

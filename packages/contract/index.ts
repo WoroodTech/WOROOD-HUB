@@ -1256,7 +1256,11 @@ export interface WarehouseTxType {
 
 export interface WarehouseMovement {
   rowNumber: number;
-  date: string;
+  /**
+   * As the sheet holds it: a serial number for a real date, a string for a
+   * row somebody typed. The screen formats it; nothing compares it raw.
+   */
+  date: string | number;
   item: string;
   nationalOrder: string;
   globalOrder: string;
@@ -1306,4 +1310,215 @@ export interface WarehouseSheetHealth {
   byStatus: Record<string, number>;
   oldestWaitingAt: string | null;
   dead: { id: string; kind: string; error: string; attempts: number }[];
+}
+
+/* ---------------------------------------------------- warehouse rolls -- */
+
+export type RollStatus =
+  'Received' | 'Planned' | 'Issued' | 'Reported' | 'Delivered' | 'Closed';
+
+export interface WarehouseRoll {
+  rowNumber: number;
+  rollId: string;
+  rollCode: string;
+  rollName: string;
+  ctn: string;
+  meters: number;
+  /** A sheet date: a serial number, or text for a hand-typed row. */
+  received: string | number;
+  receivedBy: string;
+  status: RollStatus | string;
+  planPriority: string;
+  plannedDate: string | number;
+  planNote: string;
+  operationOrder: string;
+  expectedUnits: number;
+  note: string;
+}
+
+export interface WarehouseJobOrder {
+  rowNumber: number;
+  operationOrder: string;
+  issued: string | number;
+  issuedBy: string;
+  rolls: number;
+  meters: number;
+  expectedUnits: number;
+  gradeA: number;
+  gradeB: number;
+  fabricationWaste: number;
+  materialWaste: number;
+  dryClean: number;
+  delivered: string | number;
+  deliveredBy: string;
+  variance: number;
+  status: string;
+  note: string;
+  rollIds: string;
+}
+
+/**
+ * A batch reported against a job order.
+ *
+ * Both counts are kept: what the workshop said and what the warehouse
+ * counted. The difference is the thing worth seeing, not an error to resolve.
+ */
+export interface WarehouseBatch {
+  rowNumber: number;
+  operationOrder: string;
+  batch: number;
+  reportedAt: string | number;
+  reportedBy: string;
+  workshop: { total: number; a: number; b: number; c: number; global: number; note: string };
+  received: {
+    on: string | number; by: string;
+    a: number; b: number; c: number; global: number; note: string;
+  };
+  status: string;
+  fullyDelivered: boolean;
+}
+
+export type LotStatus = 'Cut' | 'In production' | 'Counted' | 'With warehouse';
+
+export interface WarehouseLot {
+  rowNumber: number;
+  lot: number;
+  operationOrder: string;
+  meters: number;
+  cutAt: string | number;
+  cutBy: string;
+  productionQty: number;
+  sentAt: string | number;
+  sentBy: string;
+  qualityCount: number;
+  qualityAt: string | number;
+  qualityBy: string;
+  /** Quality's count less production's claim. Negative means pieces short. */
+  difference: number;
+  status: LotStatus | string;
+  toWarehouseAt: string | number;
+  toWarehouseBy: string;
+  note: string;
+}
+
+export interface WarehouseStageOverview {
+  operationOrder: string;
+  stage: {
+    rowNumber: number;
+    operationOrder: string;
+    cutStartAt: string | number;
+    cutStartBy: string;
+    cutMeters: number;
+    cutEndAt: string | number;
+  } | null;
+  lots: WarehouseLot[];
+  totals: {
+    metersCut: number; produced: number; counted: number;
+    difference: number; withWarehouse: number; open: number;
+  };
+}
+
+/* ------------------------------------------------- warehouse quality -- */
+
+/** One item in a quality batch, with every count it has picked up. */
+export interface WarehouseQcLine {
+  item: string;
+  /** What the transfer into WH-05 said was sent. */
+  sent: number;
+  /** What quality counted on arrival. */
+  got: number;
+  /** How many have been handed back and confirmed by the warehouse. */
+  done: number;
+  /** How many are accounted for as never having turned up. */
+  short: number;
+}
+
+export interface WarehouseQcRound {
+  n: number;
+  at: string | number;
+  by: string;
+  note: string;
+  status: 'Waiting' | 'Confirmed' | 'Recalled';
+  lines: { item: string; quantity: number; warehouse: string; location: string }[];
+  confirmedAt?: string | number;
+  confirmedBy?: string;
+  confirmedLines?: { item: string; warehouse: string; location: string; quantity: number }[];
+  recalledAt?: string | number;
+  recalledBy?: string;
+  recallReason?: string;
+}
+
+export interface WarehouseQcBatch {
+  rowNumber: number;
+  serial: string;
+  created: string | number;
+  createdBy: string;
+  txId: string;
+  /** Worood Quality or Workshop Quality, decided by the serial. */
+  location: string;
+  cycle: 'Q' | 'W';
+  lines: WarehouseQcLine[];
+  state: {
+    received?: string | number;
+    receivedBy?: string;
+    receiveNote?: string;
+    rounds: WarehouseQcRound[];
+    shortages?: { item: string; quantity: number; reason: string; at: string | number; by: string }[];
+  };
+  updated: string | number;
+  /** Worked out from the numbers, never from a stored label. */
+  status: 'New' | 'With quality' | 'Waiting for warehouse' | 'Complete' | 'Cancelled';
+}
+
+/* ------------------------------------------- warehouse return issues -- */
+
+/**
+ * A return that did not match its order.
+ *
+ * The three item fields are the record: what went out, what came back, and
+ * what came back that nobody sent. The gap between them is the issue.
+ */
+export interface WarehouseReturnIssue {
+  rowNumber: number;
+  id: string;
+  loggedAt: string | number;
+  order: string;
+  orderType: string;
+  shippedPatch: string;
+  shippedItems: string;
+  returnedItems: string;
+  unexpectedItems: string;
+  warehouse: string;
+  location: string;
+  enteredBy: string;
+  attachment: string;
+  /** Anything that is not literally "Resolved" counts as open. */
+  status: 'Open' | 'Resolved';
+  comment: string;
+  handledBy: string;
+  handledAt: string | number;
+}
+
+/** A batch sheet that has been printed and sent. */
+export interface WarehousePatch {
+  rowNumber: number;
+  patch: string;
+  firstSent: string | number;
+  lastSent: string | number;
+  sentBy: string;
+  /** More than one is usually a reprint, occasionally a mistake. */
+  timesSent: number;
+  orders: number;
+  units: number;
+  status: string;
+  closedBy: string;
+  closedAt: string | number;
+  comments: number;
+  serial: string;
+}
+
+export interface WarehousePatchComment {
+  at: string | number;
+  by: string;
+  comment: string;
 }
