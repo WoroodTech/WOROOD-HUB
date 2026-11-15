@@ -33,6 +33,7 @@ import { WarehouseQcService } from './qc.service';
 import { WarehouseReturnsService } from './returns.service';
 import { WarehouseDocumentsService } from './documents.service';
 import { WarehouseCostingService } from './costing.service';
+import { WarehouseOrdersService } from './orders.service';
 
 export const WAREHOUSE_PERMISSIONS = {
   VIEW: 'warehouse.view',
@@ -78,6 +79,8 @@ registerHubModule({
       requiresAnyPermission: [WAREHOUSE_PERMISSIONS.TX_WRITE] },
     { label: 'New Orders', labelAr: 'الأوردرات الجديدة', path: '/warehouse/orders', icon: 'list',
       requiresAnyPermission: [WAREHOUSE_PERMISSIONS.TX_WRITE] },
+    { label: 'Templates', labelAr: 'القوالب', path: '/warehouse/templates', icon: 'list',
+      requiresAnyPermission: [WAREHOUSE_PERMISSIONS.STOCK_VIEW] },
     { label: 'Item Card', labelAr: 'كارت الصنف', path: '/warehouse/item', icon: 'search',
       requiresAnyPermission: [WAREHOUSE_PERMISSIONS.STOCK_VIEW] },
     { label: 'Find / Edit', labelAr: 'بحث / تعديل', path: '/warehouse/find', icon: 'search',
@@ -142,7 +145,41 @@ export class WarehouseController {
     private readonly returns: WarehouseReturnsService,
     private readonly docs: WarehouseDocumentsService,
     private readonly costing: WarehouseCostingService,
+    private readonly orders: WarehouseOrdersService,
   ) {}
+
+  /* ------------------------------------------------- new orders ----- */
+
+  /** The patch number this one will carry. */
+  @Get('orders/next-patch')
+  @Permissions(WAREHOUSE_PERMISSIONS.TX_WRITE)
+  nextPatch() { return this.orders.nextPatch(); }
+
+  /**
+   * One Shopify order and its items.
+   *
+   * The point of the screen: a reference is typed and the lines arrive,
+   * rather than being read off a printed sheet and typed back in.
+   */
+  @Get('orders/lookup')
+  @Permissions(WAREHOUSE_PERMISSIONS.TX_WRITE)
+  lookupOrder(@Query('reference') reference: string) {
+    return this.orders.lookup(reference);
+  }
+
+  /** Post the whole patch — all of it, or none. */
+  @Post('orders/patch')
+  @Permissions(WAREHOUSE_PERMISSIONS.TX_WRITE)
+  postPatch(@CurrentUser() p: Principal, @Body() dto: any) {
+    return this.orders.postPatch(p, dto);
+  }
+
+  /** The printable sheet for a patch. */
+  @Get('orders/template')
+  @Permissions(WAREHOUSE_PERMISSIONS.STOCK_VIEW)
+  orderTemplate(@Query('patch') patch: string) {
+    return this.orders.template(patch);
+  }
 
   /* --------------------------------------------- costing & planning -- */
 
@@ -537,6 +574,11 @@ export class WarehouseController {
   @Permissions(WAREHOUSE_PERMISSIONS.TX_WRITE)
   types() { return this.txs.types(); }
 
+  /** The serial a receiving would get, so the form can show it. */
+  @Get('next-serial')
+  @Permissions(WAREHOUSE_PERMISSIONS.TX_WRITE)
+  nextSerial(@Query('type') type: string) { return this.txs.nextSerial(type); }
+
   /** The colour, kind and material tables an item code is built from. */
   @Get('coding')
   @Permissions(WAREHOUSE_PERMISSIONS.ITEM_MANAGE)
@@ -648,6 +690,7 @@ export class WarehouseController {
     WarehouseDashboardService, WarehouseItemsService, WarehouseInsightsService,
     WarehouseRollsService, WarehouseStagesService, WarehouseQcService,
     WarehouseReturnsService, WarehouseDocumentsService, WarehouseCostingService,
+    WarehouseOrdersService,
   ],
   exports: [
     WarehouseSheetClient, WarehouseReaderService, WarehouseQueueService,

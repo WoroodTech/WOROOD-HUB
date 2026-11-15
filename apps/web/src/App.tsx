@@ -20,6 +20,8 @@ import {
   WarehouseLabels, WarehouseDocuments,
 } from './pages/WarehouseLabels';
 import { WarehousePlanning } from './pages/WarehousePlanning';
+import { WarehouseNewOrders } from './pages/WarehouseNewOrders';
+import { WarehouseTemplates } from './pages/WarehouseTemplates';
 import { Home } from './pages/Home';
 import { BookRoom } from './pages/BookRoom';
 import { MyReservations } from './pages/MyReservations';
@@ -134,13 +136,23 @@ export function App() {
             Script's three separate tabs are underneath. */}
         <Route path="/warehouse" element={<WarehouseDashboard />} />
         <Route path="/warehouse/post" element={<WarehousePost />} />
-        <Route path="/warehouse/receiving" element={<WarehousePost fixedType="RECEIVING" />} />
-        <Route path="/warehouse/transfer" element={<WarehousePost fixedType="TRANSFER" />} />
-        {/* Posting a return movement. Distinct from /warehouse/issues, which
-            is where a return that came back *wrong* is logged — two different
-            jobs that both get called "returns". */}
-        <Route path="/warehouse/return" element={<WarehousePost fixedType="RETURN" />} />
-        <Route path="/warehouse/orders" element={<WarehousePost fixedType="NEW_ORDER" />} />
+        <Route path="/warehouse/receiving" element={<WarehousePost key="RECEIVING" fixedType="RECEIVING" />} />
+        <Route path="/warehouse/transfer" element={<WarehousePost key="TRANSFER" fixedType="TRANSFER" />} />
+        {/*
+          * Each of these is the same component with a different kind, so
+          * React reuses the mounted instance when the route changes and the
+          * form keeps the kind it started with — the URL moves and the page
+          * does not, until a refresh forces a remount.
+          *
+          * The `key` makes each route its own instance.
+          *
+          * Posting a return movement is also distinct from /warehouse/issues,
+          * which is where a return that came back *wrong* is logged — two
+          * different jobs that both get called "returns".
+          */}
+        <Route path="/warehouse/return" element={<WarehousePost key="RETURN" fixedType="RETURN" />} />
+        <Route path="/warehouse/orders" element={<WarehouseNewOrders />} />
+        <Route path="/warehouse/templates" element={<WarehouseTemplates />} />
         <Route path="/warehouse/item" element={<WarehouseItemCard />} />
         <Route path="/warehouse/find" element={<WarehouseFind />} />
         <Route path="/warehouse/new-item" element={<WarehouseNewItem />} />

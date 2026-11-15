@@ -157,9 +157,20 @@ export class WarehouseSheetClient {
         + 'It stays queued and goes out when WAREHOUSE_SHEETS_MODE=live.');
     }
 
+    /*
+     * Anchored below the header, not at the tab.
+     *
+     * Given a bare tab name the API finds "the table" itself, starting at
+     * row 1. `Creating New Item` has a blank row 1 and its header on row 2,
+     * so the API decides the table is the empty first row and the append
+     * lands nowhere useful — which is why new items were never appearing
+     * while every other tab was fine.
+     */
+    const from = this.headerRow(tab) + 1;
+
     const res = await this.client().spreadsheets.values.append({
       spreadsheetId: this.id,
-      range: tab,
+      range: `${tab}!A${from}`,
       valueInputOption: 'RAW',
       insertDataOption: 'INSERT_ROWS',
       requestBody: { values: [row] },
