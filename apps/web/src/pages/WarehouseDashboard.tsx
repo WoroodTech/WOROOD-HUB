@@ -8,6 +8,7 @@
  * either was touched.
  */
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type {
   CategoryPayload, SeriesPayload, TablePayload, WarehousePlace,
@@ -19,6 +20,10 @@ import { Icon } from '../components/Icon';
 import { ErrorState, LoadingState } from '../components/States';
 import { SeriesChart } from '../charts/SeriesChart';
 import { CategoryChart } from '../charts/CategoryChart';
+import {
+  WarehouseBreakdown, WarehouseCollections, WarehouseDefects,
+  WarehouseFindItem, WarehouseRunOut,
+} from './WarehouseInsights';
 
 interface Tiles {
   inStock: number;
@@ -40,6 +45,13 @@ interface Charts {
 }
 
 export function WarehouseDashboard() {
+  const navigate = useNavigate();
+
+  /* Tapping an item anywhere on this page opens its card, which is where
+     every follow-up question about it is answered. */
+  const openItem = (item: string) =>
+    navigate(`/warehouse/item?item=${encodeURIComponent(item)}`);
+
   /* Which warehouse the location chart is showing. Null means none is
      chosen, and that chart is simply absent rather than empty. */
   const [focus, setFocus] = useState<string | null>(null);
@@ -176,9 +188,17 @@ export function WarehouseDashboard() {
          <ErrorState error={charts.error} onRetry={() => void charts.refetch()} />
        ) : (
          <>
+           <WarehouseFindItem />
+
+           {/* The forecast sits high: it is the only panel here that says
+               something has to be done, and soon. */}
+           <WarehouseRunOut onPick={openItem} />
+
            <Card title="Stock in and out · last 60 days">
              <SeriesChart payload={charts.data!.trend} height={260} />
            </Card>
+
+           <WarehouseBreakdown />
 
            <div className="panes">
              <Card title="Stock by warehouse">
@@ -201,6 +221,12 @@ export function WarehouseDashboard() {
                  ))}
                </div>
              </Card>
+
+             <WarehouseCollections warehouse={focus ?? undefined} />
+           </div>
+
+           <div className="panes">
+             <WarehouseDefects onPick={openItem} />
 
              <Card title={focus ? `Inside ${focus}` : 'Running low'}>
                {focus && charts.data!.byLocation ? (

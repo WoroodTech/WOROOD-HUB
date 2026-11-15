@@ -26,6 +26,13 @@ import { WarehouseTransactionsService, PostInput } from './transactions.service'
 import { WarehouseApprovalsService } from './approvals.service';
 import { WarehouseDashboardService } from './dashboard.service';
 import { WarehouseItemsService, CreateItemInput } from './items.service';
+import { WarehouseInsightsService } from './insights.service';
+import { WarehouseRollsService } from './rolls.service';
+import { WarehouseStagesService } from './stages.service';
+import { WarehouseQcService } from './qc.service';
+import { WarehouseReturnsService } from './returns.service';
+import { WarehouseDocumentsService } from './documents.service';
+import { WarehouseCostingService } from './costing.service';
 
 export const WAREHOUSE_PERMISSIONS = {
   VIEW: 'warehouse.view',
@@ -65,7 +72,9 @@ registerHubModule({
       requiresAnyPermission: [WAREHOUSE_PERMISSIONS.TX_WRITE] },
     { label: 'Transfer', labelAr: 'التحويل', path: '/warehouse/transfer', icon: 'list',
       requiresAnyPermission: [WAREHOUSE_PERMISSIONS.TX_WRITE] },
-    { label: 'Returns', labelAr: 'المرتجعات', path: '/warehouse/returns', icon: 'list',
+    /* Posting a return movement. The issues screen below is a different
+       job that shares the word. */
+    { label: 'Returns', labelAr: 'المرتجعات', path: '/warehouse/return', icon: 'list',
       requiresAnyPermission: [WAREHOUSE_PERMISSIONS.TX_WRITE] },
     { label: 'New Orders', labelAr: 'الأوردرات الجديدة', path: '/warehouse/orders', icon: 'list',
       requiresAnyPermission: [WAREHOUSE_PERMISSIONS.TX_WRITE] },
@@ -75,6 +84,20 @@ registerHubModule({
       requiresAnyPermission: [WAREHOUSE_PERMISSIONS.STOCK_VIEW] },
     { label: 'Create new item', labelAr: 'إنشاء صنف', path: '/warehouse/new-item', icon: 'user',
       requiresAnyPermission: [WAREHOUSE_PERMISSIONS.ITEM_MANAGE] },
+    { label: 'Rolls', labelAr: 'الرولات', path: '/warehouse/rolls', icon: 'list',
+      requiresAnyPermission: [WAREHOUSE_PERMISSIONS.ROLLS_VIEW] },
+    { label: 'Quality Check', labelAr: 'فحص الجودة', path: '/warehouse/qc', icon: 'check',
+      requiresAnyPermission: [WAREHOUSE_PERMISSIONS.QC_HANDLE] },
+    { label: 'Return Issues', labelAr: 'مشاكل المرتجعات', path: '/warehouse/issues',
+      icon: 'list', requiresAnyPermission: [WAREHOUSE_PERMISSIONS.RETURNS_HANDLE] },
+    { label: 'Patch Log', labelAr: 'سجل الباتشات', path: '/warehouse/patches',
+      icon: 'list', requiresAnyPermission: [WAREHOUSE_PERMISSIONS.STOCK_VIEW] },
+    { label: 'Planning', labelAr: 'التخطيط', path: '/warehouse/planning',
+      icon: 'chart', requiresAnyPermission: [WAREHOUSE_PERMISSIONS.ROLLS_PLAN] },
+    { label: 'QR Label', labelAr: 'ملصق QR', path: '/warehouse/labels',
+      icon: 'layout-grid', requiresAnyPermission: [WAREHOUSE_PERMISSIONS.STOCK_VIEW] },
+    { label: 'Documents', labelAr: 'المستندات', path: '/warehouse/documents',
+      icon: 'list', requiresAnyPermission: [WAREHOUSE_PERMISSIONS.STOCK_VIEW] },
     { label: 'Approvals', labelAr: 'الموافقات', path: '/warehouse/approvals', icon: 'check',
       requiresAnyPermission: [WAREHOUSE_PERMISSIONS.APPROVAL_DECIDE] },
   ],
@@ -112,7 +135,347 @@ export class WarehouseController {
     private readonly sheet: WarehouseSheetClient,
     private readonly dashboard: WarehouseDashboardService,
     private readonly itemsSvc: WarehouseItemsService,
+    private readonly insights: WarehouseInsightsService,
+    private readonly rolls: WarehouseRollsService,
+    private readonly stages: WarehouseStagesService,
+    private readonly qc: WarehouseQcService,
+    private readonly returns: WarehouseReturnsService,
+    private readonly docs: WarehouseDocumentsService,
+    private readonly costing: WarehouseCostingService,
   ) {}
+
+  /* --------------------------------------------- costing & planning -- */
+
+  /** The planning constants — pieces per metre, and the allowances. */
+  @Get('settings')
+  @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_PLAN)
+  settings() { return this.costing.settings(); }
+
+  /**
+   * Admin only, as in the Apps Script: `unitsPerMeter` decides what every
+   * open job order is measured against.
+   */
+  @Post('settings')
+  @Permissions(WAREHOUSE_PERMISSIONS.TX_MANAGE)
+  setSettings(@CurrentUser() p: Principal, @Body() dto: Record<string, number>) {
+    return this.costing.setSettings(p, can(p, 'admin.full'), dto);
+  }
+
+  @Get('costs')
+  @Permissions(WAREHOUSE_PERMISSIONS.REPORT_VIEW)
+  costs() { return this.costing.costs(); }
+
+  @Post('costs')
+  @Permissions(WAREHOUSE_PERMISSIONS.TX_MANAGE)
+  setCosts(@CurrentUser() p: Principal, @Body() dto: any) {
+    return this.costing.setCosts(p, can(p, WAREHOUSE_PERMISSIONS.TX_MANAGE), dto);
+  }
+
+  /** Cost per piece for a month, against what it sold for. */
+  @Get('costs/report')
+  @Permissions(WAREHOUSE_PERMISSIONS.REPORT_VIEW)
+  costReport(@Query('month') month?: string) {
+    return this.costing.costReport(month);
+  }
+
+  /** What to make next, from 26 weeks of sales. */
+  @Get('demand')
+  @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_PLAN)
+  demand(@Query('weeks') weeks?: string) {
+    return this.costing.demandPlan(weeks ? Number(weeks) : undefined);
+  }
+
+  /* ------------------------------------------------------ QR labels -- */
+
+  /** What goes on each label. The browser renders them. */
+  @Post('labels')
+  @Permissions(WAREHOUSE_PERMISSIONS.STOCK_VIEW)
+  labels(@Body() dto: any) { return this.docs.labels(dto); }
+
+  /* ----------------------------------------------------- documents -- */
+
+  @Get('documents')
+  @Permissions(WAREHOUSE_PERMISSIONS.STOCK_VIEW)
+  documents(@Query('type') type?: string) {
+    return this.docs.documents({ type });
+  }
+
+  /**
+   * Reserve a serial before printing.
+   *
+   * The Apps Script leaves this open to anybody signed in, so any account
+   * can burn through the Q.C and W.Q counters. Here it needs the permission
+   * to post stock, because that is who prints these papers.
+   */
+  @Post('documents/reserve')
+  @Permissions(WAREHOUSE_PERMISSIONS.TX_WRITE)
+  reserveDoc(@CurrentUser() p: Principal, @Body() dto: any) {
+    return this.docs.reserve(p, dto);
+  }
+
+  @Post('documents/printed')
+  @Permissions(WAREHOUSE_PERMISSIONS.TX_WRITE)
+  recordPrint(@CurrentUser() p: Principal, @Body() dto: { serial: string }) {
+    return this.docs.recordPrint(p, dto?.serial);
+  }
+
+  @Get('documents/handovers')
+  @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_VIEW)
+  handovers(@Query('operationOrder') oo?: string) {
+    return this.docs.handovers(oo);
+  }
+
+  /* --------------------------------------------------- return issues -- */
+
+  @Get('returns')
+  @Permissions(WAREHOUSE_PERMISSIONS.RETURNS_HANDLE)
+  issues(@Query() q: { status?: string; q?: string }) {
+    return this.returns.issues(q);
+  }
+
+  /** The red number on the tab. */
+  @Get('returns/count')
+  @Permissions(WAREHOUSE_PERMISSIONS.RETURNS_HANDLE)
+  openIssues() { return this.returns.openCount(); }
+
+  @Post('returns')
+  @Permissions(WAREHOUSE_PERMISSIONS.RETURNS_HANDLE)
+  logIssue(@CurrentUser() p: Principal, @Body() dto: any) {
+    return this.returns.logIssue(p, dto);
+  }
+
+  @Post('returns/update')
+  @Permissions(WAREHOUSE_PERMISSIONS.RETURNS_HANDLE)
+  updateIssue(@CurrentUser() p: Principal, @Body() dto: any) {
+    return this.returns.updateIssue(p, dto);
+  }
+
+  /* ------------------------------------------------------- patch log -- */
+
+  @Get('patches')
+  @Permissions(WAREHOUSE_PERMISSIONS.STOCK_VIEW)
+  patches(@Query('status') status?: string) {
+    return this.returns.patches({ status });
+  }
+
+  @Get('patches/:patch/comments')
+  @Permissions(WAREHOUSE_PERMISSIONS.STOCK_VIEW)
+  patchComments(@Param('patch') patch: string) {
+    return this.returns.comments(decodeURIComponent(patch));
+  }
+
+  @Post('patches/comment')
+  @Permissions(WAREHOUSE_PERMISSIONS.TX_WRITE)
+  patchComment(@CurrentUser() p: Principal,
+               @Body() dto: { patch: string; comment: string }) {
+    return this.returns.comment(p, dto?.patch, dto?.comment);
+  }
+
+  @Post('patches/status')
+  @Permissions(WAREHOUSE_PERMISSIONS.TX_WRITE)
+  patchStatus(@CurrentUser() p: Principal,
+              @Body() dto: { patch: string; status: 'Open' | 'Closed' }) {
+    return this.returns.setPatchStatus(p, dto?.patch, dto?.status);
+  }
+
+  /* ------------------------------------------------- quality check -- */
+
+  /**
+   * The batches this person may see.
+   *
+   * Two cycles share the tab — Q.C for Worood Quality, W.Q for Workshop
+   * Quality — and each team sees its own. Managers see both.
+   */
+  @Get('qc')
+  @Permissions(WAREHOUSE_PERMISSIONS.QC_HANDLE)
+  qcBatches(@Query('cycle') cycle?: string) {
+    const c = cycle === 'Q' || cycle === 'W' ? cycle : 'A';
+    return this.qc.batches(c);
+  }
+
+  @Get('qc/:serial')
+  @Permissions(WAREHOUSE_PERMISSIONS.QC_HANDLE)
+  qcBatch(@Param('serial') serial: string) {
+    return this.qc.batch(decodeURIComponent(serial));
+  }
+
+  /** Quality counts what arrived. */
+  @Post('qc/receive')
+  @Permissions(WAREHOUSE_PERMISSIONS.QC_HANDLE)
+  qcReceive(@CurrentUser() p: Principal, @Body() dto: any) {
+    return this.qc.receive(p, dto);
+  }
+
+  /** Quality hands pieces back. Nothing reaches the ledger yet. */
+  @Post('qc/hand-back')
+  @Permissions(WAREHOUSE_PERMISSIONS.QC_HANDLE)
+  qcHandBack(@CurrentUser() p: Principal, @Body() dto: any) {
+    return this.qc.handBack(p, dto);
+  }
+
+  @Post('qc/recall')
+  @Permissions(WAREHOUSE_PERMISSIONS.QC_HANDLE)
+  qcRecall(@CurrentUser() p: Principal,
+           @Body() dto: { serial: string; round: number; reason?: string }) {
+    return this.qc.recall(p, dto?.serial, dto?.round, dto?.reason);
+  }
+
+  /**
+   * The warehouse keeper counts and confirms. This is where stock moves —
+   * which is why it needs the warehouse's permission, not quality's.
+   */
+  @Post('qc/confirm')
+  @Permissions(WAREHOUSE_PERMISSIONS.TX_WRITE)
+  qcConfirm(@CurrentUser() p: Principal, @Body() dto: any) {
+    return this.qc.confirm(p, dto);
+  }
+
+  @Post('qc/short')
+  @Permissions(WAREHOUSE_PERMISSIONS.QC_HANDLE)
+  qcShort(@CurrentUser() p: Principal, @Body() dto: any) {
+    return this.qc.markShort(p, dto);
+  }
+
+  /* ------------------------------------------------ workshop stages -- */
+
+  /** One job order's whole workshop picture: cutting, lots, totals. */
+  @Get('rolls/jobs/:oo/stages')
+  @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_VIEW)
+  stageOverview(@Param('oo') oo: string) {
+    return this.stages.overview(decodeURIComponent(oo));
+  }
+
+  @Post('stages/cut/start')
+  @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_REPORT)
+  startCutting(@CurrentUser() p: Principal, @Body() dto: { operationOrder: string }) {
+    return this.stages.startCutting(p, dto?.operationOrder);
+  }
+
+  @Post('stages/cut/lot')
+  @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_REPORT)
+  releaseLot(@CurrentUser() p: Principal, @Body() dto: any) {
+    return this.stages.releaseLot(p, dto);
+  }
+
+  @Post('stages/cut/end')
+  @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_REPORT)
+  endCutting(@CurrentUser() p: Principal, @Body() dto: { operationOrder: string }) {
+    return this.stages.endCutting(p, dto?.operationOrder);
+  }
+
+  @Post('stages/production/send')
+  @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_REPORT)
+  sendToQuality(@CurrentUser() p: Principal, @Body() dto: any) {
+    return this.stages.sendToQuality(p, dto);
+  }
+
+  /** Workshop quality's count, and the difference it produces. */
+  @Post('stages/quality/count')
+  @Permissions(WAREHOUSE_PERMISSIONS.QC_HANDLE)
+  countLot(@CurrentUser() p: Principal, @Body() dto: any) {
+    return this.stages.count(p, dto);
+  }
+
+  @Post('stages/quality/handover')
+  @Permissions(WAREHOUSE_PERMISSIONS.QC_HANDLE)
+  handOver(@CurrentUser() p: Principal, @Body() dto: any) {
+    return this.stages.handOver(p, dto);
+  }
+
+  /* ---------------------------------------------------------- rolls -- */
+
+  @Get('rolls')
+  @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_VIEW)
+  rollsList(@Query() q: { status?: string; operationOrder?: string }) {
+    return this.rolls.rolls(q);
+  }
+
+  @Get('rolls/jobs')
+  @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_VIEW)
+  jobOrders(@Query('status') status?: string) {
+    return this.rolls.jobOrders({ status });
+  }
+
+  @Get('rolls/jobs/:oo/batches')
+  @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_VIEW)
+  batches(@Param('oo') oo: string) {
+    return this.rolls.batches(decodeURIComponent(oo));
+  }
+
+  /* Each step is a different part of the business, so each has its own
+     permission rather than one that opens the whole cycle. */
+
+  @Post('rolls/receive')
+  @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_RECEIVE)
+  receiveRoll(@CurrentUser() p: Principal, @Body() dto: any) {
+    return this.rolls.receive(p, dto);
+  }
+
+  @Post('rolls/plan')
+  @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_PLAN)
+  planRoll(@CurrentUser() p: Principal, @Body() dto: any) {
+    return this.rolls.plan(p, dto);
+  }
+
+  @Post('rolls/issue')
+  @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_RECEIVE)
+  issueRolls(@CurrentUser() p: Principal, @Body() dto: any) {
+    return this.rolls.issue(p, dto);
+  }
+
+  /** The workshop's own step. */
+  @Post('rolls/report')
+  @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_REPORT)
+  reportProduction(@CurrentUser() p: Principal, @Body() dto: any) {
+    return this.rolls.report(p, dto);
+  }
+
+  @Post('rolls/receive-batch')
+  @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_RECEIVE)
+  receiveBatch(@CurrentUser() p: Principal, @Body() dto: any) {
+    return this.rolls.receiveBatch(p, dto);
+  }
+
+  /** Closing is a manager's call: it is the step that cannot be undone. */
+  @Post('rolls/close')
+  @Permissions(WAREHOUSE_PERMISSIONS.TX_MANAGE)
+  closeJob(@CurrentUser() p: Principal, @Body() dto: { operationOrder: string; note?: string }) {
+    return this.rolls.close(p, dto?.operationOrder, dto?.note);
+  }
+
+  /* ------------------------------------------------------- insights -- */
+
+  /** Each warehouse broken down by what is inside it, with shares. */
+  @Get('dashboard/warehouses')
+  @Permissions(WAREHOUSE_PERMISSIONS.STOCK_VIEW)
+  warehouseDetail() { return this.insights.warehouseDetail(); }
+
+  /** One item as a card per warehouse, for the search box. */
+  @Get('dashboard/find')
+  @Permissions(WAREHOUSE_PERMISSIONS.STOCK_VIEW)
+  findItem(@Query('item') item: string) {
+    if (!String(item ?? '').trim()) {
+      throw new BadRequestException('Which item?');
+    }
+    return this.insights.findItem(item);
+  }
+
+  /** How long the sellable stock lasts at the last week's pace. */
+  @Get('dashboard/run-out')
+  @Permissions(WAREHOUSE_PERMISSIONS.STOCK_VIEW)
+  runOut() { return this.insights.runOutForecast(); }
+
+  /** Stock by collection, optionally within one warehouse. */
+  @Get('dashboard/collections')
+  @Permissions(WAREHOUSE_PERMISSIONS.STOCK_VIEW)
+  collections(@Query('warehouse') warehouse?: string) {
+    return this.insights.byCollection(warehouse || undefined);
+  }
+
+  /** The items with the most pieces sitting in WH-04. */
+  @Get('dashboard/defects')
+  @Permissions(WAREHOUSE_PERMISSIONS.STOCK_VIEW)
+  defects() { return this.insights.mostDefects(); }
 
   /* ---------------------------------------------------------- items -- */
 
@@ -282,7 +645,9 @@ export class WarehouseController {
   providers: [
     WarehouseSheetClient, WarehouseReaderService, WarehouseQueueService,
     WarehouseWorker, WarehouseTransactionsService, WarehouseApprovalsService,
-    WarehouseDashboardService, WarehouseItemsService,
+    WarehouseDashboardService, WarehouseItemsService, WarehouseInsightsService,
+    WarehouseRollsService, WarehouseStagesService, WarehouseQcService,
+    WarehouseReturnsService, WarehouseDocumentsService, WarehouseCostingService,
   ],
   exports: [
     WarehouseSheetClient, WarehouseReaderService, WarehouseQueueService,

@@ -11,6 +11,15 @@ import {
   WarehouseItemCard, WarehouseFind, WarehouseNewItem,
 } from './pages/WarehouseItems';
 import { WarehouseApprovals } from './pages/WarehouseApprovals';
+import { WarehouseRolls } from './pages/WarehouseRolls';
+import { WarehouseQc } from './pages/WarehouseQc';
+import {
+  WarehouseReturnIssues, WarehousePatchLog,
+} from './pages/WarehouseReturns';
+import {
+  WarehouseLabels, WarehouseDocuments,
+} from './pages/WarehouseLabels';
+import { WarehousePlanning } from './pages/WarehousePlanning';
 import { Home } from './pages/Home';
 import { BookRoom } from './pages/BookRoom';
 import { MyReservations } from './pages/MyReservations';
@@ -127,12 +136,22 @@ export function App() {
         <Route path="/warehouse/post" element={<WarehousePost />} />
         <Route path="/warehouse/receiving" element={<WarehousePost fixedType="RECEIVING" />} />
         <Route path="/warehouse/transfer" element={<WarehousePost fixedType="TRANSFER" />} />
-        <Route path="/warehouse/returns" element={<WarehousePost fixedType="RETURN" />} />
+        {/* Posting a return movement. Distinct from /warehouse/issues, which
+            is where a return that came back *wrong* is logged — two different
+            jobs that both get called "returns". */}
+        <Route path="/warehouse/return" element={<WarehousePost fixedType="RETURN" />} />
         <Route path="/warehouse/orders" element={<WarehousePost fixedType="NEW_ORDER" />} />
         <Route path="/warehouse/item" element={<WarehouseItemCard />} />
         <Route path="/warehouse/find" element={<WarehouseFind />} />
         <Route path="/warehouse/new-item" element={<WarehouseNewItem />} />
         <Route path="/warehouse/approvals" element={<WarehouseApprovals />} />
+        <Route path="/warehouse/rolls" element={<WarehouseRolls />} />
+        <Route path="/warehouse/qc" element={<WarehouseQc />} />
+        <Route path="/warehouse/issues" element={<WarehouseReturnIssues />} />
+        <Route path="/warehouse/patches" element={<WarehousePatchLog />} />
+        <Route path="/warehouse/planning" element={<WarehousePlanning />} />
+        <Route path="/warehouse/labels" element={<WarehouseLabels />} />
+        <Route path="/warehouse/documents" element={<WarehouseDocuments />} />
 
         <Route path="/sales" element={<SalesIndex />} />
         <Route path="/sales/d/:key" element={<SalesDashboard />} />

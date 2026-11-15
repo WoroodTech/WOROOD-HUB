@@ -113,6 +113,42 @@ export const ROLLS_REGISTER = {
   operationOrder: 11, issued: 12, expectedUnits: 13, note: 14, poNumber: 15,
 } as const;
 
+/**
+ * `Rolls Register` — one row per physical roll of fabric.
+ *
+ * A roll moves Received → Planned → Issued → Reported → Delivered → Closed,
+ * and the status column is the only thing that says where it is. Columns past
+ * P are the sheet's own and are not written from here.
+ */
+export const ROLLS_REGISTER_SHAPE: Record<string, number> = {
+  'Roll ID': 0, 'Roll Code': 1, 'CTN': 3, 'Meters': 4,
+  'Status': 7, 'Operation Order': 11,
+};
+
+/** The six states a roll can be in. Nothing else is a status. */
+export const ROLL_STATUS = [
+  'Received', 'Planned', 'Issued', 'Reported', 'Delivered', 'Closed',
+] as const;
+export type RollStatus = (typeof ROLL_STATUS)[number];
+
+/**
+ * What may follow what.
+ *
+ * The Apps Script checks these one at a time, at each entry point. Written
+ * out as a map, an impossible move is a lookup rather than a condition
+ * somebody has to remember to add when a new step appears.
+ */
+export const ROLL_NEXT: Record<RollStatus, RollStatus[]> = {
+  Received: ['Planned', 'Issued'],
+  Planned: ['Issued'],
+  Issued: ['Reported'],
+  /* A job order can be reported in several batches, so Reported stays
+     reachable from itself. */
+  Reported: ['Reported', 'Delivered'],
+  Delivered: ['Closed'],
+  Closed: [],
+};
+
 export const ROLLS_WORKSHOP_TAB = 'Rolls Workshop';
 export const ROLLS_WORKSHOP = {
   operationOrder: 0, issued: 1, issuedBy: 2, rolls: 3, meters: 4,
@@ -124,6 +160,32 @@ export const ROLLS_WORKSHOP = {
 
 /* ======================================== quality ========================= */
 
+/**
+ * `Rolls Batches` — what the workshop reported, batch by batch.
+ *
+ * One job order can be reported several times as production finishes, which
+ * is why this is a tab of its own rather than more columns on the workshop
+ * row. The warehouse then receives each batch, and what it counts can differ
+ * from what the workshop said — both numbers are kept, side by side, because
+ * the difference is the thing anybody looking at this wants to see.
+ */
+export const ROLLS_BATCHES_TAB = 'Rolls Batches';
+export const ROLLS_BATCHES = {
+  operationOrder: 0, batch: 1, reportedAt: 2, reportedBy: 3,
+  workshopTotal: 4, workshopA: 5, workshopB: 6, workshopC: 7, workshopNote: 8,
+  status: 9,
+  receivedOn: 10, receivedBy: 11,
+  receivedA: 12, receivedB: 13, receivedC: 14, receivingNote: 15,
+  flag: 16, workshopGlobal: 17, receivedGlobal: 18, fullyDelivered: 19,
+} as const;
+
+export const ROLLS_BATCHES_SHAPE: Record<string, number> = {
+  'Operation Order': ROLLS_BATCHES.operationOrder,
+  'Batch': ROLLS_BATCHES.batch,
+  'Workshop Total': ROLLS_BATCHES.workshopTotal,
+  'Status': ROLLS_BATCHES.status,
+};
+
 export const QC_TAB = 'QC Batches';
 export const QC = {
   serial: 0, created: 1, createdBy: 2, txId: 3,
@@ -134,8 +196,87 @@ export const QC = {
 
 export const AUDIT_TAB = 'App Audit Log';
 export const CHANGE_TAB = 'App Change Log';
+/**
+ * `Return Issues` — a return that did not match its order.
+ *
+ * Logged by whoever opened the parcel, with a photo, and closed by the
+ * Operations Manager with a comment. The three counts are the point: what
+ * was shipped, what came back, and what came back that should not have.
+ */
 export const RETURN_ISSUES_TAB = 'Return Issues';
+export const RETURN_ISSUES = {
+  loggedAt: 0, issueId: 1, order: 2, orderType: 3,
+  shippedPatch: 4, shippedItems: 5, returnedItems: 6, unexpectedItems: 7,
+  warehouse: 8, location: 9,
+  enteredBy: 10, enteredByEmail: 11, attachment: 12,
+  status: 13, comment: 14, handledBy: 15, handledAt: 16,
+  firstRow: 17, rows: 18,
+} as const;
+
+export const RETURN_ISSUES_SHAPE: Record<string, number> = {
+  'Issue ID': RETURN_ISSUES.issueId,
+  'Order #': RETURN_ISSUES.order,
+  'Shipped Items': RETURN_ISSUES.shippedItems,
+  'Returned Items': RETURN_ISSUES.returnedItems,
+  'Status': RETURN_ISSUES.status,
+};
+
+/**
+ * `Patch Log` — batch sheets printed and sent out.
+ *
+ * One row per patch, counting how many times it has been sent. A patch sent
+ * twice is usually a reprint, and occasionally a mistake worth seeing.
+ */
 export const PATCH_LOG_TAB = 'Patch Log';
+export const PATCH_LOG = {
+  patch: 0, firstSent: 1, lastSent: 2,
+  sentByEmail: 3, sentBy: 4, timesSent: 5,
+  orders: 6, units: 7,
+  status: 8, closedBy: 9, closedAt: 10, comments: 11, serial: 12,
+} as const;
+
+export const PATCH_LOG_SHAPE: Record<string, number> = {
+  'Patch': PATCH_LOG.patch,
+  'Times Sent': PATCH_LOG.timesSent,
+  'Status': PATCH_LOG.status,
+};
+
+/**
+ * `Print Documents` — every printed paper, by serial.
+ *
+ * A serial is handed out before the paper is printed, and the count of
+ * reprints is kept on the row. Which matters: a quality note printed four
+ * times is four pieces of paper that all look official, and knowing there
+ * are four is the difference between a reprint and a forgery.
+ */
+export const PRINT_DOCS_TAB = 'Print Documents';
+export const PRINT_DOCS = {
+  serial: 0, type: 1, transaction: 2, ref: 3, units: 4, items: 5,
+  created: 6, createdBy: 7,
+  timesPrinted: 8, lastPrinted: 9, lastPrintedBy: 10,
+} as const;
+
+/** The kinds of paper, and the prefix each serial carries. */
+export const DOC_TYPES: Record<string, { label: string; prefix: string }> = {
+  QC_NOTE: { label: 'Quality note', prefix: 'Q.C' },
+  WQ_NOTE: { label: 'Workshop quality note', prefix: 'W.Q' },
+  HANDOVER: { label: 'Handover paper', prefix: 'Q.D' },
+  PATCH: { label: 'Patch sheet', prefix: 'R.O' },
+};
+
+/** `Documents Register` — handover papers for a job order. */
+export const DOCS_REGISTER_TAB = 'Documents Register';
+export const DOCS_REGISTER = {
+  serial: 0, document: 1, operation: 2, patch: 3, units: 4,
+  firstPrintedBy: 5, firstPrintedAt: 6,
+  timesPrinted: 7, lastPrintedBy: 8, lastPrintedAt: 9,
+} as const;
+
+/** `Batch Comments` — the conversation on a patch, oldest first. */
+export const BATCH_COMMENTS_TAB = 'Batch Comments';
+export const BATCH_COMMENTS = {
+  patch: 0, at: 1, byEmail: 2, by: 3, comment: 4,
+} as const;
 
 /* ======================================== warehouses ====================== */
 
