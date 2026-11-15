@@ -81,7 +81,22 @@ export class WarehouseTransactionsService {
       needsLocation: !!t.locationRequired,
       duplicateBy: t.dup ?? null,
       managerOnly: !!t.managerOnly,
+      /*
+       * What the server decides, so the form does not ask for it.
+       *
+       * The first pass enforced these in `post()` and left the form drawing
+       * a warehouse picker and a patch field anyway — whatever somebody
+       * typed was silently discarded, which looks exactly like the rule not
+       * working. Stated here, the form can hide what it cannot change.
+       */
+      fixedWarehouse: key === 'RECEIVING' ? RECEIVING_WAREHOUSE : null,
+      serialIssued: key === 'RECEIVING',
     }));
+  }
+
+  /** The serial a receiving would get, so the form can show it. */
+  async nextSerial(type: string): Promise<string | null> {
+    return type === 'RECEIVING' ? this.reader.nextReceivingSerial() : null;
   }
 
   /**

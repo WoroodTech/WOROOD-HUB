@@ -12,6 +12,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { one, query } from '../../../common/db';
 import { WarehouseSheetClient } from './warehouse-sheet.client';
+import { counts } from './tabs';
 import {
   ITEMS, ITEMS_SHAPE, ITEMS_TAB, KEYS, KEYS_TAB,
   TX, TX_SHAPE, TX_TAB, WAREHOUSES, WAREHOUSE_LOCATIONS,
@@ -199,15 +200,59 @@ export class WarehouseReaderService {
         totals.set(key, row);
       }
 
-      const out = [...totals.values()];
-      this.log.log(`balances: ${out.length} item/place rows from ${rows.length - 1} ledger rows`);
+      /*
+       * Retired warehouses are history, not stock.
+       *
+       * Filtered here rather than in each caller: this is the one function
+       * every screen reads balances from, and having three callers remember
+       * to filter — which is what the first pass did — means the fourth one
+       * does not, and the totals are 4,700 pieces out with nothing to show
+       * why.
+       *
+       * `balancesIncludingRetired()` below is for the item card, where
+       * somebody hunting a piece still needs to know it is in WH-06.
+       */
+      const out = [...totals.values()].filter((b) => counts(b.warehouse));
+      this.log.log(
+        `balances: ${out.length} counted rows from ${rows.length - 1} ledger rows`);
       return out;
     });
   }
 
+  /**
+   * Every place an item sits, retired warehouses included.
+   *
+   * The item card uses this: a piece in WH-06 is not counted as stock, but
+   * somebody looking for it still needs to be told where it is.
+   */
+  async balancesIncludingRetired(): Promise<Balance[]> {
+    const counted = await this.balances();
+    const raw = await this.cached('balances-raw', TTL.balances, async () => {
+      const rows = await this.sheet.read(TX_TAB);
+      const totals = new Map<string, Balance>();
+      for (let i = 1; i < rows.length; i++) {
+        const r = rows[i] ?? [];
+        const item = String(r[TX.itemName] ?? '').trim();
+        if (!item) continue;
+        const warehouse = String(r[TX.warehouse] ?? '').trim();
+        if (counts(warehouse)) continue; // already in `counted`
+        const location = String(r[TX.location] ?? '').trim();
+        const inQty = num(r[TX.stockIn]);
+        const outQty = num(r[TX.stockOut]);
+        if (!inQty && !outQty) continue;
+        const key = `${item}\u0000${warehouse}\u0000${location}`;
+        const row = totals.get(key) ?? { item, warehouse, location, balance: 0 };
+        row.balance += inQty - outQty;
+        totals.set(key, row);
+      }
+      return [...totals.values()];
+    });
+    return [...counted, ...raw];
+  }
+
   /** What is on hand for one item, everywhere it sits. */
   async itemBalances(itemName: string): Promise<Balance[]> {
-    const all = await this.balances();
+    const all = await this.balancesIncludingRetired();
     const want = loose(itemName);
     return all.filter((b) => loose(b.item) === want);
   }

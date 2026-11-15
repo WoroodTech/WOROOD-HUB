@@ -508,7 +508,26 @@ export class WarehouseQcService {
         done: Number(l?.done ?? 0) || 0,
         short: Number(l?.short ?? 0) || 0,
       })),
-      state: { ...state, rounds: state?.rounds ?? [] },
+      /*
+       * Every round gets its `lines`, whatever the sheet holds.
+       *
+       * A round written by the Apps Script, or stored before a field
+       * existed, can have no lines at all — and the screen maps over them,
+       * so one old row took the whole Quality Check page down with
+       * `undefined.map`. Normalised here rather than guarded there: the next
+       * thing to read this should not have to know.
+       */
+      state: {
+        ...state,
+        rounds: (state?.rounds ?? []).map((r: any) => ({
+          ...r,
+          n: Number(r?.n ?? 0),
+          status: String(r?.status ?? 'Waiting'),
+          lines: Array.isArray(r?.lines) ? r.lines : [],
+          confirmedLines: Array.isArray(r?.confirmedLines) ? r.confirmedLines : undefined,
+        })),
+        shortages: Array.isArray(state?.shortages) ? state.shortages : [],
+      },
       updated: r[QC.updated] ?? '',
     };
   }

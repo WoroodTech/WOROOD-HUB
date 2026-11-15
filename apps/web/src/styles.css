@@ -3612,6 +3612,27 @@ button, input, select, textarea { font: inherit; color: inherit; }
   inset-block-end: calc(100% + 4px);
   margin-block-start: 0;
 }
+/*
+ * The list, once it has left the card.
+ *
+ * Rendered at the document root, so it is positioned against the page rather
+ * than against the field — and `inset-inline: 0` would stretch it across the
+ * whole window. The component supplies top/left/width; this undoes the
+ * anchored positioning the in-card version needs.
+ *
+ * Above every card and header, below a modal: a select inside a dialog must
+ * not paint over the dialog's own chrome.
+ */
+.ssel__list--loose {
+  position: absolute;
+  inset-inline: auto;
+  z-index: 60;
+}
+
+/* The upward variant anchors to the document too, so the in-card rule that
+   pins it to the field's top would put it in the wrong place. */
+.ssel__list--loose.ssel__list--up { inset-block-end: auto; }
+
 /* ------------------------------------------------------- warehouse -- */
 
 .whlines { display: grid; gap: 8px; }
@@ -3989,4 +4010,184 @@ button, input, select, textarea { font: inherit; color: inherit; }
   }
   .labelsheet--label .qrlabel { break-after: page; }
   @page { margin: 0; }
+}
+
+/* A value the server decides, shown where its input would have been. */
+.field__fixed {
+  margin: 0;
+  padding: 9px 12px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font-size: 14px;
+}
+.field__fixed small {
+  display: block;
+  font-size: 11.5px;
+  color: var(--muted);
+  font-family: var(--sans, inherit);
+  margin-block-start: 2px;
+}
+
+/* ------------------------------------------- warehouse · the paper -- */
+
+/*
+ * The order template.
+ *
+ * Sized and coloured for print, not for the screen it is previewed on: a
+ * fixed width in millimetres, dark ink on white, and nothing that depends on
+ * the portal's theme — the sheet goes in a warehouse and is read under
+ * whatever light is there.
+ */
+.otpl {
+  inline-size: 190mm;
+  max-inline-size: 100%;
+  margin-inline: auto;
+  margin-block-start: 16px;
+  padding: 12mm 10mm;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.otpl__head { text-align: center; margin-block-end: 10mm; }
+
+.otpl__brand {
+  margin: 0;
+  font-size: 13px;
+  letter-spacing: 0.5em;
+  color: var(--accent);
+}
+
+.otpl__sub {
+  margin: 2mm 0 6mm;
+  font-size: 19px;
+  letter-spacing: 0.22em;
+  font-weight: 500;
+}
+
+.otpl__serial {
+  display: inline-grid;
+  gap: 2mm;
+  padding: 4mm 9mm;
+  border: 1px solid var(--accent);
+  border-radius: 2mm;
+}
+.otpl__serial span { font-size: 9px; letter-spacing: 0.2em; color: var(--muted); }
+.otpl__serial strong {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 15px;
+  color: var(--accent);
+}
+
+.otpl__facts, .otpl__groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(38mm, 1fr));
+  gap: 3mm;
+  margin-block-end: 5mm;
+}
+
+.otpl__fact {
+  padding: 3mm 4mm;
+  border: 1px solid var(--line);
+  border-radius: 1.5mm;
+  background: var(--surface-2);
+}
+.otpl__fact span {
+  display: block;
+  font-size: 8.5px;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+  margin-block-end: 1.5mm;
+}
+.otpl__fact strong { font-size: 15px; color: var(--accent); }
+
+.otpl__fact--wide strong { font-size: 18px; }
+
+.otpl__table { inline-size: 100%; border-collapse: collapse; margin-block: 4mm; }
+.otpl__table th {
+  text-align: start;
+  font-size: 8.5px;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+  padding: 2mm 3mm;
+  border-block-end: 1px solid var(--line);
+}
+.otpl__table td {
+  padding: 2mm 3mm;
+  font-size: 12px;
+  border-block-end: 1px solid var(--line);
+}
+.otpl__table .is-end { text-align: end; }
+
+.otpl__grouprow td {
+  background: var(--surface-2);
+  font-weight: 600;
+  font-size: 11.5px;
+}
+
+/* An empty box against each line, ticked as it is picked off the shelf. */
+.otpl__tick {
+  display: inline-block;
+  inline-size: 3.5mm;
+  block-size: 3.5mm;
+  margin-inline-end: 3mm;
+  border: 1px solid var(--muted);
+  border-radius: 0.8mm;
+  vertical-align: middle;
+}
+
+.otpl__total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4mm 5mm;
+  margin-block: 4mm 10mm;
+  border-radius: 1.5mm;
+  background: var(--accent-soft);
+}
+.otpl__total span { font-size: 10px; letter-spacing: 0.16em; }
+.otpl__total strong { font-size: 22px; color: var(--accent); }
+
+.otpl__sign {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6mm;
+  padding-block-start: 14mm;
+}
+.otpl__sign div { border-block-start: 1px solid var(--line); padding-block-start: 2mm; }
+.otpl__sign span {
+  display: block;
+  font-size: 8.5px;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+  text-align: center;
+}
+.otpl__sign small {
+  display: block;
+  margin-block-start: 2mm;
+  font-size: 9px;
+  color: var(--muted);
+  text-align: center;
+}
+
+@media print {
+  /* Ink on paper: the portal's dark theme would print as a solid black
+     page, and the sheet is signed by hand. */
+  .otpl {
+    inline-size: auto;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: #fff;
+    color: #000;
+  }
+  .otpl__fact, .otpl__grouprow td { background: #f4f4f4; }
+  .otpl__total { background: #f4f4f4; }
+  .otpl__fact strong, .otpl__serial strong, .otpl__total strong,
+  .otpl__brand { color: #000; }
+  .otpl__serial { border-color: #000; }
+  /* A long patch runs to a second page; a group must not break across it. */
+  .otpl__table tr { break-inside: avoid; }
+  .otpl__sign { break-inside: avoid; }
 }

@@ -21,6 +21,7 @@ import { qk } from '../lib/keys';
 import { Icon } from '../components/Icon';
 import { SearchSelect } from '../components/Searchselect';
 import { ErrorState, LoadingState } from '../components/States';
+import { ConfirmDialog } from '../components/Confirmdialog';
 
 interface Line { id: string; item: string; quantity: string; }
 
@@ -42,6 +43,9 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
   const [direction, setDirection] = useState<'in' | 'out' | ''>('');
   const [lines, setLines] = useState<Line[]>([blankLine()]);
   const [done, setDone] = useState<string | null>(null);
+  /* Posting moves stock, and a movement is awkward to unpick — so it is
+     confirmed, with what is about to happen spelled out. */
+  const [confirming, setConfirming] = useState(false);
 
   /*
    * One key per attempt, not per render.
@@ -52,6 +56,13 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
    * actually gone through.
    */
   const [opId, setOpId] = useState(() => crypto.randomUUID());
+
+  /* Shown, not asked for: the number this posting will carry. */
+  const serial = useQuery({
+    queryKey: ['wh', 'next-serial', type],
+    queryFn: () => api<string | null>(`/warehouse/next-serial?type=${type}`),
+    enabled: !!type,
+  });
 
   const types = useQuery({
     queryKey: qk.whTypes,
@@ -78,6 +89,15 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
   });
 
   const chosen = types.data?.find((t) => t.key === type) ?? null;
+
+  /*
+   * What the server decides for this kind.
+   *
+   * Receiving always lands in WH-01 and always takes the next serial, so
+   * asking for either would be asking for something that gets discarded.
+   */
+  const fixedWarehouse = (chosen as any)?.fixedWarehouse as string | null;
+  const serialIssued = !!(chosen as any)?.serialIssued;
   const isTransfer = chosen?.mode === 'transfer';
   const takesStock = chosen?.mode === 'out' || isTransfer
     || (chosen?.mode === 'sel' && direction === 'out');
@@ -88,6 +108,11 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
   /* A warehouse with no sub-locations takes none, so a location left over
      from the previous choice would be sent and refused. */
   useEffect(() => { setLocation(''); }, [warehouse]);
+
+  /* The server's warehouse, applied as soon as the kind is known. */
+  useEffect(() => {
+    if (fixedWarehouse) { setWarehouse(fixedWarehouse); setLocation(''); }
+  }, [fixedWarehouse]);
   useEffect(() => { setToLocation(''); }, [toWarehouse]);
 
   /**
@@ -143,7 +168,7 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
     && (!isTransfer || !!toWarehouse)
     && (chosen?.mode !== 'sel' || !!direction)
     && (!chosen?.needsOrder || !!(nationalOrder.trim() || globalOrder.trim()))
-    && (chosen?.duplicateBy !== 'patch' || !!patch.trim())
+    && (serialIssued || chosen?.duplicateBy !== 'patch' || !!patch.trim())
     && !post.isPending;
 
   if (types.isLoading || places.isLoading) return <LoadingState label="Loading the warehouse" />;
@@ -204,15 +229,26 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
         ) : null}
 
         <div className="formrow">
-          <label className="field">
-            <span className="field__label">
-              {isTransfer ? 'Out of which warehouse' : 'Warehouse'}
-            </span>
-            <SearchSelect
-              value={warehouse} onChange={setWarehouse}
-              placeholder="Choose…"
-              options={(places.data ?? []).map((p) => ({ value: p.code, label: p.code }))} />
-          </label>
+          {fixedWarehouse ? (
+            /* Stated rather than offered: it cannot be anything else. */
+            <label className="field">
+              <span className="field__label">Warehouse</span>
+              <p className="field__fixed mono">
+                {fixedWarehouse}
+                <small>receiving always lands here</small>
+              </p>
+            </label>
+          ) : (
+            <label className="field">
+              <span className="field__label">
+                {isTransfer ? 'Out of which warehouse' : 'Warehouse'}
+              </span>
+              <SearchSelect
+                value={warehouse} onChange={setWarehouse}
+                placeholder="Choose…"
+                options={(places.data ?? []).map((p) => ({ value: p.code, label: p.code }))} />
+            </label>
+          )}
 
           {locationsOf(warehouse).length ? (
             <label className="field">
@@ -267,7 +303,15 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
             </>
           ) : null}
 
-          {chosen?.duplicateBy === 'patch' ? (
+          {serialIssued ? (
+            <label className="field">
+              <span className="field__label">Patch number</span>
+              <p className="field__fixed mono">
+                {serial.data ?? '…'}
+                <small>the next one, issued when you post</small>
+              </p>
+            </label>
+          ) : chosen?.duplicateBy === 'patch' ? (
             <label className="field">
               <span className="field__label">Patch number</span>
               <input className="input mono" value={patch} maxLength={60}
@@ -335,12 +379,31 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
 
         <div className="modal__foot">
           <button type="button" className="notebtn" disabled={!ready}
-                  onClick={() => { setDone(null); post.mutate(); }}>
+                  onClick={() => { setDone(null); setConfirming(true); }}>
             {post.isPending ? 'Posting…'
              : `Post ${filled.length || ''} item${filled.length === 1 ? '' : 's'}`.trim()}
           </button>
         </div>
       </div>
+
+      {confirming ? (
+        <ConfirmDialog
+          title={`Post this ${chosen?.kind ?? 'movement'}?`}
+          body={
+            `${filled.length} item${filled.length === 1 ? '' : 's'}, `
+            + `${filled.reduce((n, l) => n + Number(l.quantity), 0)} pieces `
+            + (isTransfer
+              ? `out of ${warehouse}${location ? ` / ${location}` : ''} `
+                + `and into ${toWarehouse}${toLocation ? ` / ${toLocation}` : ''}.`
+              : `${takesStock ? 'out of' : 'into'} ${warehouse}`
+                + `${location ? ` / ${location}` : ''}.`)
+            + ' It goes to the warehouse sheet.'
+          }
+          confirmLabel="Post it"
+          busy={post.isPending}
+          onConfirm={() => { setConfirming(false); post.mutate(); }}
+          onCancel={() => setConfirming(false)} />
+      ) : null}
     </div>
   );
 }

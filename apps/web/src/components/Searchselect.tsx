@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 /**
  * A select you can type into.
  *
@@ -44,6 +45,20 @@ export function SearchSelect({
      so the options are there but nobody can reach them without scrolling the
      field itself out of view. */
   const [up, setUp] = useState(true);
+
+  /*
+   * Where the list sits on screen.
+   *
+   * It is rendered at the document root rather than inside this component,
+   * because a card clips what overflows it and the list is taller than the
+   * space left in most cards — so it was being cut off, with no way to see
+   * the options below the fold. A portal escapes every ancestor's clipping
+   * at once, which is why this is one change rather than one per screen.
+   *
+   * The cost is that it no longer follows the field automatically, so the
+   * position is measured and kept here.
+   */
+  const [at, setAt] = useState({ top: 0, bottom: 0, left: 0, width: 0 });
   const box = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLUListElement>(null);
 
@@ -88,6 +103,25 @@ export function SearchSelect({
       const roomAbove = r.top >= needed;
       const roomBelow = below >= needed;
       setUp(roomAbove || (!roomBelow && r.top > below));
+
+      /*
+       * Document coordinates, because the list is positioned against the
+       * page once it has been portalled out.
+       *
+       * Opening upward is expressed as a distance from the document's
+       * bottom rather than as a top, because the list's height is not known
+       * until it has rendered — and `bottom` lets the browser work it out.
+       */
+      const openUp = roomAbove || (!roomBelow && r.top > below);
+      const docHeight = Math.max(
+        document.documentElement.scrollHeight, document.body.scrollHeight);
+
+      setAt({
+        top: openUp ? 0 : r.bottom + window.scrollY + 4,
+        bottom: openUp ? docHeight - (r.top + window.scrollY) + 4 : 0,
+        left: r.left + window.scrollX,
+        width: r.width,
+      });
     };
     place();
     window.addEventListener('resize', place);
@@ -178,9 +212,15 @@ export function SearchSelect({
         )}
       </div>
 
-      {open ? (
-        <ul className={`ssel__list${up ? ' ssel__list--up' : ''}`}
-            ref={list} role="listbox">
+      {open ? createPortal(
+        <ul className={`ssel__list ssel__list--loose${up ? ' ssel__list--up' : ''}`}
+            ref={list} role="listbox"
+            style={{
+              top: up ? undefined : at.top,
+              bottom: up ? at.bottom : undefined,
+              left: at.left,
+              width: at.width,
+            }}>
           {matches.length === 0 ? (
             <li className="ssel__empty">Nothing matches “{typed.trim()}”</li>
           ) : matches.map((o, i) => (
@@ -195,7 +235,8 @@ export function SearchSelect({
               {o.hint ? <span className="ssel__hint">{o.hint}</span> : null}
             </li>
           ))}
-        </ul>
+        </ul>,
+        document.body,
       ) : null}
     </div>
   );
