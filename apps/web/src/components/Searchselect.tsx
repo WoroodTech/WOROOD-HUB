@@ -58,7 +58,8 @@ export function SearchSelect({
    * The cost is that it no longer follows the field automatically, so the
    * position is measured and kept here.
    */
-  const [at, setAt] = useState({ top: 0, bottom: 0, left: 0, width: 0 });
+  const [at, setAt] = useState(
+    { top: 0, bottom: 0, left: 0, width: 0, maxHeight: 268 });
   const box = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLUListElement>(null);
 
@@ -99,28 +100,58 @@ export function SearchSelect({
        * Still measured: a field near the top of the window has nowhere to go
        * upward, and forcing it there would be the same fault mirrored.
        */
-      const needed = 268;
-      const roomAbove = r.top >= needed;
-      const roomBelow = below >= needed;
-      setUp(roomAbove || (!roomBelow && r.top > below));
+      /*
+       * Downward unless there is genuinely no room.
+       *
+       * The first version opened upward whenever anything fit above, which
+       * for a field halfway down a page is always — so the list appeared at
+       * the top of the window, nowhere near the field it belonged to. That
+       * is what happens on the Finance account picker.
+       *
+       * Down is where a list is expected. Up only when below cannot hold it
+       * and above can; and if neither can, down again, where it scrolls
+       * from the usual place rather than from somewhere surprising.
+       */
+      /*
+       * Below the field, always, and showing everything.
+       *
+       * Two earlier attempts got this wrong in opposite directions. The
+       * first opened upward whenever anything fit above — which for a field
+       * halfway down a page is always, so the list appeared at the top of
+       * the window, nowhere near what it belonged to. The second capped the
+       * height to the room left below, so a long list was cut off with no
+       * sign there was more.
+       *
+       * What a select should do is sit under its field and show its
+       * options, over whatever is beneath it. That is what a native one
+       * does, and it is what this does now: anchored to the field, tall
+       * enough for the list, scrolling inside itself only when the list is
+       * taller than the window can hold at all.
+       *
+       * Upward only when the field is so near the bottom that a list below
+       * it would be a sliver — and then it still sits against the field.
+       */
+      const MIN = 180;
+      const openUpward = below < MIN && r.top > below;
+      setUp(openUpward);
 
       /*
-       * Document coordinates, because the list is positioned against the
-       * page once it has been portalled out.
+       * Fixed to the viewport, not to the document.
        *
-       * Opening upward is expressed as a distance from the document's
-       * bottom rather than as a top, because the list's height is not known
-       * until it has rendered — and `bottom` lets the browser work it out.
+       * The list is portalled to the body to escape the card that was
+       * clipping it, and `fixed` keeps it against the field without having
+       * to add the scroll offset — which is also what makes it stay put
+       * while the page behind it scrolls.
        */
-      const openUp = roomAbove || (!roomBelow && r.top > below);
-      const docHeight = Math.max(
-        document.documentElement.scrollHeight, document.body.scrollHeight);
-
       setAt({
-        top: openUp ? 0 : r.bottom + window.scrollY + 4,
-        bottom: openUp ? docHeight - (r.top + window.scrollY) + 4 : 0,
-        left: r.left + window.scrollX,
-        width: r.width,
+        top: openUpward ? 0 : Math.round(r.bottom + 4),
+        bottom: openUpward ? Math.round(window.innerHeight - r.top + 4) : 0,
+        left: Math.round(r.left),
+        width: Math.round(r.width),
+        /* Whatever room there is, less a margin — so a very long list
+           scrolls rather than running off the screen, and a short one is
+           shown whole. */
+        maxHeight: Math.max(MIN, (openUpward ? r.top : below) - 12),
       });
     };
     place();
@@ -220,6 +251,7 @@ export function SearchSelect({
               bottom: up ? at.bottom : undefined,
               left: at.left,
               width: at.width,
+              maxHeight: at.maxHeight,
             }}>
           {matches.length === 0 ? (
             <li className="ssel__empty">Nothing matches “{typed.trim()}”</li>

@@ -1,0 +1,267 @@
+/**
+ * Reports.
+ *
+ * What sold over a date range, from where, in which collection, and what came
+ * back. The equivalent of the Apps Script's largest feature, which the module
+ * did not have.
+ *
+ * Export is the browser's own print-to-PDF rather than a generated file:
+ * what is on the screen is what goes on the page, there is nothing to keep
+ * in step, and it prints on any machine without a server round trip.
+ */
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import type { CategoryPayload, SeriesPayload } from '../contract';
+import { api } from '../lib/api';
+import { Card } from '../components/Card';
+import { EmptyState, ErrorState, LoadingState } from '../components/States';
+import { SeriesChart } from '../charts/SeriesChart';
+import { CategoryChart } from '../charts/CategoryChart';
+
+interface Preset { key: string; label: string; from: string; to: string }
+
+interface Report {
+  range: { from: string; to: string; days: number };
+  builtAt: string;
+  totals: {
+    units: number; orders: number; items: number;
+    returned: number; returnRate: number; received: number;
+    perDay: number; rows: number;
+  };
+  daily: SeriesPayload;
+  byWarehouse: CategoryPayload;
+  byCollection: CategoryPayload;
+  byKind: { kind: string; units: number }[];
+  topSellers: {
+    item: string; quantity: number; orders: number;
+    returned: number; returnRate: number; trend: number[];
+  }[];
+  mostReturned: {
+    item: string; quantity: number; returned: number; returnRate: number;
+  }[];
+  trendWeeks: number;
+}
+
+export function WarehouseReports() {
+  const presets = useQuery({
+    queryKey: ['wh', 'report-presets'],
+    queryFn: () => api<Preset[]>('/warehouse/reports/presets'),
+    staleTime: 60 * 60_000,
+  });
+
+  const [range, setRange] = useState<{ from: string; to: string } | null>(null);
+  const [chosen, setChosen] = useState('last-30');
+
+  /* The default range is picked once the presets arrive, rather than
+     guessed here and corrected a moment later. */
+  const active = range
+    ?? presets.data?.find((p) => p.key === chosen)
+    ?? presets.data?.[0];
+
+  const report = useQuery({
+    queryKey: ['wh', 'report', active?.from, active?.to],
+    queryFn: () => api<Report>(
+      `/warehouse/reports?from=${active!.from}&to=${active!.to}`),
+    enabled: !!active,
+  });
+
+  if (presets.isLoading) return <LoadingState label="Loading" />;
+
+  const r = report.data;
+
+  return (
+    <div className="page">
+      <header className="pagehead">
+        <div>
+          <h1 className="pagehead__title">Reports</h1>
+          <p className="pagehead__sub">
+            What sold, from where, and what came back — over any two dates.
+          </p>
+        </div>
+        {r ? (
+          <button type="button" className="notebtn no-print"
+                  onClick={() => window.print()}>
+            Print / Save as PDF
+          </button>
+        ) : null}
+      </header>
+
+      <div className="no-print">
+        <Card title="Over which dates">
+          <div className="tabs" role="tablist">
+            {(presets.data ?? []).map((p) => (
+              <button key={p.key} type="button" role="tab"
+                      aria-selected={!range && chosen === p.key}
+                      className={`tabs__tab${!range && chosen === p.key ? ' is-active' : ''}`}
+                      onClick={() => { setChosen(p.key); setRange(null); }}>
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="formrow" style={{ marginBlockStart: 12 }}>
+            <label className="field">
+              <span className="field__label">From</span>
+              <input className="input mono" type="date" value={active?.from ?? ''}
+                     onChange={(e) => setRange({
+                       from: e.target.value, to: active?.to ?? e.target.value,
+                     })} />
+            </label>
+            <label className="field">
+              <span className="field__label">To</span>
+              <input className="input mono" type="date" value={active?.to ?? ''}
+                     onChange={(e) => setRange({
+                       from: active?.from ?? e.target.value, to: e.target.value,
+                     })} />
+            </label>
+          </div>
+        </Card>
+      </div>
+
+      {report.isLoading ? <LoadingState label="Reading the ledger" />
+       : report.isError ? (
+         <ErrorState error={report.error} onRetry={() => void report.refetch()} />
+       ) : !r ? null
+       : !r.totals.units ? (
+         <EmptyState title="Nothing sold in that range"
+                     hint="Try a wider one." />
+       ) : (
+         <>
+           <p className="muted qcsummary">
+             {r.range.from} to {r.range.to} · {r.range.days} days ·
+             built {new Date(r.builtAt).toLocaleString()}
+           </p>
+
+           <div className="grid">
+             {([
+               ['Pieces sold', r.totals.units.toLocaleString()],
+               ['Orders', r.totals.orders.toLocaleString()],
+               ['A day', String(r.totals.perDay)],
+               ['Returned', `${r.totals.returned} · ${r.totals.returnRate}%`],
+             ] as const).map(([label, value]) => (
+               <div className="grid__cell" key={label} style={{ '--span': 3 } as any}>
+                 <div className="tile"><div className="kpi">
+                   <div className="kpi__top"><p className="kpi__label">{label}</p></div>
+                   <p className="kpi__value">{value}</p>
+                 </div></div>
+               </div>
+             ))}
+           </div>
+
+           <Card title="Sold, day by day">
+             <SeriesChart payload={r.daily} height={240} />
+           </Card>
+
+           <div className="panes">
+             <Card title="By warehouse">
+               <CategoryChart payload={r.byWarehouse} height={240} />
+             </Card>
+             <Card title="By collection">
+               <CategoryChart payload={r.byCollection} height={240} />
+             </Card>
+           </div>
+
+           <Card title="Top sellers"
+                 subtitle={`With the last ${r.trendWeeks} weeks beside each.`}>
+             <div className="tablewrap">
+               <table className="table">
+                 <thead>
+                   <tr>
+                     <th scope="col">Item</th>
+                     <th scope="col" className="is-end">Sold</th>
+                     <th scope="col" className="is-end">Orders</th>
+                     <th scope="col" className="is-end">Returned</th>
+                     <th scope="col">Trend</th>
+                   </tr>
+                 </thead>
+                 <tbody>
+                   {r.topSellers.map((s) => (
+                     <tr key={s.item}>
+                       <td>{s.item}</td>
+                       <td className="is-end mono">{s.quantity}</td>
+                       <td className="is-end mono">{s.orders}</td>
+                       {/* The rate, not just the count: two returns out of
+                           three is a problem the count alone hides. */}
+                       <td className={`is-end mono${s.returnRate > 20
+                         ? ' whline__have is-bad' : ''}`}>
+                         {s.returned ? `${s.returned} · ${s.returnRate}%` : '—'}
+                       </td>
+                       <td><Sparkline weeks={s.trend} /></td>
+                     </tr>
+                   ))}
+                 </tbody>
+               </table>
+             </div>
+           </Card>
+
+           {r.mostReturned.length ? (
+             <Card title="Returned most"
+                   subtitle="A different list from the one above, and the one worth acting on.">
+               <div className="tablewrap">
+                 <table className="table">
+                   <thead>
+                     <tr>
+                       <th scope="col">Item</th>
+                       <th scope="col" className="is-end">Sold</th>
+                       <th scope="col" className="is-end">Returned</th>
+                       <th scope="col" className="is-end">Rate</th>
+                     </tr>
+                   </thead>
+                   <tbody>
+                     {r.mostReturned.map((s) => (
+                       <tr key={s.item}>
+                         <td>{s.item}</td>
+                         <td className="is-end mono">{s.quantity}</td>
+                         <td className="is-end mono">{s.returned}</td>
+                         <td className={`is-end mono${s.returnRate > 20
+                           ? ' whline__have is-bad' : ''}`}>{s.returnRate}%</td>
+                       </tr>
+                     ))}
+                   </tbody>
+                 </table>
+               </div>
+             </Card>
+           ) : null}
+
+           <Card title="By kind of movement">
+             <div className="tablewrap">
+               <table className="table">
+                 <tbody>
+                   {r.byKind.map((k) => (
+                     <tr key={k.kind}>
+                       <td>{k.kind}</td>
+                       <td className="is-end mono">{k.units.toLocaleString()}</td>
+                     </tr>
+                   ))}
+                 </tbody>
+               </table>
+             </div>
+           </Card>
+         </>
+       )}
+    </div>
+  );
+}
+
+/**
+ * Eight weeks, as a small bar run.
+ *
+ * Inline SVG rather than a chart component: fifty of these on one page, and
+ * a full chart each would make the table slow to open and slower to print.
+ */
+function Sparkline({ weeks }: { weeks: number[] }) {
+  const max = Math.max(1, ...weeks);
+  return (
+    <svg className="spark" viewBox={`0 0 ${weeks.length * 6} 20`}
+         role="img" aria-label={`Last ${weeks.length} weeks`}>
+      {weeks.map((v, i) => {
+        const h = Math.max(1, (v / max) * 18);
+        return (
+          <rect key={i} x={i * 6} y={20 - h} width="4" height={h}
+                rx="1" fill="currentColor"
+                opacity={i === weeks.length - 1 ? 1 : 0.45} />
+        );
+      })}
+    </svg>
+  );
+}

@@ -22,6 +22,7 @@ import {
 import { WarehousePlanning } from './pages/WarehousePlanning';
 import { WarehouseNewOrders } from './pages/WarehouseNewOrders';
 import { WarehouseTemplates } from './pages/WarehouseTemplates';
+import { WarehouseReports } from './pages/WarehouseReports';
 import { Home } from './pages/Home';
 import { BookRoom } from './pages/BookRoom';
 import { MyReservations } from './pages/MyReservations';
@@ -161,6 +162,7 @@ export function App() {
         <Route path="/warehouse/qc" element={<WarehouseQc />} />
         <Route path="/warehouse/issues" element={<WarehouseReturnIssues />} />
         <Route path="/warehouse/patches" element={<WarehousePatchLog />} />
+        <Route path="/warehouse/reports" element={<WarehouseReports />} />
         <Route path="/warehouse/planning" element={<WarehousePlanning />} />
         <Route path="/warehouse/labels" element={<WarehouseLabels />} />
         <Route path="/warehouse/documents" element={<WarehouseDocuments />} />

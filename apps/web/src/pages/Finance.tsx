@@ -414,6 +414,10 @@ const titleOf = (step: string) =>
 /* ---------------------------------------------------------- new request -- */
 
 export function FinanceNew() {
+  /* Chosen before the request exists, uploaded the moment it does. */
+  const [pending, setPending] = useState<File[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadFailed, setUploadFailed] = useState<string[]>([]);
   const navigate = useNavigate();
   const qc = useQueryClient();
 
@@ -470,7 +474,45 @@ export function FinanceNew() {
         ...(dept?.route === 'choice' ? { sendToPurchases } : {}),
       },
     }),
-    onSuccess: (r) => {
+    onSuccess: async (r) => {
+      /*
+       * The files go up once the request exists.
+       *
+       * An upload needs something to belong to, and the request is not
+       * created until this point — so the form holds the chosen files and
+       * sends them now. Without this the person raises the request, goes to
+       * find the quotation, and sends it to somebody on Slack instead; the
+       * approval is then decided from a document nobody can find again.
+       *
+       * A failed upload does not undo the request: the request is the thing
+       * that matters, and the detail page it lands on is where the file can
+       * be attached again.
+       */
+      if (pending.length) {
+        setUploading(true);
+        const failed: string[] = [];
+        for (const file of pending) {
+          try {
+            const ticket = await api<FinanceFileUploadTicket>(
+              `/finance/requests/${r.id}/files`, {
+                method: 'POST',
+                body: { name: file.name, type: file.type, size: file.size },
+              });
+            const put = await fetch(ticket.uploadUrl, {
+              method: 'PUT', headers: ticket.headers, body: file,
+            });
+            if (!put.ok) throw new Error(file.name);
+            await api(`/finance/files/${ticket.fileId}/confirm`, { method: 'POST' });
+          } catch { failed.push(file.name); }
+        }
+        setUploading(false);
+        if (failed.length) {
+          /* Said on the page it lands on rather than swallowed: the request
+             is in, and these are not. */
+          setUploadFailed(failed);
+        }
+      }
+
       void qc.invalidateQueries({ queryKey: qk.finance });
       navigate(`/finance/requests/${r.id}`);
     },
@@ -650,12 +692,59 @@ export function FinanceNew() {
             </p>
           )}
 
+          {/*
+            * Attached here, while the document is in front of them.
+            *
+            * The files are held until the request is created and go up the
+            * moment it is — an upload has to belong to something, and there
+            * is nothing to belong to until then.
+            */}
+          <label className="field">
+            <span className="field__label">
+              Attachments <span className="field__opt">quotation, invoice, receipt</span>
+            </span>
+            <input className="input" type="file" multiple
+                   accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.xlsx,.xls,.doc,.docx"
+                   onChange={(e) => {
+                     setPending((f) => [...f, ...Array.from(e.target.files ?? [])]);
+                     /* Cleared so the same file can be picked again after
+                        being removed. */
+                     e.target.value = '';
+                   }} />
+          </label>
+
+          {pending.length ? (
+            <ul className="finfiles">
+              {pending.map((f, i) => (
+                <li key={`${f.name}-${i}`}>
+                  <span>{f.name}</span>
+                  <span className="muted mono">
+                    {Math.max(1, Math.round(f.size / 1024))} KB
+                  </span>
+                  <button type="button" className="iconbtn" aria-label={`Remove ${f.name}`}
+                          disabled={create.isPending}
+                          onClick={() => setPending((fs) => fs.filter((_, j) => j !== i))}>
+                    <Icon name="minus" size={15} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
+          {uploadFailed.length ? (
+            <p className="notice notice--warn" role="alert">
+              The request was raised, but {uploadFailed.join(', ')} could not be
+              uploaded. Attach {uploadFailed.length === 1 ? 'it' : 'them'} from
+              the request itself.
+            </p>
+          ) : null}
+
           {create.isError ? <ErrorState error={create.error} compact /> : null}
 
           <div className="formrow--actions">
             <Link className="btn btn--ghost" to="/finance">Cancel</Link>
             <button type="button" className="btn btn--primary"
-                    disabled={!ready || create.isPending}
+                    disabled={!ready || create.isPending || uploading}
                     onClick={() => create.mutate()}>
               Send for approval
             </button>

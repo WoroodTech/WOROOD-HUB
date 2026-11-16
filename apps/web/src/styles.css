@@ -3624,7 +3624,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
  * not paint over the dialog's own chrome.
  */
 .ssel__list--loose {
-  position: absolute;
+  /* Fixed, not absolute: the list is anchored to the field on screen, and
+     stays with it rather than with the document behind it. */
+  position: fixed;
   inset-inline: auto;
   z-index: 60;
 }
@@ -4190,4 +4192,37 @@ button, input, select, textarea { font: inherit; color: inherit; }
   /* A long patch runs to a second page; a group must not break across it. */
   .otpl__table tr { break-inside: avoid; }
   .otpl__sign { break-inside: avoid; }
+}
+
+/* Eight weeks beside an item, small enough for fifty on a page. */
+.spark {
+  inline-size: 52px;
+  block-size: 20px;
+  display: block;
+  color: var(--accent);
+}
+
+@media print {
+  /* The report prints as it reads: charts and tables, no controls, and
+     light enough to come out of a printer. */
+  .page { padding: 0 !important; }
+  .card { break-inside: avoid; border-color: #ddd; }
+  .tabs, .field, .notebtn, .btn { display: none !important; }
+}
+
+/* Files chosen on the new-request form, before it has been raised. */
+.finfiles { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.finfiles li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 32px;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font-size: 13px;
+}
+.finfiles li > span:first-child {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
