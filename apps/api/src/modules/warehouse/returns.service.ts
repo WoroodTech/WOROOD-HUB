@@ -176,9 +176,35 @@ export class WarehouseReturnsService {
   async updateIssue(p: Principal, dto: {
     id: string; status: 'Open' | 'Resolved'; comment?: string;
   }) {
-    const issue = (await this.issues()).find(
-      (x) => x.id.toLowerCase() === String(dto.id ?? '').trim().toLowerCase());
-    if (!issue) throw new NotFoundException('No such issue.');
+    /*
+     * The id column only, not the whole tab.
+     *
+     * `issues()` reads every column of every row and builds an object for
+     * each, to find one. On a long tab that is the whole document pulled
+     * across the network for a row number — and with the write that follows
+     * it, the request was passing nginx's sixty seconds and returning 504
+     * while the change had actually gone through.
+     */
+    const want = String(dto.id ?? '').trim().toLowerCase();
+    if (!want) throw new BadRequestException('Which issue?');
+
+    const ids = await this.read(RETURN_ISSUES_TAB, 'B:B');
+    let rowNumber = 0;
+    for (let i = 1; i < ids.length; i++) {
+      if (String(ids[i]?.[0] ?? '').trim().toLowerCase() === want) {
+        rowNumber = i + 1;
+        break;
+      }
+    }
+    if (!rowNumber) throw new NotFoundException('No such issue.');
+
+    /* That one row, for its current status and comment. */
+    const current = (await this.read(RETURN_ISSUES_TAB, `${rowNumber}:${rowNumber}`))[0] ?? [];
+    const issue = {
+      rowNumber,
+      comment: String(current[RETURN_ISSUES.comment] ?? '').trim(),
+      id: String(current[RETURN_ISSUES.issueId] ?? '').trim(),
+    };
 
     const comment = String(dto.comment ?? '').trim();
     if (dto.status === 'Resolved' && !comment) {
@@ -316,9 +342,14 @@ export class WarehouseReturnsService {
 
   /* -------------------------------------------------------- helpers -- */
 
-  /** A tab created on first use may not exist yet; empty is the answer. */
-  private async read(tab: string): Promise<any[][]> {
-    try { return await this.sheet.read(tab); } catch { return [[]]; }
+  /**
+   * A tab created on first use may not exist yet; empty is the answer.
+   *
+   * `range` narrows the read to one column or one row, which is the
+   * difference between pulling a whole document and pulling what is needed.
+   */
+  private async read(tab: string, range?: string): Promise<any[][]> {
+    try { return await this.sheet.read(tab, range); } catch { return [[]]; }
   }
 }
 

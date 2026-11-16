@@ -77,9 +77,21 @@ export class PurchaseOrdersService {
   /** Ask Zoho what this supplier's next reference should be. */
   async suggestReference(p: Principal, vendorId: string): Promise<{ reference: string }> {
     this.assertPurchases(p);
-    const bills = await this.books.listAll('/bills', 'bills',
+    /*
+     * From this vendor's purchase orders, not their bills.
+     *
+     * A bill is what the vendor sends afterwards and carries their own
+     * numbering; a purchase order is what we send and carries ours. Reading
+     * the bills gave back the vendor's reference, so the suggestion was
+     * somebody else's number — and the order went to Zoho carrying it.
+     */
+    const orders = await this.books.listAll('/purchaseorders', 'purchaseorders',
       { vendor_id: vendorId, sort_column: 'date', sort_order: 'D' });
-    const refs = bills.map((b: any) => b.reference_number).filter(Boolean);
+
+    const refs = orders
+      .map((o: any) => o.reference_number)
+      .filter(Boolean);
+
     return { reference: PurchaseOrdersService.nextReference(refs) };
   }
 
@@ -193,9 +205,23 @@ export class PurchaseOrdersService {
     const r = await one<any>(
       `SELECT * FROM fin_requests WHERE id=$1 AND deleted_at IS NULL`, [requestId]);
     if (!r) throw new NotFoundException('No such request.');
-    if (r.type !== 'Vendors Payments') {
+    /*
+     * Any request Purchasing is handling, not one type of it.
+     *
+     * This used to allow only `Vendors Payments`, which is the type Finance
+     * uses when it pays a supplier directly. A request routed to Purchasing
+     * is a different thing — Purchasing sources it, prices it, and raises
+     * the order — and those were refused outright, which is why no purchase
+     * order from Purchasing ever reached Zoho.
+     *
+     * What matters is where the request is, not what it was called.
+     */
+    const atPurchasing = r.approval_state === 'PURCHASES_PENDING'
+      || r.route === 'purchases';
+    if (!atPurchasing && r.type !== 'Vendors Payments') {
       throw new BadRequestException(
-        'A purchase order is only for a vendor payment.');
+        'A purchase order belongs to a request Purchasing is handling, or to '
+        + 'a vendor payment.');
     }
 
     const lines = (dto.lines ?? []).filter((l) => l?.name?.trim() && l.quantity > 0);

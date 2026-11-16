@@ -22,6 +22,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Principal } from '../../../common/auth';
 import { one, query, tx } from '../../../common/db';
 import { config } from '../../../common/config';
+import { idFrom } from './record-id';
 import { ZohoBooksClient, ZohoError } from './books-client';
 
 /** Six goes over about a day, which is long enough to ride out an outage. */
@@ -52,12 +53,31 @@ export class ZohoQueueService {
    */
   async enqueuePayment(paymentId: string): Promise<void> {
     const pm = await one<any>(
-      `SELECT pm.*, r.reference, r.description, r.type, r.vendor_name,
+      /*
+       * The vendor can be on the request or on its purchase order.
+       *
+       * Finance names the supplier on the request when it pays one
+       * directly. A request routed through Purchasing names nobody — the
+       * supplier is chosen later, when Purchasing raises the order — so
+       * reading only the request found no vendor, the payment was marked
+       * SKIPPED, and nothing Purchasing sourced ever reached Zoho.
+       *
+       * The purchase order also carries the vendor's Zoho id and its own
+       * id, which is what a vendor payment has to be applied against.
+       */
+      `SELECT pm.*, r.reference, r.description, r.type,
+              COALESCE(NULLIF(r.vendor_name, ''), po.vendor_name) AS vendor_name,
+              po.vendor_zoho_id,
+              po.zoho_po_id,
+              po.zoho_po_number,
+              po.reference AS po_reference,
               r.payment_method, r.payment_details, r.requested_amount,
               d.name AS department_name
          FROM fin_payments pm
          JOIN fin_requests r ON r.id = pm.request_id
          JOIN core_departments d ON d.id = r.department_id
+         LEFT JOIN fin_purchase_orders po
+                ON po.request_id = r.id AND po.status = 'DRAFTED'
         WHERE pm.id = $1`, [paymentId]);
     if (!pm) return;
 
@@ -70,9 +90,13 @@ export class ZohoQueueService {
     }
 
     const kind = this.kindFor(pm);
-    /* A vendor payment with no purchase order posts nothing in the legacy app
-       either -- there is no bill to apply it to. Recorded as SKIPPED rather
-       than silently dropped, so the gap is visible in the queue. */
+    /*
+     * Only skipped when there is genuinely no supplier anywhere.
+     *
+     * With the purchase order joined above, a request Purchasing sourced now
+     * has one — so the skip means what it says rather than catching every
+     * payment that came through Purchasing.
+     */
     const skipped = kind === 'VENDOR_PAYMENT' && !pm.vendor_name;
     const missing = skipped ? null : this.missingAccounts(kind, pm);
 
@@ -85,8 +109,19 @@ export class ZohoQueueService {
        /* Derived from our own payment id, so a retry sends an identical
           reference and Zoho can be asked whether it already has one. */
        `payment:${paymentId}`,
-       skipped ? 'SKIPPED' : missing ? 'DEAD' : 'PENDING',
-       missing ? `Cannot be posted: ${missing}.` : null]);
+       /*
+        * A missing account is something somebody can still supply.
+        *
+        * This used to mark the event DEAD the moment it was created, so a
+        * request that reached payment without an expense account chosen
+        * could never go to Zoho — not when the account was set afterwards,
+        * not ever. `FAILED` keeps it in the queue and retried, so filling
+        * the account in is all it takes.
+        *
+        * It stays visible either way: the error says what is missing.
+        */
+       skipped ? 'SKIPPED' : missing ? 'FAILED' : 'PENDING',
+       missing ? `Waiting: ${missing}.` : null]);
 
     if (missing) {
       this.log.warn(`payment ${paymentId} cannot be posted to Zoho: ${missing}`);
@@ -96,6 +131,15 @@ export class ZohoQueueService {
   private kindFor(pm: any): ZohoKind {
     if (pm.type === 'Petty Cash') return 'CUSTODY_TRANSFER';
     if (pm.type === 'Vendors Payments') return 'VENDOR_PAYMENT';
+    /*
+     * A payment against a purchase order is a vendor payment, whatever the
+     * request was called when it was raised.
+     *
+     * Purchasing sources things under every request type there is, and
+     * posting those as plain expenses would leave the purchase orders in
+     * Zoho open for ever with the money recorded somewhere else.
+     */
+    if (pm.zoho_po_id) return 'VENDOR_PAYMENT';
     return 'EXPENSE';
   }
 
@@ -188,6 +232,8 @@ export class ZohoQueueService {
     return null;
   }
 
+  /* see idFrom() below */
+
   private pathFor(kind: ZohoKind): string {
     return kind === 'CUSTODY_TRANSFER' ? '/banktransactions'
          : kind === 'VENDOR_PAYMENT' ? '/vendorpayments'
@@ -265,12 +311,15 @@ export class ZohoQueueService {
          * Both are tried, nested first, because an envelope is what Zoho
          * documents and a flat body is what some of its endpoints send.
          */
-        recordId = out?.expense?.expense_id
-          ?? out?.vendorpayment?.vendor_payment_id
-          ?? out?.banktransaction?.transaction_id
-          ?? out?.payment?.payment_id
-          ?? out?.expense_id ?? out?.vendor_payment_id
-          ?? out?.transaction_id ?? out?.payment_id ?? out?.id ?? null;
+        recordId = idFrom(out);
+
+        if (!recordId) {
+          /* What came back, so the next person does not have to guess.
+             Trimmed: a Zoho body can be long and this is a log line. */
+          this.log.error(
+            `${path} returned no id we could find — body was `
+            + JSON.stringify(out).slice(0, 600));
+        }
         if (!recordId) {
           /*
            * Not retryable, and that is the whole point.

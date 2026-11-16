@@ -34,6 +34,7 @@ import { WarehouseReturnsService } from './returns.service';
 import { WarehouseDocumentsService } from './documents.service';
 import { WarehouseCostingService } from './costing.service';
 import { WarehouseOrdersService } from './orders.service';
+import { WarehouseReportsService } from './reports.service';
 
 export const WAREHOUSE_PERMISSIONS = {
   VIEW: 'warehouse.view',
@@ -95,6 +96,8 @@ registerHubModule({
       icon: 'list', requiresAnyPermission: [WAREHOUSE_PERMISSIONS.RETURNS_HANDLE] },
     { label: 'Patch Log', labelAr: 'سجل الباتشات', path: '/warehouse/patches',
       icon: 'list', requiresAnyPermission: [WAREHOUSE_PERMISSIONS.STOCK_VIEW] },
+    { label: 'Reports', labelAr: 'التقارير', path: '/warehouse/reports',
+      icon: 'chart', requiresAnyPermission: [WAREHOUSE_PERMISSIONS.REPORT_VIEW] },
     { label: 'Planning', labelAr: 'التخطيط', path: '/warehouse/planning',
       icon: 'chart', requiresAnyPermission: [WAREHOUSE_PERMISSIONS.ROLLS_PLAN] },
     { label: 'QR Label', labelAr: 'ملصق QR', path: '/warehouse/labels',
@@ -146,7 +149,22 @@ export class WarehouseController {
     private readonly docs: WarehouseDocumentsService,
     private readonly costing: WarehouseCostingService,
     private readonly orders: WarehouseOrdersService,
+    private readonly reports: WarehouseReportsService,
   ) {}
+
+  /* --------------------------------------------------------- reports -- */
+
+  /** The ranges people open most, so the screen can offer them. */
+  @Get('reports/presets')
+  @Permissions(WAREHOUSE_PERMISSIONS.REPORT_VIEW)
+  reportPresets() { return this.reports.presets(); }
+
+  /** What sold, when, from where, and what came back. */
+  @Get('reports')
+  @Permissions(WAREHOUSE_PERMISSIONS.REPORT_VIEW)
+  report(@Query() q: { from: string; to: string; fresh?: string }) {
+    return this.reports.build({ from: q.from, to: q.to }, q.fresh === 'true');
+  }
 
   /* ------------------------------------------------- new orders ----- */
 
@@ -690,7 +708,7 @@ export class WarehouseController {
     WarehouseDashboardService, WarehouseItemsService, WarehouseInsightsService,
     WarehouseRollsService, WarehouseStagesService, WarehouseQcService,
     WarehouseReturnsService, WarehouseDocumentsService, WarehouseCostingService,
-    WarehouseOrdersService,
+    WarehouseOrdersService, WarehouseReportsService,
   ],
   exports: [
     WarehouseSheetClient, WarehouseReaderService, WarehouseQueueService,
