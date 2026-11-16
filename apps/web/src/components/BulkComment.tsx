@@ -59,6 +59,27 @@ export function BulkCommentDialog({ onClose }: { onClose: () => void }) {
    * the people doing this produce, and asking them to name a column would be
    * a rule to get wrong.
    */
+  /**
+   * The shape, as a file.
+   *
+   * Built here rather than served, so it cannot drift from what `readFile`
+   * below actually accepts — the two would be a rule written twice.
+   */
+  const downloadTemplate = () => {
+    const sheet = XLSX.utils.aoa_to_sheet([
+      ['Order reference'],
+      ['#1001'],
+      ['#1002'],
+      ['#1003'],
+    ]);
+    /* Wide enough that the column is not a row of #### on opening. */
+    (sheet as any)['!cols'] = [{ wch: 20 }];
+
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, sheet, 'Orders');
+    XLSX.writeFile(book, 'order-comments-template.xlsx');
+  };
+
   const readFile = async (file: File) => {
     setFileError(null);
     setRefs(null);
@@ -165,6 +186,24 @@ export function BulkCommentDialog({ onClose }: { onClose: () => void }) {
                          if (f) void readFile(f);
                        }} />
               </label>
+
+              {/*
+                * A file to copy rather than a description to follow.
+                *
+                * "References in the first column" is read as a rule and
+                * then interpreted — people add a header row, a second
+                * column of names, or the order total. Handing them the
+                * shape means there is nothing to interpret.
+                */}
+              <p className="muted bulkhint">
+                Not sure of the layout?{' '}
+                <button type="button" className="ordername"
+                        onClick={downloadTemplate}>
+                  Download a template
+                </button>
+                {' '}— one order reference per row, nothing else. A header
+                row is fine; it is skipped.
+              </p>
 
               {fileError ? (
                 <p className="notice notice--warn">{fileError}</p>

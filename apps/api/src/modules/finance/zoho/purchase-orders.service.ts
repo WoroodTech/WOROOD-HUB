@@ -31,6 +31,17 @@ export interface PurchaseOrderLine {
 
 @Injectable()
 export class PurchaseOrdersService {
+  /**
+   * The last suggestion for each vendor, briefly.
+   *
+   * The form asks for this on every render, and the answer cannot change
+   * between two of them — nobody raises a purchase order in the seconds
+   * while somebody else is filling one in. Two minutes is long enough to
+   * cost nothing and short enough that a second person does not get a
+   * number that has just been used.
+   */
+  private readonly refCache = new Map<string, { at: number; reference: string }>();
+
   private readonly log = new Logger('PurchaseOrders');
 
   constructor(private readonly books: ZohoBooksClient) {}
@@ -78,21 +89,37 @@ export class PurchaseOrdersService {
   async suggestReference(p: Principal, vendorId: string): Promise<{ reference: string }> {
     this.assertPurchases(p);
     /*
-     * From this vendor's purchase orders, not their bills.
+     * One page, newest first — not every order this vendor has ever had.
      *
-     * A bill is what the vendor sends afterwards and carries their own
-     * numbering; a purchase order is what we send and carries ours. Reading
-     * the bills gave back the vendor's reference, so the suggestion was
-     * somebody else's number — and the order went to Zoho carrying it.
+     * `listAll` walks up to twenty-five pages, and this is called every time
+     * the form re-renders. Between them they burned the organisation's
+     * 10,000-call daily limit, which is what the "exceeded the maximum call
+     * rate limit" error was: not Zoho being slow, us asking 25 times for an
+     * answer that is in the first row.
+     *
+     * The next reference only needs the highest already used, and sorted
+     * newest first that is on page one.
+     *
+     * From purchase orders rather than bills, too: a bill is what the vendor
+     * sends afterwards and carries their numbering; a purchase order is what
+     * we send and carries ours.
      */
-    const orders = await this.books.listAll('/purchaseorders', 'purchaseorders',
-      { vendor_id: vendorId, sort_column: 'date', sort_order: 'D' });
+    const res = await this.books.call('GET', '/purchaseorders', {
+      query: {
+        vendor_id: vendorId,
+        sort_column: 'date',
+        sort_order: 'D',
+        per_page: '50',
+      },
+    });
 
-    const refs = orders
+    const refs = (res?.purchaseorders ?? [])
       .map((o: any) => o.reference_number)
       .filter(Boolean);
 
-    return { reference: PurchaseOrdersService.nextReference(refs) };
+    const reference = PurchaseOrdersService.nextReference(refs);
+    this.refCache.set(vendorId, { at: Date.now(), reference });
+    return { reference };
   }
 
   /** Suppliers, from the cache. */
@@ -236,6 +263,9 @@ export class PurchaseOrdersService {
       throw new BadRequestException('This request already has a purchase order.');
     }
 
+    /* The suggestion for this vendor is now one behind. */
+    this.refCache.delete(dto.vendorId);
+
     /* Zoho's answer wins over whatever the form is holding. */
     const suggested = await this.suggestReference(p, dto.vendorId)
       .then((x) => x.reference)
@@ -298,11 +328,29 @@ export class PurchaseOrdersService {
       /* Recorded as failed rather than thrown away, so the lines somebody
          typed survive and the attempt can be repeated without retyping them.
          The legacy app loses the form on a failure. */
+      const text = String(e?.message ?? e);
       await query(
         `UPDATE fin_purchase_orders SET status='FAILED', error=$2 WHERE id=$1`,
-        [row.id, String(e?.message ?? e).slice(0, 2000)]);
+        [row.id, text.slice(0, 2000)]);
+
+      /*
+       * A quota is not a refusal.
+       *
+       * "Zoho would not create the purchase order" reads as something wrong
+       * with the order — the wrong vendor, a bad line — and sends somebody
+       * to check all of it. The organisation having spent its daily calls
+       * is a different thing entirely, and the order is fine: it needs
+       * trying again, not fixing.
+       */
+      if (/rate limit|exceeded the maximum/i.test(text)) {
+        throw new BadRequestException(
+          'Zoho has had all the API calls it allows today, so this could not '
+          + 'be sent. Nothing is wrong with the order — try again tomorrow, '
+          + 'or ask whoever administers Zoho about the limit.');
+      }
+
       throw new BadRequestException(
-        `Zoho would not create the purchase order: ${e?.message ?? e}`);
+        `Zoho would not create the purchase order: ${text}`);
     }
   }
 
@@ -329,9 +377,19 @@ export class PurchaseOrdersService {
     };
   }
 
+  /**
+   * Raising an order is Purchasing's step.
+   *
+   * They source the thing, price it, and commit to the supplier; Finance
+   * pays against the order afterwards. `finance.request.manage` used to
+   * pass here as well, which let Finance raise one — the wrong desk doing
+   * the committing, and the reason this sat in the wrong place.
+   */
   private assertPurchases(p: Principal) {
-    if (!can(p, PURCHASES) && !can(p, MANAGE)) {
-      throw new ForbiddenException('Only Purchases can work with purchase orders.');
+    if (!can(p, PURCHASES)) {
+      throw new ForbiddenException(
+        'Raising a purchase order is Purchasing\'s step. Finance records the '
+        + 'payment against it afterwards.');
     }
   }
 }

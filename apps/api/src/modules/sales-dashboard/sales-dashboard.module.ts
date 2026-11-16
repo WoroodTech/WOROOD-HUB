@@ -10,6 +10,9 @@ import { AbandonedCheckoutService } from './sync/abandoned-checkout.service';
 import { StoreCreditService } from './sync/store-credit.service';
 import { AccessService } from './dashboards/access.service';
 import { PaymentExportService } from './orders/payment-export.service';
+/* Finance requests ride on this module's widget machinery, which is why the
+   service is provided here rather than only in the finance module. */
+import { FinanceRequestWidgetsService } from '../finance/request-widgets.service';
 import { BulkCommentsService } from './orders/bulk-comments.service';
 import { OrderNotesService } from './orders/order-notes.service';
 import { DashboardsController } from './dashboards/dashboards.controller';
@@ -34,6 +37,7 @@ import { SalesGateway } from './realtime/sales.gateway';
     ShopContext, SnapshotService, MetricsService, CustomerMetricsService, AbandonedCheckoutService, StoreCreditService, AccessService,
     WebhookProcessor, SyncService, BackfillService, SalesScheduler, SalesGateway,
     OrderNotesService, PaymentExportService, BulkCommentsService,
+    FinanceRequestWidgetsService,
   ],
   exports: [WebhookWorker, ShopContext, SnapshotService, SyncService, BackfillService, MetricsService],
 })

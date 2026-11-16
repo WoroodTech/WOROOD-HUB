@@ -17,6 +17,7 @@
  * snapshots) and collected (received, from the mirror). The gap between them is
  * money in transit with the couriers.
  */
+import { FinanceRequestWidgetsService } from '../../finance/request-widgets.service';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { DateTime } from 'luxon';
 import { query } from '../../../common/db';
@@ -114,6 +115,8 @@ export class MetricsService {
     private customers: CustomerMetricsService,
     private abandoned: AbandonedCheckoutService,
     private credit: StoreCreditService,
+    /* Finance requests, which share this machinery but no data with Shopify. */
+    private requestWidgets: FinanceRequestWidgetsService,
   ) {}
 
   /* ------------------------------------------------------- snapshot reads -- */
@@ -287,6 +290,32 @@ export class MetricsService {
   /* ----------------------------------------------------------- widgets -- */
 
   async widget(widgetKey: string, rangeKey: RangeKey, principal: Principal, compare?: CompareDays): Promise<WidgetEnvelope> {
+    /*
+     * Finance request widgets answer before the shop is fetched.
+     *
+     * They have nothing to do with Shopify: no shop, no currency, no
+     * snapshot. Asking for the shop first would make the Requests dashboard
+     * fail on an installation that has not connected a store, for a value
+     * none of its widgets uses.
+     */
+    if (widgetKey.startsWith('req-')) {
+      const range = resolveRange(rangeKey, 'Africa/Cairo', undefined, compare);
+      const generatedAt = new Date().toISOString();
+      try {
+        const payload = await this.requestWidgets.build(
+          widgetKey, { from: range.start, to: range.end, label: rangeKey },
+          principal);
+        return { widgetKey, title: widgetKey, generatedAt,
+                 dataAgeSeconds: 0, payload: payload as any };
+      } catch (e: any) {
+        /* Null with a reason rather than a failed dashboard: one widget
+           that cannot answer should not take the other eleven with it. */
+        return { widgetKey, title: widgetKey, generatedAt,
+                 dataAgeSeconds: null, payload: null,
+                 error: String(e?.message ?? e) } as any;
+      }
+    }
+
     const shop = await this.shops.get();
     const range = resolveRange(rangeKey, shop.iana_timezone, undefined, compare);
     const generatedAt = new Date().toISOString();

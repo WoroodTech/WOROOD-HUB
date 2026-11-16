@@ -7,7 +7,7 @@
  * the person on the other end is matching these against a settlement
  * statement line by line.
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { one, query } from '../../../common/db';
 import { Principal } from '../../../common/auth';
 import { AuditService } from '../../../core/core.module';
@@ -40,18 +40,27 @@ export class PaymentExportService {
   constructor(private readonly audit: AuditService) {}
 
   /** What the next export would cover, for the button to say so. */
-  async preview() {
-    const from = await this.nextFrom();
+  async preview(range?: { from?: string; to?: string }) {
+    const picked = parseRange(range);
+    const from = picked?.from ?? await this.nextFrom();
+    const to = picked?.to ?? null;
     const row = await one<any>(
       `SELECT count(*) AS n FROM sd_orders
         WHERE deleted_at IS NULL AND NOT test
-          AND shopify_created_at >= $1`, [from]);
+          AND shopify_created_at >= $1
+          AND ($2::timestamptz IS NULL OR shopify_created_at < $2)`,
+      [from, to]);
     const last = await one<any>(
       `SELECT exported_at, rows FROM sd_payment_exports
         ORDER BY exported_at DESC LIMIT 1`);
 
     return {
       from,
+      to,
+      /* Whether this is the usual incremental export or a range somebody
+         asked for — the screen says which, so nobody re-exports a month
+         thinking the boundary has moved. */
+      picked: !!picked,
       waiting: Number(row?.n ?? 0),
       lastExportAt: last?.exported_at ?? null,
       lastExportRows: last ? Number(last.rows) : null,
@@ -66,9 +75,20 @@ export class PaymentExportService {
    * otherwise fall between this export's end and the next one's start, and
    * nothing would ever pick it up.
    */
-  async take(p: Principal, format: 'csv' | 'pdf') {
-    const from = await this.nextFrom();
-    const to = new Date();
+  async take(p: Principal, format: 'csv' | 'pdf',
+             range?: { from?: string; to?: string }) {
+    /*
+     * A chosen range does not move the boundary.
+     *
+     * The normal export is incremental: it hands over everything since the
+     * last one and writes a mark so the next starts there. Asking for a
+     * particular fortnight is a different job — somebody re-sending a batch
+     * the bank lost — and moving the mark for that would skip every order
+     * between that range and today, silently and for ever.
+     */
+    const picked = parseRange(range);
+    const from = picked?.from ?? await this.nextFrom();
+    const to = picked?.to ?? new Date();
 
     const rows = await query<any>(
       `SELECT o.name, o.shopify_created_at, o.payment_id, o.payment_authorization,
@@ -90,6 +110,11 @@ export class PaymentExportService {
       currency: r.currency_code,
       financialStatus: r.financial_status,
     }));
+
+    if (picked) {
+      /* Handed over without touching the boundary. */
+      return { rows: out, from, to, format, picked: true };
+    }
 
     /*
      * The mark is written even when the export is empty.
@@ -162,4 +187,42 @@ export class PaymentExportService {
        non-ASCII in a gateway name. */
     return '\uFEFF' + [header.join(','), ...lines].join('\r\n');
   }
+}
+
+/**
+ * A range somebody asked for, if they asked for one.
+ *
+ * Both ends or neither: half a range is almost always a half-filled form,
+ * and guessing the other end would hand over a different set of orders from
+ * the one on screen.
+ */
+function parseRange(range?: { from?: string; to?: string }):
+  { from: Date; to: Date } | null {
+  const rawFrom = String(range?.from ?? '').trim();
+  const rawTo = String(range?.to ?? '').trim();
+  if (!rawFrom && !rawTo) return null;
+
+  if (!rawFrom || !rawTo) {
+    throw new BadRequestException('Give both dates, or neither.');
+  }
+
+  const from = new Date(`${rawFrom}T00:00:00.000Z`);
+  /* Inclusive of the last day: somebody picking 1–14 means the whole of the
+     fourteenth, not up to midnight at its start. */
+  const to = new Date(`${rawTo}T00:00:00.000Z`);
+  to.setUTCDate(to.getUTCDate() + 1);
+
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+    throw new BadRequestException('Those are not dates. Use 2026-11-01.');
+  }
+  if (to <= from) {
+    throw new BadRequestException('The end date is before the start date.');
+  }
+
+  const days = (to.getTime() - from.getTime()) / 86_400_000;
+  if (days > 366) {
+    throw new BadRequestException('A range can cover up to a year.');
+  }
+
+  return { from, to };
 }
