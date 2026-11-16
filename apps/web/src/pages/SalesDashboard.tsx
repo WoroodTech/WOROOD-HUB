@@ -101,6 +101,19 @@ export function SalesDashboard() {
           </p>
         </div>
 
+        {/*
+          * Printed as it stands, through the browser.
+          *
+          * What is on the screen is what goes on the page — the widgets that
+          * are showing, for the range that is chosen — so there is no second
+          * rendering to keep in step with this one, and it works on any
+          * machine without a round trip.
+          */}
+        <button type="button" className="btn btn--ghost no-print dashprint"
+                onClick={() => window.print()}>
+          Export as PDF
+        </button>
+
         <div className="ranges" role="group" aria-label="Date range">
           {RANGES.map((r) => (
             <button

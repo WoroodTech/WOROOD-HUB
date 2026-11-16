@@ -158,7 +158,9 @@ export class DashboardsController {
   /** What the next export would cover, so the button can say so. */
   @Get('orders/payment-export/preview')
   @Permissions('sales.order.payment.view')
-  exportPreview() { return this.paymentExport.preview(); }
+  exportPreview(@Query() q: { from?: string; to?: string }) {
+    return this.paymentExport.preview(q);
+  }
 
   /**
    * Take the export.
@@ -169,10 +171,15 @@ export class DashboardsController {
    */
   @Post('orders/payment-export')
   @Permissions('sales.order.payment.view')
-  async takeExport(@CurrentUser() p: Principal, @Res() res: any) {
-    const { rows, from, to } = await this.paymentExport.take(p, 'csv');
+  async takeExport(@CurrentUser() p: Principal, @Res() res: any,
+                   @Query() q: { from?: string; to?: string }) {
+    const { rows, from, to } = await this.paymentExport.take(p, 'csv', q);
     const csv = this.paymentExport.toCsv(rows);
-    const name = `payment-references-${from.slice(0, 10)}-to-${to.slice(0, 10)}.csv`;
+    /* `from` is a string when it comes from the stored boundary and a Date
+       when somebody picked a range; the file name wants a day either way. */
+    const day = (v: string | Date) =>
+      (typeof v === 'string' ? v : v.toISOString()).slice(0, 10);
+    const name = `payment-references-${day(from)}-to-${day(to)}.csv`;
     res.header('Content-Type', 'text/csv; charset=utf-8');
     res.header('Content-Disposition', `attachment; filename="${name}"`);
     /* So the page can say how many without parsing the file. */

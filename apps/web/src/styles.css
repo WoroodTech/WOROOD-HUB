@@ -4226,3 +4226,25 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .finfiles li > span:first-child {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+
+/* The line offering the bulk-comment template. */
+.bulkhint { font-size: 12.5px; margin-block: 8px 0; line-height: 1.5; }
+
+/* The dashboard's export button, beside the range picker. */
+.dashprint { align-self: start; }
+
+@media print {
+  /*
+   * A dashboard on paper.
+   *
+   * The controls go, the widgets stay, and each one is kept whole: a chart
+   * split across a page break is worse than a page with space at the foot.
+   * The range and the generation time stay visible, because a printed
+   * dashboard with no dates on it cannot be filed.
+   */
+  .ranges, .dashprint, .sidebar, .topbar { display: none !important; }
+  .page { padding: 0 !important; }
+  .grid__cell, .tile, .card { break-inside: avoid; }
+  .card { border-color: #ddd; box-shadow: none; }
+  .pagehead__meta { color: #444 !important; }
+}

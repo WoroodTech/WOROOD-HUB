@@ -303,9 +303,16 @@ export class FinanceController {
     return this.purchaseOrders.syncVendors(p);
   }
 
-  /** What this supplier's next reference should be, from their own bills. */
+  /**
+   * What this supplier's next reference should be.
+   *
+   * Purchasing only. Raising a purchase order is their step — they source
+   * the thing, price it, and commit to the supplier — and Finance pays
+   * against the order afterwards. Leaving `finance.request.manage` here let
+   * Finance raise one too, which is the wrong desk doing the committing.
+   */
   @Get('vendors/:vendorId/next-reference')
-  @Permissions('finance.purchases.decide', 'finance.request.manage')
+  @Permissions('finance.purchases.decide')
   nextReference(@CurrentUser() p: Principal, @Param('vendorId') vendorId: string) {
     return this.purchaseOrders.suggestReference(p, vendorId);
   }
@@ -315,8 +322,9 @@ export class FinanceController {
     return this.purchaseOrders.forRequest(p, id);
   }
 
+  /** Purchasing raises it; Finance pays against it later. */
   @Post('requests/:id/purchase-order')
-  @Permissions('finance.purchases.decide', 'finance.request.manage')
+  @Permissions('finance.purchases.decide')
   draftPurchaseOrder(@CurrentUser() p: Principal,
                      @Param('id', ParseUUIDPipe) id: string,
                      @Body() dto: DraftPurchaseOrder) {
