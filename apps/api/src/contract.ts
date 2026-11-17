@@ -946,6 +946,8 @@ export interface FinanceRequest {
   waitingOn: 'MANAGER' | 'PURCHASES' | 'FINANCE' | null;
   rejectionReason: string | null;
   vendorName: string | null;
+  /** Zoho's id for that supplier, so an order can be raised against it. */
+  vendorZohoId: string | null;
   createdAt: string;
   /** Purchases has not priced this yet, and must before approving. */
   needsPricing?: boolean;

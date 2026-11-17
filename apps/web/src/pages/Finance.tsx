@@ -768,7 +768,7 @@ export function FinanceRequestPage() {
   const [editing, setEditing] = useState(false);
   const [asking, setAsking] = useState(false);
   const [pricing, setPricing] = useState<Record<string, string>>({
-    type: '', requestedAmount: '', vendorName: '',
+    type: '', requestedAmount: '', vendorName: '', vendorZohoId: '',
     paymentMethod: '', accountNumber: '', bankName: '', beneficiaryName: '',
   });
 
@@ -1055,8 +1055,23 @@ export function FinanceRequestPage() {
            *
            * Everyone else sees the order once it exists, read-only.
            */
+          /*
+           * Raisable while Purchasing still has it *and* after they have
+           * approved it on to Finance.
+           *
+           * Tying it to PURCHASES_PENDING alone closed the form the moment
+           * Approve was pressed — so the order could never be raised at
+           * all, and Finance was left looking at "Purchases will raise one
+           * before this is paid" for an order nobody could create.
+           *
+           * It closes once the money has gone out: an order raised after
+           * payment is a record of something that already happened.
+           */
           canDraft={may('finance.purchases.decide')
-            && r.approvalState === 'PURCHASES_PENDING'}
+            && r.paymentState !== 'PAID'
+            && (r.approvalState === 'PURCHASES_PENDING'
+                || r.approvalState === 'FINANCE_PENDING'
+                || r.approvalState === 'APPROVED')}
           onChanged={() => {
             void qc.invalidateQueries({ queryKey: qk.financePurchaseOrder(id) });
             void qc.invalidateQueries({ queryKey: qk.financeItem(id) });
@@ -1470,13 +1485,26 @@ function PricingFields({ value, onChange, banks }: {
           {/* Petty cash is money moved into somebody's float — there is no
               supplier to name, and a box that accepts one invites a request
               that cannot be fulfilled as written. */}
+          {/*
+            * Keyed by Zoho's id, not by the name.
+            *
+            * The name alone cannot raise a purchase order — the next step
+            * needs the supplier's id, and storing only the name meant the
+            * order said "none on this request" beside a supplier the
+            * request plainly named.
+            */}
           <SearchSelect
-            value={value.vendorName} onChange={(v: string) => set('vendorName', v)}
+            value={value.vendorZohoId ?? ''}
+            onChange={(id: string) => {
+              const picked = suppliers.data?.find((v) => v.id === id);
+              set('vendorZohoId', id);
+              set('vendorName', picked?.name ?? '');
+            }}
             placeholder="Search suppliers…"
             disabled={value.type === 'Petty Cash'}
             disabledReason="Not for petty cash"
             options={(suppliers.data ?? []).map((v) => ({
-              value: v.name, label: v.name,
+              value: v.id, label: v.name,
             }))} />
         </label>
         <label className="field">
@@ -2109,8 +2137,30 @@ function PurchaseOrderCard({
             <span className="field__label">
               Reference <span className="field__opt">the next in their series</span>
             </span>
-            <input className="input mono" readOnly
-                   value={suggested.data?.reference ?? (vendorId ? 'working it out…' : '')} />
+            {/*
+              * Read from Zoho, never typed.
+              *
+              * It is the next in this supplier's own series, so there is one
+              * right answer and a free field only gives somebody the chance
+              * to reuse a number. Every case says what it is rather than
+              * leaving an empty box that reads as something to fill in.
+              */}
+            <p className="field__fixed mono">
+              {!vendorId
+                ? <span className="muted">no supplier on this request yet</span>
+                : suggested.isLoading
+                  ? <span className="muted">reading Zoho…</span>
+                  : suggested.isError
+                    ? <span className="muted">
+                        Zoho could not be reached — the order will take the
+                        next number when it is created
+                      </span>
+                    : suggested.data?.reference
+                      ? suggested.data.reference
+                      : <span className="muted">
+                          first order for this supplier — Zoho will number it
+                        </span>}
+            </p>
           </label>
         </div>
 

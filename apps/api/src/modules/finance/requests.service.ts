@@ -377,6 +377,11 @@ export class FinanceRequestsService {
            account_number   = COALESCE($10, account_number),
            beneficiary_name = COALESCE($11, beneficiary_name),
            vendor_name      = COALESCE($12, vendor_name),
+           /* Zoho's own id for the supplier, not just their name.
+              Without it the purchase order has nothing to raise against:
+              the next step could show "none on this request" beside a
+              supplier the request plainly names. */
+           vendor_zoho_id   = COALESCE($14, vendor_zoho_id),
            priced_by_id     = CASE WHEN $5 IS NULL THEN priced_by_id ELSE $3 END,
            priced_at        = CASE WHEN $5 IS NULL THEN priced_at ELSE now() END,
            /* Priced by Purchases means charged to Purchases: this is what the
@@ -389,7 +394,8 @@ export class FinanceRequestsService {
          priced?.paymentMethod ?? null, priced?.paymentDetails ?? null,
          priced?.bankName ?? null, priced?.accountNumber ?? null,
          priced?.beneficiaryName ?? null, priced?.vendorName ?? null,
-         priced ? p.departmentId : null]);
+         priced ? p.departmentId : null,
+         priced?.vendorZohoId ?? null]);
 
       /* Appended, never updated: a request rejected, re-raised and approved
          should not look like one approved first time. */
@@ -793,6 +799,7 @@ export class FinanceRequestsService {
       }, cfg);
 
       const vendorName = (pricing.vendorName ?? '').trim() || null;
+      const vendorZohoId = (pricing.vendorZohoId ?? '').trim() || null;
 
       /*
        * A vendor payment needs the vendor.
@@ -818,6 +825,7 @@ export class FinanceRequestsService {
         accountNumber: clean.accountNumber,
         beneficiaryName: clean.beneficiaryName,
         vendorName,
+        vendorZohoId,
       };
     } catch (e) {
       if (e instanceof FormError) throw new BadRequestException(e.message);
@@ -980,6 +988,9 @@ export class FinanceRequestsService {
       waitingOn: stepOf(row.approval_state),
       rejectionReason: row.rejection_reason,
       vendorName: row.vendor_name,
+      /* So the purchase order can be raised against the supplier the
+         request already names, rather than asking for one again. */
+      vendorZohoId: row.vendor_zoho_id,
       createdAt: new Date(row.created_at).toISOString(),
       canDecide: canDecide(p, this.shapeOf(row)),
       canEdit: canEditDirectly(p, this.shapeOf(row)),
