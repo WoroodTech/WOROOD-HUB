@@ -4335,3 +4335,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
   margin-block-start: 2px;
   max-inline-size: 34ch;
 }
+
+/* A field that must be filled, said beside its label. */
+.field__req {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--danger-ink, var(--danger));
+  margin-inline-start: 6px;
+}
