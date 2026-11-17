@@ -109,12 +109,8 @@ export function SalesDashboard() {
           * rendering to keep in step with this one, and it works on any
           * machine without a round trip.
           */}
-        <button type="button" className="btn btn--ghost no-print dashprint"
-                onClick={() => window.print()}>
-          Export as PDF
-        </button>
-
-        <div className="ranges" role="group" aria-label="Date range">
+        <div className="dashhead__right">
+          <div className="ranges" role="group" aria-label="Date range">
           {RANGES.map((r) => (
             <button
               key={r.key}
@@ -135,6 +131,19 @@ export function SalesDashboard() {
               { replace: true })}
           >
             Compare days
+          </button>
+          </div>
+
+          {/*
+            * At the end of the row, after the ranges.
+            *
+            * In the middle it sat between the title and the controls, which
+            * is where a reader looks for the thing the page is about — not
+            * for an action.
+            */}
+          <button type="button" className="btn btn--ghost no-print dashprint"
+                  onClick={() => window.print()}>
+            Export as PDF
           </button>
         </div>
       </header>

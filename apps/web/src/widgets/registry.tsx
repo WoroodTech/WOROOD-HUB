@@ -18,6 +18,9 @@ import { CategoryChart } from '../charts/CategoryChart';
 import { FunnelChart } from '../charts/FunnelChart';
 import { DataTable } from '../charts/DataTable';
 
+import { DepartmentCards } from './DepartmentCards';
+import type { DepartmentsPayload } from './DepartmentCards';
+
 export interface RenderContext {
   /** Categorical slot, so colour follows the widget's position, not its rank. */
   slot: number;
@@ -37,6 +40,9 @@ const barRenderer: Renderer = (payload: SeriesPayload | CategoryPayload, ctx) =>
 );
 
 export const WIDGET_RENDERERS: Record<string, Renderer> = {
+  /* A card per department, which two charts could not say clearly. */
+  departments: (payload: DepartmentsPayload, ctx) =>
+    <DepartmentCards payload={payload} currency={ctx.currency} />,
   kpi: (payload: KpiPayload, ctx) => <KpiTile payload={payload} slot={ctx.slot} />,
   line: (payload: SeriesPayload, ctx) => <SeriesChart payload={payload} height={ctx.wide ? 300 : 220} />,
   bar: barRenderer,

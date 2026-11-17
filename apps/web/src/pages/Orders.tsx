@@ -97,16 +97,34 @@ export function Orders() {
    * where this one ended. The file comes back in the response rather than
    * from a link, so a refresh cannot take a second one by accident.
    */
-  const runExport = async () => {
+  /* Which dates, before anything is taken. */
+  const [exportAsking, setExportAsking] = useState(false);
+  const [exportFrom, setExportFrom] = useState('');
+  const [exportTo, setExportTo] = useState('');
+
+  const runExport = async (range?: { from: string; to: string }) => {
     setExporting(true);
     setExportNote(null);
     try {
-      const res = await apiRaw('/sales/orders/payment-export', { method: 'POST' });
+      /*
+       * A chosen range does not move the boundary.
+       *
+       * The normal export is incremental and marks where it stopped. Asking
+       * for a particular fortnight is a different job — re-sending a batch
+       * the bank lost — and moving the mark for that would skip every order
+       * between that range and today, silently and for ever.
+       */
+      const qs = range ? `?from=${range.from}&to=${range.to}` : '';
+      const res = await apiRaw(`/sales/orders/payment-export${qs}`, { method: 'POST' });
       const rows = Number(res.headers.get('X-Export-Rows') ?? 0);
       if (!rows) {
         /* The boundary still moved — see the service. Said plainly so nobody
            presses it again expecting a different answer. */
-        setExportNote({ text: 'Nothing new since the last export.' });
+        setExportNote({
+          text: range
+            ? 'No orders in those dates.'
+            : 'Nothing new since the last export.',
+        });
         return;
       }
       const blob = await res.blob();
@@ -117,7 +135,10 @@ export function Orders() {
         ?? 'payment-references.csv';
       a.click();
       URL.revokeObjectURL(url);
-      setExportNote({ text: `${rows} order${rows === 1 ? '' : 's'} exported.` });
+      setExportNote({
+        text: `${rows} order${rows === 1 ? '' : 's'} exported.`
+          + (range ? ' The running export is unaffected.' : ''),
+      });
     } catch (e: any) {
       setExportNote({ text: e?.message ?? 'The export could not be taken.', bad: true });
     } finally {
@@ -139,13 +160,74 @@ export function Orders() {
           </p>
         </div>
 
+        {/*
+          * Which dates, before anything is taken.
+          *
+          * Pressing the button used to run the export there and then — and
+          * taking it moves the boundary, so a press meant to look at the
+          * dates had already consumed everything waiting.
+          */}
+        {exportAsking ? (
+          <div className="modal" role="dialog" aria-modal="true"
+               aria-label="Export payment references">
+            <div className="modal__sheet">
+              <h2 className="modal__title">Export payment references</h2>
+
+              <p className="muted">
+                Leave the dates empty for everything since the last export —
+                that is the usual one, and it marks where it stopped. Pick
+                dates to re-take a stretch; the running export is unaffected.
+              </p>
+
+              <div className="formrow">
+                <label className="field">
+                  <span className="field__label">From</span>
+                  <input className="input mono" type="date" value={exportFrom}
+                         onChange={(e) => setExportFrom(e.target.value)} />
+                </label>
+                <label className="field">
+                  <span className="field__label">To</span>
+                  <input className="input mono" type="date" value={exportTo}
+                         onChange={(e) => setExportTo(e.target.value)} />
+                </label>
+              </div>
+
+              {(exportFrom && !exportTo) || (!exportFrom && exportTo) ? (
+                /* Half a range is almost always a half-filled form, and
+                   guessing the other end would hand over a different set of
+                   orders from the one somebody has in mind. */
+                <p className="notice notice--warn">Give both dates, or neither.</p>
+              ) : null}
+
+              <div className="modal__foot">
+                <button type="button" className="btn btn--ghost"
+                        onClick={() => setExportAsking(false)}>
+                  Cancel
+                </button>
+                <button type="button" className="notebtn"
+                        disabled={exporting
+                          || (!!exportFrom !== !!exportTo)}
+                        onClick={() => {
+                          setExportAsking(false);
+                          void runExport(exportFrom && exportTo
+                            ? { from: exportFrom, to: exportTo } : undefined);
+                        }}>
+                  {exportFrom && exportTo
+                    ? 'Export those dates'
+                    : 'Export everything new'}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         {/* The actions that belong to the page rather than to one row. The
             notes icon used to sit on every line, which put the same control
             fifty times on screen for something nobody does fifty times. */}
         {showPayment ? (
           <div className="pagehead__tools">
             <button type="button" className="notebtn" disabled={exporting}
-                    onClick={() => void runExport()}>
+                    onClick={() => setExportAsking(true)}>
               {exporting ? 'Preparing…' : 'Export payment IDs'}
             </button>
             <button type="button" className="notebtn"
