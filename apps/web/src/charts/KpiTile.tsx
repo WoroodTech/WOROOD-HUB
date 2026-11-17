@@ -28,13 +28,28 @@ export function KpiTile({ payload, slot = 0, title }: { payload: KpiPayload; slo
       </div>
       <p className="kpi__value" title={exact}>{shown}</p>
       <div className="kpi__foot">
-        <Delta
-          value={payload.value}
-          comparedTo={payload.comparedTo}
-          label={payload.comparisonLabel}
-          invert={INVERTED.test(label)}
-        />
+        {/*
+          * A comparison, or a line saying what the number is made of.
+          *
+          * "No baseline" means there is no earlier period to compare with —
+          * true but useless on a widget that never compares, where it read
+          * as something missing. Those send a `sub` instead, which says
+          * what the figure covers.
+          */}
+        {payload.comparedTo !== undefined && payload.comparedTo !== null ? (
+          <Delta
+            value={payload.value}
+            comparedTo={payload.comparedTo}
+            label={payload.comparisonLabel}
+            invert={INVERTED.test(label)}
+          />
+        ) : (payload as any).sub ? (
+          <span className="kpi__sub">{(payload as any).sub}</span>
+        ) : null}
       </div>
+      {(payload as any).note ? (
+        <p className="kpi__note">{(payload as any).note}</p>
+      ) : null}
       {payload.sparkline?.length ? (
         <Sparkline points={payload.sparkline} colorSlot={slot} label={`${label} trend`} />
       ) : null}

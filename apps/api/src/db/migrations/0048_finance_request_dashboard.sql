@@ -1,4 +1,4 @@
--- 0049_finance_request_dashboard.sql
+-- 0048_finance_request_dashboard.sql
 -- A Requests dashboard, built from the same widgets machinery as the Shopify
 -- ones so it is arranged and shared the same way.
 --
@@ -33,13 +33,12 @@ VALUES
    'Money that actually went out in the range.',
    'finance.requests', 'kpi', 'finance.report.view', 3),
 
-  ('req-by-department', 'Requests by department', 'الطلبات بالقسم',
-   'How many each department raised.',
-   'finance.requests', 'bar', 'finance.report.view', 6),
-
-  ('req-spend-by-department', 'Spend by department', 'الإنفاق بالقسم',
-   'What each department actually spent — paid, not asked for.',
-   'finance.requests', 'bar', 'finance.report.view', 6),
+  -- One card per department rather than two charts whose numbers differed
+  -- with nothing to say why: one counts requests, the other sums money that
+  -- has actually left.
+  ('req-departments', 'Departments', 'الأقسام',
+   'Each department: raised, approved, rejected, still waiting, asked for and spent.',
+   'finance.requests', 'departments', 'finance.report.view', 12),
 
   ('req-over-time', 'Raised and paid', 'المقدّم والمدفوع',
    'Both over time. The gap between them is a queue building up.',
@@ -97,13 +96,12 @@ SELECT d.id, w.id, x.position, x.width
     ('req-kpi-approved-value',  3,  3),
     ('req-kpi-paid',            4,  3),
     ('req-over-time',           5, 12),
-    ('req-spend-by-department', 6,  6),
+    ('req-departments',         6, 12),
     ('req-by-state',            7,  6),
-    ('req-by-department',       8,  6),
-    ('req-by-type',             9,  6),
-    ('req-purchasing-queue',   10, 12),
-    ('req-purchasing-decided', 11,  6),
-    ('req-slowest',            12,  6)
+    ('req-by-type',             8,  6),
+    ('req-purchasing-queue',    9, 12),
+    ('req-purchasing-decided', 10,  6),
+    ('req-slowest',            11,  6)
   ) AS x(key, position, width)
   JOIN sd_widgets w ON w.key = x.key
  WHERE d.key = 'finance-requests'
@@ -125,3 +123,16 @@ SELECT r.id, d.id
         AND p.key IN ('finance.report.view', 'finance.request.manage')
    )
 ON CONFLICT DO NOTHING;
+
+/* ------------------------------------------------------------ retired -- */
+
+-- An earlier version of this registered two department charts whose figures
+-- differed with nothing to explain it. Removed here rather than left on the
+-- dashboard beside the card that replaces them.
+DELETE FROM sd_dashboard_widgets
+ WHERE widget_id IN (
+   SELECT id FROM sd_widgets
+    WHERE key IN ('req-by-department', 'req-spend-by-department'));
+
+DELETE FROM sd_widgets
+ WHERE key IN ('req-by-department', 'req-spend-by-department');

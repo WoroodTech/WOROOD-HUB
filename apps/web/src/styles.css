@@ -4248,3 +4248,90 @@ button, input, select, textarea { font: inherit; color: inherit; }
   .card { border-color: #ddd; box-shadow: none; }
   .pagehead__meta { color: #444 !important; }
 }
+
+/* A table row that opens something. */
+.table tr.is-clickable { cursor: pointer; }
+.table tr.is-clickable:hover td { background: var(--surface-2); }
+.table tr.is-clickable:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* A KPI that explains what it counts rather than comparing. */
+.kpi__note {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 2px 16px 10px;
+  line-height: 1.4;
+}
+
+/* ---------------------------------------------- department cards -- */
+
+.deptgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 12px;
+}
+
+.deptcard {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  padding: 14px;
+}
+
+.deptcard__head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+}
+.deptcard__head h4 { margin: 0; font-size: 13.5px; font-weight: 600; }
+
+/* The money that left is the headline: it is the figure people come for. */
+.deptcard__spend {
+  margin: 10px 0 12px;
+  font-size: 21px;
+  font-weight: 620;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.deptcard__spend small {
+  display: block;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  letter-spacing: 0;
+  margin-block-start: 3px;
+}
+
+.deptcard__rows { margin: 0; display: grid; gap: 5px; }
+.deptcard__rows > div {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 10px; font-size: 12.5px;
+}
+.deptcard__rows dt { color: var(--muted); }
+.deptcard__rows dd { margin: 0; font-variant-numeric: tabular-nums; }
+.deptcard__rows dd.is-bad { color: var(--danger-ink, var(--danger)); }
+.deptcard__rows dd.is-warn { color: var(--warn-ink, #8a6400); font-weight: 600; }
+
+.deptnote {
+  font-size: 12px;
+  margin-block: 12px 0;
+  line-height: 1.5;
+}
+
+/* The ranges and the export button, together at the end of the header. */
+.dashhead__right {
+  display: flex;
+  align-items: start;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* The note under a legend label, saying what that slice means. */
+.legend__name small {
+  display: block;
+  font-size: 10.5px;
+  color: var(--muted);
+  line-height: 1.35;
+  margin-block-start: 2px;
+  max-inline-size: 34ch;
+}

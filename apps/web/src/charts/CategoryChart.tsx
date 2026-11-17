@@ -4,7 +4,19 @@ import type { CategoryPayload } from '../contract';
 import { MAX_SERIES, OTHER_COLOR, chrome, seriesColor } from './palette';
 import { formatPercent, formatValue, formatValueShort } from '../lib/format';
 
-const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+/*
+ * A label with a capital at the front.
+ *
+ * Guarded because a label can be null: a grouping column that is nullable in
+ * the database produces one, and the chart then took the whole dashboard
+ * down with `null.charAt`. A row with nothing to call it is still a real
+ * row with a real number, so it is named rather than dropped.
+ */
+const titleCase = (s: string | null | undefined) => {
+  const t = String(s ?? '').trim();
+  if (!t) return 'Not set';
+  return t.charAt(0).toUpperCase() + t.slice(1);
+};
 
 /**
  * Donut for a part-to-whole split, horizontal bars for a ranked comparison.
@@ -12,6 +24,15 @@ const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
  * never a generated hue.
  */
 export function CategoryChart({ payload, height = 240 }: { payload: CategoryPayload; height?: number }) {
+  /*
+   * Notes for the legend, when the payload carries them.
+   *
+   * "Manager" and "Finance" on a donut mean nothing until somebody has been
+   * told what each desk does with a request — and the person reading the
+   * dashboard is often exactly the person who has not.
+   */
+  const notes = (payload as { legend?: { label: string; note: string }[] }).legend;
+
   const c = chrome();
   const currency = payload.currency ?? 'EGP';
 
@@ -35,7 +56,7 @@ export function CategoryChart({ payload, height = 240 }: { payload: CategoryPayl
   }
 
   if (payload.kind === 'bar') {
-    return (
+  return (
       <div className="chart">
         <ResponsiveContainer width="100%" height={Math.max(height, items.length * 34)}>
           <BarChart data={items} layout="vertical" margin={{ top: 4, right: 16, bottom: 4, left: 8 }}>
@@ -99,7 +120,15 @@ export function CategoryChart({ payload, height = 240 }: { payload: CategoryPayl
         {items.map((it) => (
           <li key={it.label} className="legend__row">
             <span className="legend__swatch" style={{ background: it.color }} aria-hidden="true" />
-            <span className="legend__name">{titleCase(it.label)}</span>
+            <span className="legend__name">
+              {titleCase(it.label)}
+              {/* What this slice means, where the payload says. A label like
+                  "Manager" is not self-explanatory to somebody who has not
+                  been told what that desk does with a request. */}
+              {notes?.find((n) => n.label === it.label)?.note ? (
+                <small>{notes.find((n) => n.label === it.label)!.note}</small>
+              ) : null}
+            </span>
             <span className="legend__value">{formatValue(it.value, payload.format, currency)}</span>
             <span className="legend__share">{formatPercent((it.value / total) * 100, 1)}</span>
           </li>

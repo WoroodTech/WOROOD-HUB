@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router-dom';
 import type { TablePayload } from '../contract';
 import { formatValue } from '../lib/format';
 import { Icon } from '../components/Icon';
@@ -27,6 +28,7 @@ export function StatusPill({ value }: { value: string }) {
 export function DataTable({ payload, currency = 'EGP', maxRows }: {
   payload: TablePayload; currency?: string; maxRows?: number;
 }) {
+  const navigate = useNavigate();
   const rows = maxRows ? payload.rows.slice(0, maxRows) : payload.rows;
   const redacted = payload.redactedColumns ?? [];
 
@@ -58,20 +60,43 @@ export function DataTable({ payload, currency = 'EGP', maxRows }: {
             </tr>
           </thead>
           <tbody>
-            {rows.map((row, i) => (
-              <tr key={String(row[payload.columns[0].key] ?? i)}>
-                {payload.columns.map((col) => {
-                  const value = row[col.key];
-                  return (
-                    <td key={col.key} className={col.align === 'end' ? 'is-end' : undefined}>
-                      {col.format === 'status'
-                        ? <StatusPill value={String(value ?? '')} />
-                        : formatValue(value, col.format, currency)}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
+            {rows.map((row, i) => {
+              /*
+               * A row that can be opened says so and behaves like a link.
+               *
+               * A table of references with no way through to any of them is
+               * a list somebody then has to search for by hand. The payload
+               * carries the path; the row carries the id.
+               */
+              const link = (payload as any).rowLink && row.id
+                ? String((payload as any).rowLink).replace(':id', String(row.id))
+                : null;
+
+              return (
+                <tr key={String(row[payload.columns[0].key] ?? i)}
+                    className={link ? 'is-clickable' : undefined}
+                    tabIndex={link ? 0 : undefined}
+                    role={link ? 'link' : undefined}
+                    onClick={link ? () => navigate(link) : undefined}
+                    onKeyDown={link ? (e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        navigate(link);
+                      }
+                    } : undefined}>
+                  {payload.columns.map((col) => {
+                    const value = row[col.key];
+                    return (
+                      <td key={col.key} className={col.align === 'end' ? 'is-end' : undefined}>
+                        {col.format === 'status'
+                          ? <StatusPill value={String(value ?? '')} />
+                          : formatValue(value, col.format, currency)}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

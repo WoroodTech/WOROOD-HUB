@@ -22,8 +22,7 @@ export const REQUEST_WIDGETS = [
   'req-kpi-open',
   'req-kpi-approved-value',
   'req-kpi-paid',
-  'req-by-department',
-  'req-spend-by-department',
+  'req-departments',
   'req-over-time',
   'req-by-state',
   'req-by-type',
@@ -53,8 +52,7 @@ export class FinanceRequestWidgetsService {
       case 'req-kpi-open': return this.open(range);
       case 'req-kpi-approved-value': return this.approvedValue(range);
       case 'req-kpi-paid': return this.paid(range);
-      case 'req-by-department': return this.byDepartment(range);
-      case 'req-spend-by-department': return this.spendByDepartment(range);
+      case 'req-departments': return this.departments(range);
       case 'req-over-time': return this.overTime(range);
       case 'req-by-state': return this.byState(range);
       case 'req-by-type': return this.byType(range);
@@ -151,34 +149,90 @@ export class FinanceRequestWidgetsService {
 
   /* ----------------------------------------------------------- charts -- */
 
-  private async byDepartment(r: RequestRange) {
+  /**
+   * One card per department: raised, approved, rejected, waiting, spent.
+   *
+   * Two separate widgets used to show "requests by department" and "spend by
+   * department", and the numbers differed — correctly, because one counts
+   * requests and the other sums money that has actually left. Side by side
+   * with no explanation that looked like a bug, so they are one card now
+   * with every figure labelled.
+   */
+  private async departments(r: RequestRange) {
     const rows = await query<any>(
-      `SELECT d.name AS label, count(*)::int AS value
-         FROM fin_requests f
-         JOIN core_departments d ON d.id = f.department_id
-        WHERE f.deleted_at IS NULL AND f.created_at >= $1 AND f.created_at < $2
-        GROUP BY d.name ORDER BY value DESC`, [r.from, r.to]);
-
-    return { kind: 'bar' as const, format: 'integer' as const, items: rows };
-  }
-
-  /** What each department actually spent — paid, not asked for. */
-  private async spendByDepartment(r: RequestRange) {
-    const rows = await query<any>(
-      `SELECT d.name AS label, COALESCE(sum(pm.amount), 0)::numeric AS value
-         FROM fin_payments pm
-         JOIN fin_requests f ON f.id = pm.request_id
-         JOIN core_departments d ON d.id = f.department_id
-        WHERE pm.reversal_of_id IS NULL
-          AND pm.paid_at >= $1 AND pm.paid_at < $2
-        GROUP BY d.name
-       HAVING sum(pm.amount) > 0
-        ORDER BY value DESC`, [r.from, r.to]);
+      `WITH raised AS (
+         SELECT f.department_id,
+                count(*)::int AS raised,
+                COALESCE(sum(f.requested_amount), 0)::numeric AS asked,
+                count(*) FILTER (WHERE f.approval_state = 'APPROVED')::int AS approved,
+                count(*) FILTER (WHERE f.approval_state = 'REJECTED')::int AS rejected
+           FROM fin_requests f
+          WHERE f.deleted_at IS NULL
+            AND f.created_at >= $1 AND f.created_at < $2
+          GROUP BY f.department_id
+       ),
+       /* Open is as things stand, not within the range: a request raised in
+          January and still waiting belongs on today's list. */
+       waiting AS (
+         SELECT f.department_id, count(*)::int AS waiting
+           FROM fin_requests f
+          WHERE f.deleted_at IS NULL
+            AND f.approval_state IN
+                ('MANAGER_PENDING','PURCHASES_PENDING','FINANCE_PENDING')
+          GROUP BY f.department_id
+       ),
+       /* Money that actually left, in the range — which is why this differs
+          from what was asked for, and always will. */
+       spent AS (
+         SELECT f.department_id, COALESCE(sum(pm.amount), 0)::numeric AS spent
+           FROM fin_payments pm
+           JOIN fin_requests f ON f.id = pm.request_id
+          WHERE pm.reversal_of_id IS NULL
+            AND pm.paid_at >= $1 AND pm.paid_at < $2
+          GROUP BY f.department_id
+       )
+       SELECT d.id AS department_id,
+              COALESCE(NULLIF(d.name, ''), 'No department') AS department,
+              COALESCE(r.raised, 0) AS raised,
+              COALESCE(r.approved, 0) AS approved,
+              COALESCE(r.rejected, 0) AS rejected,
+              COALESCE(r.asked, 0) AS asked,
+              COALESCE(w.waiting, 0) AS waiting,
+              COALESCE(s.spent, 0) AS spent
+         FROM core_departments d
+         LEFT JOIN raised r ON r.department_id = d.id
+         LEFT JOIN waiting w ON w.department_id = d.id
+         LEFT JOIN spent s ON s.department_id = d.id
+        WHERE COALESCE(r.raised, 0) > 0 OR COALESCE(w.waiting, 0) > 0
+           OR COALESCE(s.spent, 0) > 0
+        ORDER BY COALESCE(s.spent, 0) DESC, COALESCE(r.raised, 0) DESC`,
+      [r.from, r.to]);
 
     return {
-      kind: 'bar' as const,
-      format: 'currency' as const,
-      items: rows.map((x) => ({ label: x.label, value: Number(x.value) })),
+      kind: 'departments' as const,
+      cards: rows.map((x) => ({
+        departmentId: x.department_id,
+        department: x.department,
+        raised: Number(x.raised),
+        approved: Number(x.approved),
+        rejected: Number(x.rejected),
+        waiting: Number(x.waiting),
+        asked: Number(x.asked),
+        spent: Number(x.spent),
+      })),
+      totals: {
+        raised: rows.reduce((n, x) => n + Number(x.raised), 0),
+        approved: rows.reduce((n, x) => n + Number(x.approved), 0),
+        rejected: rows.reduce((n, x) => n + Number(x.rejected), 0),
+        waiting: rows.reduce((n, x) => n + Number(x.waiting), 0),
+        asked: rows.reduce((n, x) => n + Number(x.asked), 0),
+        spent: rows.reduce((n, x) => n + Number(x.spent), 0),
+      },
+      /* Said on the card itself, because the two figures differ for a reason
+         and a reader should not have to work it out. */
+      note: 'Asked for is what requests were raised for in this range. Spent '
+          + 'is money that actually left in it — part-payments, and approvals '
+          + 'never paid, make the two differ.',
     };
   }
 
@@ -236,12 +290,24 @@ export class FinanceRequestWidgetsService {
       kind: 'donut' as const,
       format: 'integer' as const,
       items: rows.map((x) => ({ label: readable(x.label), value: x.value })),
+      /* "Manager" and "Finance" are not obvious until somebody has been
+         told what each desk does with a request. */
+      legend: [
+        { label: 'Manager',
+          note: 'the requester’s own department head has not approved it yet' },
+        { label: 'Purchasing',
+          note: 'approved by the manager, now with Purchasing to source and price' },
+        { label: 'Finance',
+          note: 'priced and approved, waiting for Finance to approve and pay' },
+      ],
     };
   }
 
   private async byType(r: RequestRange) {
     const rows = await query<any>(
-      `SELECT type AS label, count(*)::int AS value
+      /* `type` is nullable on older rows, and a null label crashed the
+         chart. Named here so the row is still counted. */
+      `SELECT COALESCE(NULLIF(type, ''), 'Not set') AS label, count(*)::int AS value
          FROM fin_requests
         WHERE deleted_at IS NULL AND created_at >= $1 AND created_at < $2
         GROUP BY 1 ORDER BY value DESC`, [r.from, r.to]);
@@ -260,7 +326,7 @@ export class FinanceRequestWidgetsService {
    */
   private async purchasingQueue(_r: RequestRange) {
     const rows = await query<any>(
-      `SELECT f.reference, f.description, f.requested_amount,
+      `SELECT f.id, f.reference, f.description, f.requested_amount,
               d.name AS department,
               u.full_name AS requester,
               f.created_at,
@@ -285,6 +351,8 @@ export class FinanceRequestWidgetsService {
       rows: rows.map((x) => ({
         ...x, requested_amount: Number(x.requested_amount),
       })),
+      /* The screen opens a row at this path; the id travels with each. */
+      rowLink: '/finance/requests/:id',
       total: rows.reduce((n, x) => n + Number(x.requested_amount), 0),
     };
   }
@@ -337,7 +405,7 @@ export class FinanceRequestWidgetsService {
    */
   private async slowest(_r: RequestRange) {
     const rows = await query<any>(
-      `SELECT f.reference, d.name AS department, f.approval_state,
+      `SELECT f.id, f.reference, d.name AS department, f.approval_state,
               f.requested_amount,
               EXTRACT(DAY FROM now() - f.created_at)::int AS waiting_days
          FROM fin_requests f
@@ -362,6 +430,7 @@ export class FinanceRequestWidgetsService {
         approval_state: readable(x.approval_state),
         requested_amount: Number(x.requested_amount),
       })),
+      rowLink: '/finance/requests/:id',
     };
   }
 
