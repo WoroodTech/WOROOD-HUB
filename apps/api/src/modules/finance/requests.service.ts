@@ -792,6 +792,23 @@ export class FinanceRequestsService {
         beneficiaryName: pricing.beneficiaryName,
       }, cfg);
 
+      const vendorName = (pricing.vendorName ?? '').trim() || null;
+
+      /*
+       * A vendor payment needs the vendor.
+       *
+       * It is the next step's whole input: Purchasing raises the order
+       * against this supplier, and without one they are stopped with
+       * nothing to do about it but send the request back. Caught here, at
+       * the point the choice is made, rather than one desk later.
+       */
+      if (clean.type === 'Vendors Payments' && !vendorName) {
+        throw new BadRequestException(
+          'Choose the supplier. A vendor payment is raised as a purchase '
+          + 'order against them, and there is nothing to raise it against '
+          + 'without one.');
+      }
+
       return {
         type: clean.type,
         requestedAmount: clean.requestedAmount,
@@ -800,7 +817,7 @@ export class FinanceRequestsService {
         bankName: clean.bankName,
         accountNumber: clean.accountNumber,
         beneficiaryName: clean.beneficiaryName,
-        vendorName: (pricing.vendorName ?? '').trim() || null,
+        vendorName,
       };
     } catch (e) {
       if (e instanceof FormError) throw new BadRequestException(e.message);

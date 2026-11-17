@@ -765,7 +765,6 @@ export function FinanceRequestPage() {
 
   const { principal, can: may } = useAuth();
   const canRecordPayments = may('finance.payment.record');
-  const canDecidePurchases = may('finance.purchases.decide') || may('finance.request.manage');
   const [editing, setEditing] = useState(false);
   const [asking, setAsking] = useState(false);
   const [pricing, setPricing] = useState<Record<string, string>>({
@@ -1029,12 +1028,35 @@ export function FinanceRequestPage() {
         />
       ) : null}
 
-      {/* Only for a vendor payment: petty cash has nobody to order from, and
-          an ordinary expense is paid rather than ordered. */}
-      {r.type === 'Vendors Payments' && r.approvalState === 'APPROVED' ? (
+      {/*
+        * Raised by Purchasing, while the request is still with them.
+        *
+        * This used to appear only once Finance had approved — which put the
+        * order after the payment decision, and meant Purchasing could not
+        * raise one at all. Purchasing sources the thing, prices it, and
+        * commits to the supplier; Finance pays against that commitment.
+        *
+        * Still shown afterwards, read-only, so anybody looking at a paid
+        * request can see which order it went against.
+        */}
+      {(r.route === 'purchases' || r.type === 'Vendors Payments')
+        && (r.approvalState === 'PURCHASES_PENDING'
+            || r.approvalState === 'FINANCE_PENDING'
+            || r.approvalState === 'APPROVED') ? (
         <PurchaseOrderCard
           requestId={id}
-          canDraft={canDecidePurchases}
+          vendorName={r.vendorName ?? null}
+          vendorZohoId={(r as any).vendorZohoId ?? null}
+          expectedTotal={Number(r.requestedAmount ?? 0)}
+          /*
+           * Purchasing's permission alone, not `canDecidePurchases` —
+           * which includes `finance.request.manage`, so the Finance manager
+           * was being shown the form for a step that is not theirs.
+           *
+           * Everyone else sees the order once it exists, read-only.
+           */
+          canDraft={may('finance.purchases.decide')
+            && r.approvalState === 'PURCHASES_PENDING'}
           onChanged={() => {
             void qc.invalidateQueries({ queryKey: qk.financePurchaseOrder(id) });
             void qc.invalidateQueries({ queryKey: qk.financeItem(id) });
@@ -1431,9 +1453,19 @@ function PricingFields({ value, onChange, banks }: {
       <div className="formrow">
         <label className="field">
           <span className="field__label">
-            Supplier{value.type === 'Petty Cash' ? null : (
-              <span className="field__opt">optional</span>
-            )}
+            Supplier
+            {/*
+              * Required for a vendor payment, which is the whole point of
+              * choosing one: there is nobody to raise an order against
+              * otherwise, and Purchasing is stopped at the next step.
+              *
+              * Petty cash has no supplier at all — see below.
+              */}
+            {value.type === 'Vendors Payments'
+              ? <span className="field__req">required</span>
+              : value.type === 'Petty Cash'
+                ? null
+                : <span className="field__opt">optional</span>}
           </span>
           {/* Petty cash is money moved into somebody's float — there is no
               supplier to name, and a box that accepts one invites a request
@@ -1933,12 +1965,26 @@ export function FinanceToPay() {
  * worked out from their bills, because a gap or a repeat in that sequence is
  * the supplier's problem and they will notice it.
  */
-function PurchaseOrderCard({ requestId, canDraft, onChanged }: {
+function PurchaseOrderCard({
+  requestId, canDraft, onChanged, vendorName, vendorZohoId, expectedTotal,
+}: {
   requestId: string;
   canDraft: boolean;
   onChanged: () => void;
+  /** Already chosen when the request was priced; not asked for again. */
+  vendorName: string | null;
+  vendorZohoId: string | null;
+  /** What the request was priced at. The order has to come to the same. */
+  expectedTotal: number;
 }) {
-  const [vendorId, setVendorId] = useState('');
+  /*
+   * The supplier comes from the request, not from a second picker.
+   *
+   * It was chosen when the request was priced. Offering the list again
+   * invites a different answer, and then the order and the request disagree
+   * about who is being paid.
+   */
+  const vendorId = vendorZohoId ?? '';
   const [lines, setLines] = useState<{ name: string; quantity: string; rate: string }[]>(
     [{ name: '', quantity: '1', rate: '' }]);
   const [busy, setBusy] = useState(false);
@@ -1949,16 +1995,13 @@ function PurchaseOrderCard({ requestId, canDraft, onChanged }: {
     queryFn: () => api<PurchaseOrder | null>(`/finance/requests/${requestId}/purchase-order`),
   });
 
-  const vendors = useQuery({
-    queryKey: qk.financeVendors,
-    queryFn: () => api<ZohoVendor[]>('/finance/vendors'),
-    staleTime: 60 * 60_000,
-    enabled: canDraft,
-  });
-
-  /* Shown while typing so somebody can see what the supplier will receive
-     before committing to it. The server recomputes it anyway — this is a
-     preview, not the value that is used. */
+  /*
+   * The reference, read from Zoho and not typed.
+   *
+   * It is the next in this supplier's series, so there is one right answer
+   * and a free field only gives somebody the chance to get it wrong —
+   * or to reuse one. Shown, locked, and recomputed on the server anyway.
+   */
   const suggested = useQuery({
     queryKey: ['finance', 'po-ref', vendorId],
     queryFn: () => api<{ reference: string }>(
@@ -1969,16 +2012,25 @@ function PurchaseOrderCard({ requestId, canDraft, onChanged }: {
   const total = lines.reduce(
     (n, l) => n + (Number(l.quantity) || 0) * (Number(l.rate) || 0), 0);
 
+  /*
+   * The order has to come to what the request was priced at.
+   *
+   * Finance approved a figure and will pay it; an order for a different one
+   * means the supplier is owed something nobody approved. A pound either way
+   * is rounding, and anything more is a mistake worth stopping.
+   */
+  const gap = Math.round((total - expectedTotal) * 100) / 100;
+  const mismatched = lines.some((l) => l.name.trim()) && Math.abs(gap) > 1;
+
   const create = async () => {
     setBusy(true);
     setError(null);
     try {
-      const vendor = vendors.data?.find((v) => v.id === vendorId);
       await api(`/finance/requests/${requestId}/purchase-order`, {
         method: 'POST',
         body: {
           vendorId,
-          vendorName: vendor?.name ?? '',
+          vendorName: vendorName ?? '',
           lines: lines
             .filter((l) => l.name.trim())
             .map((l) => ({
@@ -2044,18 +2096,18 @@ function PurchaseOrderCard({ requestId, canDraft, onChanged }: {
 
       <div className="stackform">
         <div className="formrow">
+          {/* Stated, not offered: it was chosen when the request was
+              priced, and a second picker only invites a different answer. */}
           <label className="field">
             <span className="field__label">Supplier</span>
-            <SearchSelect
-              value={vendorId} onChange={setVendorId}
-              placeholder="Search suppliers…"
-              options={(vendors.data ?? []).map((v) => ({
-                value: v.id, label: v.name,
-              }))} />
+            <p className="field__fixed">
+              {vendorName || <span className="muted">none on this request</span>}
+              <small>chosen when the request was priced</small>
+            </p>
           </label>
           <label className="field">
             <span className="field__label">
-              Reference <span className="field__opt">continues their numbering</span>
+              Reference <span className="field__opt">the next in their series</span>
             </span>
             <input className="input mono" readOnly
                    value={suggested.data?.reference ?? (vendorId ? 'working it out…' : '')} />
@@ -2097,9 +2149,22 @@ function PurchaseOrderCard({ requestId, canDraft, onChanged }: {
 
         {error ? <p className="state state--error">{error}</p> : null}
 
+        {mismatched ? (
+          <p className="notice notice--warn" role="alert">
+            {/* Finance approved a figure and will pay it. An order for a
+                different one means the supplier is owed something nobody
+                approved. */}
+            The lines come to {total.toLocaleString()} and the request was
+            priced at {expectedTotal.toLocaleString()} —{' '}
+            {gap > 0 ? `${gap.toLocaleString()} over` : `${Math.abs(gap).toLocaleString()} under`}.
+            Put the lines right, or re-price the request first.
+          </p>
+        ) : null}
+
         <div className="formrow--actions">
           <button type="button" className="btn btn--primary"
-                  disabled={!ready || busy} onClick={() => void create()}>
+                  disabled={!ready || busy || mismatched}
+                  onClick={() => void create()}>
             {busy ? 'Creating…' : 'Create the draft in Zoho'}
           </button>
         </div>

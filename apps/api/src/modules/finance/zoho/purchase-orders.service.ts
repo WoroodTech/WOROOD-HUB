@@ -87,7 +87,10 @@ export class PurchaseOrdersService {
 
   /** Ask Zoho what this supplier's next reference should be. */
   async suggestReference(p: Principal, vendorId: string): Promise<{ reference: string }> {
-    this.assertPurchases(p);
+    /* Same as the list: reading the next number is not raising an order. */
+    if (!can(p, PURCHASES) && !can(p, MANAGE)) {
+      throw new ForbiddenException('You cannot see purchase order numbers.');
+    }
     /*
      * One page, newest first — not every order this vendor has ever had.
      *
@@ -123,8 +126,21 @@ export class PurchaseOrdersService {
   }
 
   /** Suppliers, from the cache. */
+  /**
+   * The supplier list.
+   *
+   * Readable by anybody who can decide a request, not only Purchasing:
+   * Finance names a supplier when it pays one directly, and the route
+   * already allows them. Gating this with `assertPurchases` meant Finance
+   * passed the route guard and was refused inside — an empty list with no
+   * error, which looks like no suppliers rather than no permission.
+   *
+   * Reading the list is not committing to an order; raising one still is.
+   */
   async vendors(p: Principal) {
-    this.assertPurchases(p);
+    if (!can(p, PURCHASES) && !can(p, MANAGE)) {
+      throw new ForbiddenException('You cannot see the supplier list.');
+    }
     const rows = await query<any>(
       `SELECT vendor_id, vendor_name, company_name FROM fin_zoho_vendors
         WHERE active ORDER BY vendor_name`);
@@ -273,6 +289,25 @@ export class PurchaseOrdersService {
     const reference = suggested || dto.reference || '';
 
     const total = lines.reduce((n, l) => n + l.quantity * l.rate, 0);
+
+    /*
+     * The order has to come to what the request was priced at.
+     *
+     * Finance approves a figure and pays it; an order for a different one
+     * leaves the supplier owed something nobody approved, and the
+     * difference only surfaces when the bill arrives. Checked here as well
+     * as on the form, because the form is a convenience and this is the
+     * rule.
+     *
+     * A pound either way is rounding on a line rate.
+     */
+    const priced = Number(r.requested_amount ?? 0);
+    if (priced > 0 && Math.abs(total - priced) > 1) {
+      throw new BadRequestException(
+        `The lines come to ${total.toFixed(2)} and the request was priced at `
+        + `${priced.toFixed(2)}. Put the lines right, or re-price the request `
+        + 'first — an order for a different figure is money nobody approved.');
+    }
 
     const row = existing
       ? await one<any>(
