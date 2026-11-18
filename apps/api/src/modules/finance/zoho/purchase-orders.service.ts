@@ -470,6 +470,54 @@ export class PurchaseOrdersService {
     }
   }
 
+  /**
+   * Mark the order as received, moving it from Draft to Open in Zoho.
+   *
+   * Purchasing's confirmation that the goods are on their way. In Zoho a
+   * draft order is a working copy; issuing it ("Mark as open") is what makes
+   * it a real order the vendor is held to. The portal calls this "received"
+   * because that is the event it stands for at the desk.
+   *
+   * Does not create a bill and does not close the order: issuing is as far
+   * as this goes, and the rest — billing, paying, closing — Finance does in
+   * Zoho. Idempotent: an order already issued is left alone rather than
+   * poked again.
+   */
+  async markReceived(p: Principal, requestId: string) {
+    this.assertPurchases(p);
+
+    const po = await one<any>(
+      `SELECT * FROM fin_purchase_orders WHERE request_id=$1`, [requestId]);
+    if (!po) throw new NotFoundException('No purchase order on this request.');
+    if (po.status !== 'DRAFTED' || !po.zoho_po_id) {
+      throw new BadRequestException(
+        'The order is not in Zoho yet, so it cannot be marked as received.');
+    }
+    if (po.issued_at) return this.view(po);  // already done
+
+    try {
+      /* Zoho's own path for Draft → Open. No body; the id and the
+         organisation are the whole request. */
+      await this.books.call(
+        'POST', `/purchaseorders/${po.zoho_po_id}/status/open`, {});
+    } catch (e: any) {
+      const text = String(e?.message ?? e);
+      /* Already open in Zoho — somebody issued it there directly. Not an
+         error: the state we wanted is the state it is in. */
+      if (!/already|cannot be marked|open/i.test(text)) {
+        throw new BadRequestException(
+          `Zoho would not mark the order as received: ${text}`);
+      }
+    }
+
+    const updated = await one<any>(
+      `UPDATE fin_purchase_orders
+          SET issued_at=now(), issued_by_id=$2
+        WHERE id=$1 RETURNING *`, [po.id, p.id]);
+    this.log.log(`${po.zoho_po_number ?? po.id} marked received by ${p.id}`);
+    return this.view(updated);
+  }
+
   async forRequest(p: Principal, requestId: string) {
     const row = await one<any>(
       `SELECT * FROM fin_purchase_orders WHERE request_id=$1`, [requestId]);
@@ -488,6 +536,9 @@ export class PurchaseOrdersService {
       status: row.status,
       zohoPoId: row.zoho_po_id,
       zohoPoNumber: row.zoho_po_number,
+      /* So the button knows it has been pressed, and the page can show the
+         order as issued rather than draft. */
+      issuedAt: row.issued_at ? new Date(row.issued_at).toISOString() : null,
       error: row.error,
       createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
     };
