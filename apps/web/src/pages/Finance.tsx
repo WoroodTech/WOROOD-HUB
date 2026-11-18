@@ -1055,6 +1055,24 @@ export function FinanceRequestPage() {
             <PricingFields value={pricing} onChange={setPricing} banks={banks.data ?? []} />
           ) : null}
 
+          {/*
+            * The order's lines, directly under the payment details.
+            *
+            * One run of fields ending in one button: price it, say who is
+            * being paid and how, list what is being bought, approve. Split
+            * across two cards with the button between them, the button sat
+            * disabled until something below it was filled in — which reads
+            * as broken rather than as a rule.
+            */}
+          {r.needsPricing && pricing.type === 'Vendors Payments' ? (
+            <PurchaseOrderFields
+              vendorName={pricing.vendorName ?? ''}
+              expectedTotal={Number(pricing.requestedAmount) || 0}
+              lines={poLines}
+              onChange={setPoLines}
+            />
+          ) : null}
+
           <label className="field">
             <span className="field__label">Reason <span className="field__opt">required to reject</span></span>
             <textarea className="input" rows={2} value={reason} maxLength={1000}
@@ -1110,24 +1128,11 @@ export function FinanceRequestPage() {
         )}
       </Card>
 
-      {/*
-        * One purchase-order card, not two.
-        *
-        * Before the approval it is the form the lines are typed into; after
-        * it, the order those lines became and Purchasing's button to issue
-        * it. The same subject at two moments, so it reads as one thing in
-        * one place rather than the same facts twice on one page.
-        */}
-      <PurchaseOrderSection
-        requestId={id}
-        /* The form side, only while this person is the one pricing it. */
-        editable={!!r.canDecide && !!r.needsPricing
-          && pricing.type === 'Vendors Payments'}
-        vendorName={pricing.vendorName ?? ''}
-        expectedTotal={Number(pricing.requestedAmount) || 0}
-        lines={poLines}
-        onLinesChange={setPoLines}
-      />
+      {/* The order once it exists: its number, its lines, and Purchasing's
+          button to issue it. Nothing at all before then, so this never
+          repeats the form above — they are two moments, not two views of
+          the same one. */}
+      <PurchaseOrderCard requestId={id} />
 
       {/* Only where there is something to show: a request nobody has paid and
           that this reader may not see money on has no payments card at all. */}
@@ -2065,40 +2070,24 @@ export function FinanceToPay() {
 export interface POLine { name: string; quantity: string; rate: string }
 
 /**
- * The purchase order, at both of its moments.
+ * The order's lines, inside Purchasing's decision.
  *
- * One card rather than two. Before the approval it is the form the lines are
- * typed into, and those lines travel with the approval — raising the order is
- * part of the decision, not a step somebody can skip afterwards. Once the
- * order exists it is the order: its number, its supplier, and Purchasing's
- * button to issue it.
- *
- * They were separate cards, which put the same supplier and the same number
- * on the page twice and left a reader working out which one was the real
- * state. It is one subject at two moments, so it is one card.
+ * Fields, not a card: they sit directly under the payment details so the
+ * whole decision is one run — price it, say who is being paid and how, list
+ * what is being bought, approve. As a separate card below the button, the
+ * button sat disabled until something further down the page was filled in,
+ * which reads as broken rather than as a rule.
  */
-function PurchaseOrderSection({
-  requestId, editable, vendorName, expectedTotal, lines, onLinesChange,
+function PurchaseOrderFields({
+  vendorName, expectedTotal, lines, onChange,
 }: {
-  requestId: string;
-  /** True while this person is pricing the request and typing the lines. */
-  editable: boolean;
   vendorName: string;
   expectedTotal: number;
   lines: POLine[];
-  onLinesChange: (lines: POLine[]) => void;
+  onChange: (lines: POLine[]) => void;
 }) {
-  const qc = useQueryClient();
-  const { can: may } = useAuth();
-
-  const po = useQuery({
-    queryKey: qk.financePurchaseOrder(requestId),
-    queryFn: () => api<PurchaseOrder | null>(
-      `/finance/requests/${requestId}/purchase-order`),
-  });
-
   /*
-   * The next number, read as soon as the form opens.
+   * The next number, read as soon as the fields appear.
    *
    * The organisation's next purchase-order number — the last one in Zoho
    * plus one — and nothing to do with the supplier, so it does not wait for
@@ -2108,93 +2097,7 @@ function PurchaseOrderSection({
     queryKey: ['finance', 'po-ref'],
     queryFn: () => api<{ reference: string }>(
       '/finance/vendors/next-po-number/next-reference'),
-    enabled: editable,
   });
-
-  const markReceived = useMutation({
-    mutationFn: () => api(
-      `/finance/requests/${requestId}/purchase-order/received`, { method: 'POST' }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.financePurchaseOrder(requestId) });
-    },
-  });
-
-  const order = po.data;
-
-  /* ------------------------------------------- the order, once it exists -- */
-
-  if (order?.status === 'DRAFTED' && order.zohoPoId) {
-    return (
-      <Card title="Purchase order">
-        <dl className="kv">
-          <dt>Number</dt>
-          <dd><strong>{order.zohoPoNumber ?? order.reference ?? '—'}</strong></dd>
-          <dt>Supplier</dt><dd>{order.vendorName}</dd>
-          <dt>Total</dt>
-          <dd>{order.total !== null ? money(order.total) : '—'}</dd>
-          <dt>Status</dt>
-          <dd>
-            {order.issuedAt
-              ? <span className="idtag idtag--good">Issued</span>
-              : <span className="idtag idtag--warn">Draft</span>}
-          </dd>
-        </dl>
-
-        {order.lines?.length ? (
-          <ul className="polines">
-            {order.lines.map((l, i) => (
-              <li key={i}>
-                <span>{l.name}</span>
-                <span className="muted">{l.quantity} × {money(l.rate)}</span>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-
-        {order.issuedAt ? (
-          <p className="field__hint">
-            Issued in Zoho. Billing and payment are done there.
-          </p>
-        ) : (
-          <>
-            <p className="field__hint">
-              A draft in Zoho. Mark it received once the goods are on their
-              way — that makes it Issued. Nothing else changes: no bill is
-              raised and the order is not closed.
-            </p>
-            {may('finance.purchases.decide') ? (
-              <>
-                {markReceived.isError ? (
-                  <ErrorState error={markReceived.error} compact />
-                ) : null}
-                <div className="formrow--actions">
-                  <button type="button" className="btn btn--primary btn--sm"
-                          disabled={markReceived.isPending}
-                          onClick={() => markReceived.mutate()}>
-                    {markReceived.isPending ? 'Marking…' : 'Mark as received'}
-                  </button>
-                </div>
-              </>
-            ) : null}
-          </>
-        )}
-      </Card>
-    );
-  }
-
-  /* A failure is said rather than swallowed: returning nothing made a broken
-     endpoint look exactly like a request with no order. */
-  if (po.isError) {
-    return (
-      <Card title="Purchase order">
-        <ErrorState error={po.error} compact />
-      </Card>
-    );
-  }
-
-  /* ------------------------------------------------ the form, before it -- */
-
-  if (!editable) return null;
 
   const total = lines.reduce(
     (n, l) => n + (Number(l.quantity) || 0) * (Number(l.rate) || 0), 0);
@@ -2203,12 +2106,13 @@ function PurchaseOrderSection({
     && Math.abs(gap) > 1;
 
   const set = (i: number, patch: Partial<POLine>) =>
-    onLinesChange(lines.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+    onChange(lines.map((l, j) => (j === i ? { ...l, ...patch } : l)));
 
   return (
-    <Card title="Purchase order">
-      <p className="muted poblock__hint">
-        Raised in Zoho when you approve. The lines here are the lines on it.
+    <div className="pricingblock">
+      <p className="field__hint">
+        The purchase order, raised in Zoho when you approve. The lines here
+        are the lines on it.
       </p>
 
       <div className="formrow">
@@ -2255,7 +2159,7 @@ function PurchaseOrderSection({
                    onChange={(e) => set(i, { rate: e.target.value })} />
             <button type="button" className="btn btn--ghost btn--sm"
                     disabled={lines.length === 1}
-                    onClick={() => onLinesChange(lines.filter((_, j) => j !== i))}>
+                    onClick={() => onChange(lines.filter((_, j) => j !== i))}>
               Remove
             </button>
           </div>
@@ -2264,8 +2168,7 @@ function PurchaseOrderSection({
 
       <div className="poblock__foot">
         <button type="button" className="btn btn--ghost btn--sm"
-                onClick={() => onLinesChange(
-                  [...lines, { name: '', quantity: '1', rate: '' }])}>
+                onClick={() => onChange([...lines, { name: '', quantity: '1', rate: '' }])}>
           + Add a line
         </button>
         <span className={`poblock__total${off ? ' is-bad' : ''}`}>
@@ -2282,6 +2185,102 @@ function PurchaseOrderSection({
           {gap > 0 ? `${gap.toLocaleString()} over` : `${Math.abs(gap).toLocaleString()} under`}.
         </p>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * The order in Zoho, once it exists.
+ *
+ * One card, where there were two saying the same thing: its number, its
+ * supplier, its lines, and Purchasing's button to issue it. Renders nothing
+ * before the order exists, so it never repeats the fields above — those are
+ * the decision, this is its result.
+ */
+function PurchaseOrderCard({ requestId }: { requestId: string }) {
+  const qc = useQueryClient();
+  const { can: may } = useAuth();
+
+  const po = useQuery({
+    queryKey: qk.financePurchaseOrder(requestId),
+    queryFn: () => api<PurchaseOrder | null>(
+      `/finance/requests/${requestId}/purchase-order`),
+  });
+
+  const markReceived = useMutation({
+    mutationFn: () => api(
+      `/finance/requests/${requestId}/purchase-order/received`, { method: 'POST' }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.financePurchaseOrder(requestId) });
+    },
+  });
+
+  /* A failure is said rather than swallowed: returning nothing made a broken
+     endpoint look exactly like a request with no order. */
+  if (po.isError) {
+    return (
+      <Card title="Purchase order">
+        <ErrorState error={po.error} compact />
+      </Card>
+    );
+  }
+
+  const order = po.data;
+  if (!order || order.status !== 'DRAFTED' || !order.zohoPoId) return null;
+
+  return (
+    <Card title="Purchase order">
+      <dl className="kv">
+        <dt>Number</dt>
+        <dd><strong>{order.zohoPoNumber ?? order.reference ?? '—'}</strong></dd>
+        <dt>Supplier</dt><dd>{order.vendorName}</dd>
+        <dt>Total</dt><dd>{order.total !== null ? money(order.total) : '—'}</dd>
+        <dt>Status</dt>
+        <dd>
+          {order.issuedAt
+            ? <span className="idtag idtag--good">Issued</span>
+            : <span className="idtag idtag--warn">Draft</span>}
+        </dd>
+      </dl>
+
+      {order.lines?.length ? (
+        <ul className="polines">
+          {order.lines.map((l, i) => (
+            <li key={i}>
+              <span>{l.name}</span>
+              <span className="muted">{l.quantity} × {money(l.rate)}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      {order.issuedAt ? (
+        <p className="field__hint">
+          Issued in Zoho. Billing and payment are done there.
+        </p>
+      ) : (
+        <>
+          <p className="field__hint">
+            A draft in Zoho. Mark it received once the goods are on their
+            way — that makes it Issued. Nothing else changes: no bill is
+            raised and the order is not closed.
+          </p>
+          {may('finance.purchases.decide') ? (
+            <>
+              {markReceived.isError ? (
+                <ErrorState error={markReceived.error} compact />
+              ) : null}
+              <div className="formrow--actions">
+                <button type="button" className="btn btn--primary btn--sm"
+                        disabled={markReceived.isPending}
+                        onClick={() => markReceived.mutate()}>
+                  {markReceived.isPending ? 'Marking…' : 'Mark as received'}
+                </button>
+              </div>
+            </>
+          ) : null}
+        </>
+      )}
     </Card>
   );
 }
