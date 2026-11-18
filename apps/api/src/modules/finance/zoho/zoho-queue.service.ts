@@ -128,6 +128,117 @@ export class ZohoQueueService {
     }
   }
 
+  /**
+   * Convert a purchase order to a bill and pay it.
+   *
+   * The flow Zoho documents for paying against an order: ask Zoho for a bill
+   * prefilled from the order, create that bill — which closes the order and
+   * carries each line's `purchaseorder_item_id` so the two stay linked — then
+   * record the payment against the bill, which is what puts the money in the
+   * account the payment came from.
+   *
+   * Each step is made safe to retry on its own: a timeout after Zoho has
+   * acted finds the bill (or its payment) by reference rather than making a
+   * second. The whole thing is one queue event, so a failure at any step
+   * leaves it PENDING and the next pass resumes from wherever Zoho actually
+   * got to.
+   */
+  private async payViaBill(claimed: any, payload: any): Promise<string> {
+    const poId = String(payload.zoho_po_id);
+    const reference = String(payload.reference_number ?? '');
+    const org = config.zoho.organizationId;
+
+    /* The bill may already exist from a previous attempt. */
+    let billId = reference
+      ? await this.books.findByReference('bills', reference)
+      : null;
+
+    if (!billId) {
+      /*
+       * A bill prefilled from the order.
+       *
+       * Zoho returns a whole bill object, lines included, each line already
+       * carrying the `purchaseorder_item_id` that links it back to the order
+       * — which is what closes the order when the bill is created. Editing
+       * the lines would risk breaking that link, so the payload comes back
+       * untouched but for the fields that make it ours.
+       */
+      const prefill = await this.books.call(
+        'GET', '/bills/editpage/frompurchaseorders',
+        { query: { purchaseorder_ids: poId, organization_id: org } });
+
+      const bill = prefill?.bill;
+      if (!bill?.line_items?.length) {
+        throw new Error(
+          `Zoho returned no bill for purchase order ${poId} — it may already `
+          + 'be billed, or cancelled.');
+      }
+
+      const made = await this.books.call('POST', '/bills', {
+        body: {
+          vendor_id: bill.vendor_id,
+          bill_number: reference.slice(0, 100),
+          reference_number: reference,
+          date: payload.date,
+          /* Exactly the lines Zoho prefilled, so each keeps its link to an
+             order item. */
+          line_items: bill.line_items.map((l: any) => ({
+            purchaseorder_item_id: l.purchaseorder_item_id,
+            item_id: l.item_id,
+            account_id: l.account_id,
+            name: l.name,
+            description: l.description,
+            quantity: l.quantity,
+            rate: l.rate,
+          })),
+        },
+      });
+      billId = made?.bill?.bill_id ?? made?.bill_id ?? null;
+      if (!billId) throw new Error('Zoho created the bill but returned no id');
+      this.log.log(`${reference}: created bill ${billId} from purchase order ${poId}`);
+    } else {
+      this.log.warn(`${reference}: bill ${billId} already exists; paying it`);
+    }
+
+    /*
+     * Pay the bill.
+     *
+     * This is the step that reaches an account — `paid_through_account_id` is
+     * where the money leaves from. Applied to the bill, so the bill is
+     * settled and the order shows as billed and paid rather than open.
+     *
+     * Its own reference, so a retry of just this step finds the payment
+     * rather than paying twice.
+     */
+    const payRef = `${reference}-pay`.slice(0, 100);
+    const existingPay = await this.books.findByReference('billpayments', payRef);
+    if (existingPay) {
+      this.log.warn(`${reference}: bill payment already recorded; done`);
+      return existingPay;
+    }
+
+    const paid = await this.books.call('POST', '/billpayments', {
+      body: {
+        bill_payments: [{
+          bill_id: billId,
+          amount: Number(payload.amount),
+        }],
+        date: payload.date,
+        payment_mode: 'banktransfer',
+        reference_number: payRef,
+        amount: Number(payload.amount),
+        paid_through_account_id: payload.paid_through_account_id,
+        vendor_id: (await this.books.call('GET', `/bills/${billId}`, {}))
+          ?.bill?.vendor_id,
+      },
+    });
+
+    const payId = paid?.payment?.payment_id
+      ?? paid?.payments?.[0]?.payment_id ?? billId;
+    this.log.log(`${reference}: paid bill ${billId} through account ${payload.paid_through_account_id}`);
+    return String(payId);
+  }
+
   private kindFor(pm: any): ZohoKind {
     if (pm.type === 'Petty Cash') return 'CUSTODY_TRANSFER';
     if (pm.type === 'Vendors Payments') return 'VENDOR_PAYMENT';
@@ -193,9 +304,34 @@ export class ZohoQueueService {
       };
     }
     if (kind === 'VENDOR_PAYMENT') {
+      /*
+       * A payment against a purchase order becomes a bill and its payment,
+       * not a standing advance.
+       *
+       * The advance left the order Open for ever: the money was recorded,
+       * but nothing told Zoho what it was for, so the purchase order never
+       * closed and the figure never reached an account. Converting the order
+       * to a bill and paying that bill is the flow Zoho itself documents —
+       * the bill closes the order, and paying it books the money against the
+       * account it came from. Carried out in `payViaBill`; the body here just
+       * holds what that needs.
+       */
+      if (pm.zoho_po_id) {
+        return {
+          amount, date,
+          reference_number: referenceShown,
+          description,
+          vendor_name: pm.vendor_name,
+          /* Read by payViaBill, not sent as-is to any one endpoint. */
+          zoho_po_id: pm.zoho_po_id,
+          paid_through_account_id: pm.zoho_paid_through_account_id,
+          ...branch,
+        };
+      }
+
+      /* No order — Finance paying a supplier directly. A plain vendor
+         payment, applied to no bill, as before. */
       return {
-        /* Applied to no bill: an advance against the purchase order, which is
-           what the legacy app does. */
         amount, date,
         reference_number: referenceShown,
         description,
@@ -288,9 +424,24 @@ export class ZohoQueueService {
        * and the two stay in step without either knowing what the other put
        * there.
        */
-      let recordId = reference
-        ? await this.books.findByReference(path.slice(1), reference)
-        : null;
+      /*
+       * A payment against a purchase order is three calls, not one.
+       *
+       * Convert the order to a bill, create the bill, then pay the bill —
+       * which closes the order and books the money against an account.
+       * Handled on its own because the generic post below is one POST to one
+       * endpoint, and this is a small workflow with its own idempotency.
+       */
+      let recordId: string | null = null;
+
+      if (kind === 'VENDOR_PAYMENT' && payload.zoho_po_id) {
+        /* The bill flow has done the work and returns the bill-payment id,
+           which is the record this event is marked POSTED against. */
+        recordId = await this.payViaBill(claimed, payload);
+      } else {
+        recordId = reference
+          ? await this.books.findByReference(path.slice(1), reference)
+          : null;
 
       if (recordId) {
         this.log.warn(
@@ -341,6 +492,7 @@ export class ZohoQueueService {
             undefined,
             false);
         }
+      }
       }
 
       await query(
