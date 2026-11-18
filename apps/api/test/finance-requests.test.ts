@@ -10,6 +10,7 @@
  */
 import { query, one, closeDb } from '../src/common/db';
 import { FinanceRequestsService } from '../src/modules/finance/requests.service';
+import { PurchaseOrdersService } from '../src/modules/finance/zoho/purchase-orders.service';
 
 let pass = 0, fail = 0;
 const failures: string[] = [];
@@ -26,7 +27,7 @@ const err = async (fn: () => Promise<any>): Promise<string> => {
 
 const notifications = { notify: async () => 'n', notifyPermissionHolders: async () => undefined } as any;
 const audit = { write: async () => undefined } as any;
-const svc = () => new FinanceRequestsService(notifications, audit);
+const svc = () => new FinanceRequestsService(notifications, audit, { draft: async () => undefined } as any);
 
 const DUE = '2026-12-01';
 
@@ -56,6 +57,7 @@ async function main() {
               [MKT, mona.id]);
 
   const made: string[] = [];
+  const extraUsers: string[] = [];
   /* No departmentId: a request is always for the requester's own department.
      moreDetails and the transfer details are required for a request going
      straight to Finance, as the legacy form requires them. */
@@ -142,6 +144,65 @@ async function main() {
     eq('Purchases approves, Finance is next', afterPur.approvalState, 'FINANCE_PENDING');
     const done = await s.decide(fin, r.id, 'APPROVED');
     eq('and Finance finishes it', done.approvalState, 'APPROVED');
+  }
+
+  section('A vendor-payment approval creates its PO before advancing');
+  {
+    const omar = { id: await mkUser('Omar PO', OFC), fullName: 'Omar PO', departmentId: OFC,
+                   permissions: [], managedDepartmentIds: [] } as any;
+    extraUsers.push(omar.id);
+    const r = await s.create(omar, {
+      description: 'Office equipment', dueDate: DUE } as any);
+    made.push(r.id);
+    const pricing = {
+      type: 'Vendors Payments', requestedAmount: 1200,
+      vendorName: 'Test supplier', vendorZohoId: 'zoho-test-supplier',
+      paymentMethod: 'Wallet Number', accountNumber: '01001234567',
+    };
+    const lines = [{ name: 'Equipment', quantity: 2, rate: 600 }];
+
+    const missing = await err(() =>
+      s.decide(purch, r.id, 'APPROVED', undefined, pricing as any));
+    ok('Purchases cannot approve without PO lines', /purchase order lines/i.test(missing), missing);
+    eq('the request stays with Purchases', (await s.get(purch, r.id)).approvalState,
+       'PURCHASES_PENDING');
+
+    const failing = new FinanceRequestsService(notifications, audit, {
+      draft: async () => { throw new Error('Zoho is unavailable'); },
+    } as any);
+    const zohoFailure = await err(() =>
+      failing.decide(purch, r.id, 'APPROVED', undefined, pricing as any, { lines }));
+    ok('a Zoho failure is returned to the approver', /Zoho is unavailable/i.test(zohoFailure),
+       zohoFailure);
+    eq('a failed Zoho create does not approve', (await s.get(purch, r.id)).approvalState,
+       'PURCHASES_PENDING');
+
+    const orders = {
+      draft: async (actor: any, requestId: string, dto: any) => {
+        await query(
+          `INSERT INTO fin_purchase_orders
+             (request_id, vendor_zoho_id, vendor_name, reference, lines, total,
+              status, zoho_po_id, created_by_id, posted_at)
+           VALUES ($1,$2,$3,'PO-0001',$4,1200,'DRAFTED','zoho-po-1',$5,now())`,
+          [requestId, dto.vendorId, dto.vendorName, JSON.stringify(dto.lines), actor.id]);
+      },
+    };
+    const withZoho = new FinanceRequestsService(notifications, audit, orders as any);
+    const approved = await withZoho.decide(
+      purch, r.id, 'APPROVED', undefined, pricing as any, { lines });
+    eq('the PO and approval advance together', approved.approvalState, 'FINANCE_PENDING');
+    const po = await one<any>(
+      `SELECT zoho_po_id, lines FROM fin_purchase_orders WHERE request_id=$1`, [r.id]);
+    eq('the stored PO is the one created for approval', po.zoho_po_id, 'zoho-po-1');
+
+    const purchaseOrders = new PurchaseOrdersService({} as any);
+    eq('the lite-department requester cannot read the PO',
+       await purchaseOrders.forRequest(omar, r.id), null);
+    const visibleToPurchases = await purchaseOrders.forRequest(purch, r.id);
+    eq('Purchases can read the PO it created', visibleToPurchases?.zohoPoId, 'zoho-po-1');
+    const hiddenFromOther = await err(() => purchaseOrders.forRequest(sami, r.id));
+    ok('an unrelated requester cannot read the PO', /No such request/i.test(hiddenFromOther),
+       hiddenFromOther);
   }
 
   section('Rejection');
@@ -340,9 +401,9 @@ async function main() {
   await query(`DELETE FROM core_users WHERE full_name='Omar' AND email LIKE $1`,
               [`%-${stamp}@example.invalid`]);
   await query(`DELETE FROM core_notifications WHERE user_id = ANY($1::uuid[])`,
-              [[sami.id, mona.id, purch.id, fin.id]]);
+              [[sami.id, mona.id, purch.id, fin.id, ...extraUsers]]);
   await query(`DELETE FROM core_users WHERE id = ANY($1::uuid[])`,
-              [[sami.id, mona.id, purch.id, fin.id]]);
+              [[sami.id, mona.id, purch.id, fin.id, ...extraUsers]]);
 
   console.log(`\n${pass + fail} assertions: ${pass} passed, ${fail} failed`);
   if (fail) { console.log('\nfailures:'); failures.forEach((f) => console.log('  ' + f)); }

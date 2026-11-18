@@ -34,7 +34,8 @@ let keyN = 0;
 const key = () => `test-key-${Date.now()}-${keyN++}`;
 
 async function main() {
-  const reqs = new FinanceRequestsService(notifications, audit);
+  const reqs = new FinanceRequestsService(
+    notifications, audit, { draft: async () => undefined } as any);
   /* Payments now queue a Zoho event after committing. The queue is tested on
      its own in finance-zoho; here it is a stub, so a payment is exercised
      without pulling Zoho into it. */

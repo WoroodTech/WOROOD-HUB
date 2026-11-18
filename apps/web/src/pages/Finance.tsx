@@ -772,6 +772,43 @@ export function FinanceRequestPage() {
     paymentMethod: '', accountNumber: '', bankName: '', beneficiaryName: '',
   });
 
+  /*
+   * The order's lines, raised with the approval rather than after it.
+   *
+   * Splitting the two meant Approve could be pressed with no order raised:
+   * the request moved to Finance, the form closed, and nothing could create
+   * one afterwards. Purchasing commits to a supplier and raises the order
+   * in the same act, which is what happens at the desk.
+   */
+  const [poLines, setPoLines] = useState<POLine[]>(
+    [{ name: '', quantity: '1', rate: '' }]);
+
+  /**
+   * Why Approve is not available yet.
+   *
+   * One sentence rather than a dead button: a control that cannot be
+   * pressed and does not say why is the most frustrating thing on a form.
+   */
+  const poProblem = (() => {
+    if (pricing.type !== 'Vendors Payments') return null;
+    if (!pricing.vendorZohoId) return 'Choose the supplier first.';
+
+    const filled = poLines.filter((l) => l.name.trim());
+    if (!filled.length) return 'Add what is being bought.';
+    if (filled.some((l) => !(Number(l.rate) > 0))) return 'Every line needs a rate.';
+
+    const total = filled.reduce(
+      (n, l) => n + (Number(l.quantity) || 0) * (Number(l.rate) || 0), 0);
+    const asked = Number(pricing.requestedAmount) || 0;
+    /* An order for a figure nobody approved is money the supplier is owed
+       that the request does not show. A pound either way is rounding. */
+    if (asked > 0 && Math.abs(total - asked) > 1) {
+      return `The lines come to ${total.toFixed(2)} and the amount is `
+        + `${asked.toFixed(2)}. They have to match.`;
+    }
+    return null;
+  })();
+
   /* The bank list, for the pricing fields. Only fetched where it is needed. */
   const banks = useQuery({
     queryKey: qk.financeForm,
@@ -820,6 +857,31 @@ export function FinanceRequestPage() {
         body: {
           decision, reason: reason.trim() || undefined,
           ...(r?.needsPricing && decision === 'APPROVED' ? { pricing } : {}),
+          /*
+           * The order travels with the approval.
+           *
+           * One call, so the two cannot come apart: approving used to be
+           * its own request and raising the order another, and pressing
+           * Approve closed the form with no order raised and no way left to
+           * raise one.
+           */
+          ...(r?.needsPricing && decision === 'APPROVED'
+              && pricing.type === 'Vendors Payments'
+            ? {
+              purchaseOrder: {
+                /* Lines only. The supplier travels in `pricing` above, and
+                   sending it twice would let the two disagree about who is
+                   being paid with nothing to say which is right. */
+                lines: poLines
+                  .filter((l) => l.name.trim())
+                  .map((l) => ({
+                    name: l.name.trim(),
+                    quantity: Number(l.quantity) || 1,
+                    rate: Number(l.rate) || 0,
+                  })),
+              },
+            }
+            : {}),
         },
       }),
     onSuccess: () => { setReason(''); refresh(); },
@@ -960,6 +1022,26 @@ export function FinanceRequestPage() {
           {r.needsPricing ? (
             <PricingFields value={pricing} onChange={setPricing} banks={banks.data ?? []} />
           ) : null}
+
+          {/*
+            * The order is part of the decision, not a step after it.
+            *
+            * Splitting them meant Approve could be pressed with no order
+            * raised — the request moved to Finance, the form closed, and
+            * nothing could create one afterwards. Purchasing commits to a
+            * supplier and raises the order in the same act, which is what
+            * actually happens at the desk.
+            */}
+          {r.needsPricing && pricing.type === 'Vendors Payments' ? (
+            <PurchaseOrderLines
+              vendorZohoId={pricing.vendorZohoId ?? ''}
+              vendorName={pricing.vendorName ?? ''}
+              expectedTotal={Number(pricing.requestedAmount) || 0}
+              lines={poLines}
+              onChange={setPoLines}
+            />
+          ) : null}
+
           <label className="field">
             <span className="field__label">Reason <span className="field__opt">required to reject</span></span>
             <textarea className="input" rows={2} value={reason} maxLength={1000}
@@ -976,9 +1058,13 @@ export function FinanceRequestPage() {
                     onClick={() => decide.mutate('REJECTED')}>
               Reject
             </button>
-            <button type="button" className="btn btn--primary" disabled={decide.isPending}
+            <button type="button" className="btn btn--primary"
+                    disabled={decide.isPending || !!poProblem}
+                    title={poProblem ?? undefined}
                     onClick={() => decide.mutate('APPROVED')}>
-              Approve
+              {r.needsPricing && pricing.type === 'Vendors Payments'
+                ? 'Approve and raise the order'
+                : 'Approve'}
             </button>
           </div>
           </div>
@@ -2220,5 +2306,130 @@ function PurchaseOrderCard({
         </div>
       </div>
     </Card>
+  );
+}
+
+/* ------------------------------------------------- purchase order lines -- */
+
+export interface POLine { name: string; quantity: string; rate: string }
+
+/**
+ * The order's lines, inside Purchasing's decision.
+ *
+ * Not a card of its own: raising the order is part of approving the
+ * request, and two separate forms let somebody approve without raising
+ * anything — which is exactly what happened.
+ */
+function PurchaseOrderLines({
+  vendorZohoId, vendorName, expectedTotal, lines, onChange,
+}: {
+  vendorZohoId: string;
+  vendorName: string;
+  expectedTotal: number;
+  lines: POLine[];
+  onChange: (lines: POLine[]) => void;
+}) {
+  /*
+   * The reference, read from Zoho and never typed.
+   *
+   * It is the next in this supplier's own series — one right answer, and a
+   * free field only gives somebody the chance to reuse a number.
+   */
+  const suggested = useQuery({
+    queryKey: ['finance', 'po-ref', vendorZohoId],
+    queryFn: () => api<{ reference: string }>(
+      `/finance/vendors/${vendorZohoId}/next-reference`),
+    enabled: !!vendorZohoId,
+  });
+
+  const total = lines.reduce(
+    (n, l) => n + (Number(l.quantity) || 0) * (Number(l.rate) || 0), 0);
+  const gap = Math.round((total - expectedTotal) * 100) / 100;
+  const off = lines.some((l) => l.name.trim()) && expectedTotal > 0
+    && Math.abs(gap) > 1;
+
+  const set = (i: number, patch: Partial<POLine>) =>
+    onChange(lines.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+
+  return (
+    <div className="poblock">
+      <h4 className="poblock__title">The purchase order</h4>
+      <p className="muted poblock__hint">
+        Raised in Zoho when you approve. The lines here are the lines on it.
+      </p>
+
+      <div className="formrow">
+        <label className="field">
+          <span className="field__label">Supplier</span>
+          <p className="field__fixed">
+            {vendorName || <span className="muted">choose one above</span>}
+          </p>
+        </label>
+        <label className="field">
+          <span className="field__label">
+            Reference <span className="field__opt">the next in their series</span>
+          </span>
+          {/* Every case says what it is, rather than leaving an empty box
+              that reads as something to fill in. */}
+          <p className="field__fixed mono">
+            {!vendorZohoId
+              ? <span className="muted">choose a supplier above</span>
+              : suggested.isLoading
+                ? <span className="muted">reading Zoho…</span>
+                : suggested.isError
+                  ? <span className="muted">
+                      Zoho could not be reached — it will be numbered when the
+                      order is created
+                    </span>
+                  : suggested.data?.reference
+                    ? suggested.data.reference
+                    : <span className="muted">
+                        first order for this supplier — Zoho will number it
+                      </span>}
+          </p>
+        </label>
+      </div>
+
+      <div className="polines polines--edit">
+        {lines.map((l, i) => (
+          <div key={i} className="polines__row">
+            <input className="input" placeholder="What is being bought"
+                   value={l.name} maxLength={200}
+                   onChange={(e) => set(i, { name: e.target.value })} />
+            <input className="input" type="number" min="1" step="1"
+                   value={l.quantity}
+                   onChange={(e) => set(i, { quantity: e.target.value })} />
+            <input className="input" type="number" min="0.01" step="0.01"
+                   placeholder="Rate" value={l.rate}
+                   onChange={(e) => set(i, { rate: e.target.value })} />
+            <button type="button" className="btn btn--ghost btn--sm"
+                    disabled={lines.length === 1}
+                    onClick={() => onChange(lines.filter((_, j) => j !== i))}>
+              Remove
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <div className="poblock__foot">
+        <button type="button" className="btn btn--ghost btn--sm"
+                onClick={() => onChange([...lines, { name: '', quantity: '1', rate: '' }])}>
+          + Add a line
+        </button>
+        <span className={`poblock__total${off ? ' is-bad' : ''}`}>
+          Total EGP {total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+        </span>
+      </div>
+
+      {off ? (
+        <p className="notice notice--warn">
+          {/* Finance approves a figure and pays it; an order for a different
+              one leaves the supplier owed something nobody approved. */}
+          The lines come to {total.toLocaleString()} and the amount above is{' '}
+          {expectedTotal.toLocaleString()} —{' '}
+          {gap > 0 ? `${gap.toLocaleString()} over` : `${Math.abs(gap).toLocaleString()} under`}.
+        </p>
+      ) : null}
+    </div>
   );
 }

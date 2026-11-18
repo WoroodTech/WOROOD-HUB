@@ -26,6 +26,7 @@ import { one, query, tx } from '../../common/db';
 import { AuditService, NotificationsService } from '../../core/core.module';
 import { NotificationMailer } from '../../core/notifications.controller';
 import { awaitingDecisionMail, refusedMail } from './finance-mail';
+import { PurchaseOrdersService, type PurchaseOrderLine } from './zoho/purchase-orders.service';
 import { SheetsQueueService } from './sheets/sheets-queue.service';
 import { config } from '../../common/config';
 import {
@@ -52,6 +53,14 @@ export class FinanceRequestsService {
   constructor(
     private readonly notifications: NotificationsService,
     private readonly audit: AuditService,
+    /*
+     * Required, unlike the two below.
+     *
+     * Raising the order is part of approving a vendor payment, not a
+     * separate feature a server might be without — so a module that could
+     * not raise one would approve requests Finance then cannot pay.
+     */
+    private readonly purchaseOrders: PurchaseOrdersService,
     /* Optional: the module works without it, and a server with no mail
        configured should still run the approval chain. */
     private readonly mailer?: NotificationMailer,
@@ -315,11 +324,53 @@ export class FinanceRequestsService {
   async decide(
     p: Principal, id: string, decision: 'APPROVED' | 'REJECTED', reason?: string,
     pricing?: {
-      type?: string; requestedAmount?: number; vendorName?: string;
+      type?: string; requestedAmount?: number;
+      vendorName?: string; vendorZohoId?: string;
       paymentMethod?: string; accountNumber?: string;
       bankName?: string; beneficiaryName?: string;
     },
+    /**
+     * Raised with the approval, for a vendor payment.
+     *
+     * Purchasing commits to a supplier and raises the order in one act.
+     * Two calls let the first succeed and the second never happen, which
+     * left requests approved onto Finance with no order to pay against.
+     */
+    /**
+     * The order's lines, raised with this approval.
+     *
+     * Lines only. The supplier comes from the pricing that is being approved
+     * in the same call, not from the body: taking it from the body would let
+     * an order name a supplier the request does not, and the two would
+     * disagree about who is being paid with nothing to say which is right.
+     */
+    purchaseOrder?: { lines: PurchaseOrderLine[] },
   ) {
+    /*
+     * A vendor-payment approval and its order are one operation.
+     *
+     * The decision rules are checked first, so an approval that is not
+     * allowed cannot leave an order behind in Zoho; then the order is
+     * raised; then the transaction below re-checks everything under its row
+     * lock and refuses to record the approval unless the order is there.
+     *
+     * Raising it inside the transaction instead would hold a row lock open
+     * across a call to Zoho, which is how a slow afternoon becomes a locked
+     * table.
+     */
+    const before = await this.load(id);
+    const prepared = this.decisionDetails(
+      p, before, decision, reason, pricing, purchaseOrder);
+
+    if (prepared.step === 'PURCHASES' && prepared.requiresPurchaseOrder) {
+      await this.purchaseOrders.draft(p, id, {
+        vendorId: prepared.priced!.vendorZohoId,
+        vendorName: prepared.priced!.vendorName,
+        lines: purchaseOrder!.lines,
+        expectedTotal: prepared.priced!.requestedAmount,
+      });
+    }
+
     const result = await tx(async (c) => {
       /* Locked for the duration: two managers pressing Approve together would
          otherwise both read MANAGER_PENDING and both write a trail entry. */
@@ -328,22 +379,28 @@ export class FinanceRequestsService {
       const row = rows[0];
       if (!row) throw new NotFoundException('No such request.');
 
-      const shape = this.shapeOf(row);
-      const step = stepOf(shape.approvalState);
-      if (!step) {
-        throw new BadRequestException(
-          row.approval_state === 'DRAFT'
-            ? 'This request has not been submitted yet.'
-            : 'This request has already been decided.');
-      }
-      if (!canDecide(p, shape)) {
-        throw new ForbiddenException(
-          row.requester_id === p.id
-            ? 'You cannot decide your own request.'
-            : 'This request is not waiting for you.');
-      }
-      if (decision === 'REJECTED' && !reason?.trim()) {
-        throw new BadRequestException('Say why it is being rejected.');
+      /* The same checks as before the order was raised, now under the row
+         lock — which is the pass that decides. */
+      const { shape, step, priced, requiresPurchaseOrder } =
+        this.decisionDetails(p, row, decision, reason, pricing, purchaseOrder);
+
+      /*
+       * The approval is not recorded unless the order actually exists.
+       *
+       * It was raised a moment ago, before this transaction. If Zoho took it
+       * and something here failed, the retry finds it already drafted and
+       * carries on; if Zoho refused, this refuses too, and the request stays
+       * with Purchasing rather than reaching Finance with nothing to pay
+       * against — which is the failure this whole arrangement is for.
+       */
+      if (requiresPurchaseOrder) {
+        const order = await c.query(
+          `SELECT status FROM fin_purchase_orders WHERE request_id=$1`, [id]);
+        if (order.rows[0]?.status !== 'DRAFTED') {
+          throw new BadRequestException(
+            'The purchase order was not created in Zoho, so this cannot be '
+            + 'approved yet. Try again.');
+        }
       }
 
       const state: ApprovalState = decision === 'REJECTED'
@@ -351,15 +408,6 @@ export class FinanceRequestsService {
 
       const column = step === 'MANAGER' ? 'manager'
                    : step === 'PURCHASES' ? 'purchases' : 'finance';
-
-      /* Purchases does not merely wave a request through: it says what the
-         thing costs, what kind of spending it is and where the money goes.
-         Without that the request reaches Finance meaning nothing -- an
-         approval with no amount is not something anybody can pay. */
-      let priced: Record<string, any> | null = null;
-      if (step === 'PURCHASES' && decision === 'APPROVED') {
-        priced = this.validatePricing(pricing, row);
-      }
 
       const { rows: out } = await c.query(
         `UPDATE fin_requests SET
@@ -776,6 +824,51 @@ export class FinanceRequestsService {
    * answered by somebody else. Validating it here rather than trusting the
    * screen means a request cannot leave Purchases half-priced.
    */
+  /**
+   * Everything the decision needs, checked without writing anything.
+   *
+   * Called twice: once before the transaction, so an approval that is not
+   * allowed cannot leave a purchase order behind in Zoho, and once inside
+   * it under the row lock, which is the check that counts.
+   */
+  private decisionDetails(
+    p: Principal, row: any, decision: 'APPROVED' | 'REJECTED', reason?: string,
+    pricing?: any, purchaseOrder?: { lines: PurchaseOrderLine[] },
+  ) {
+    const shape = this.shapeOf(row);
+    const step = stepOf(shape.approvalState);
+    if (!step) {
+      throw new BadRequestException(
+        row.approval_state === 'DRAFT'
+          ? 'This request has not been submitted yet.'
+          : 'This request has already been decided.');
+    }
+    if (!canDecide(p, shape)) {
+      throw new ForbiddenException(
+        row.requester_id === p.id
+          ? 'You cannot decide your own request.'
+          : 'This request is not waiting for you.');
+    }
+    if (decision === 'REJECTED' && !reason?.trim()) {
+      throw new BadRequestException('Say why it is being rejected.');
+    }
+
+    const priced = step === 'PURCHASES' && decision === 'APPROVED'
+      ? this.validatePricing(pricing, row) : null;
+
+    /* A vendor payment is raised as an order against the supplier, so the
+       lines are part of the approval rather than a later step somebody can
+       skip — which is what left requests approved with no order to pay
+       against. */
+    const requiresPurchaseOrder = priced?.type === 'Vendors Payments';
+    if (requiresPurchaseOrder && !purchaseOrder?.lines?.length) {
+      throw new BadRequestException(
+        'Add the purchase order lines before approving this vendor payment.');
+    }
+
+    return { shape, step, priced, requiresPurchaseOrder };
+  }
+
   private validatePricing(pricing: any, row: any): Record<string, any> {
     if (!pricing) {
       throw new BadRequestException(
@@ -814,6 +907,21 @@ export class FinanceRequestsService {
           'Choose the supplier. A vendor payment is raised as a purchase '
           + 'order against them, and there is nothing to raise it against '
           + 'without one.');
+      }
+
+      /*
+       * And Zoho's id for them, not only the name.
+       *
+       * The order is raised against the id. A name typed rather than chosen
+       * from the list matches nobody in Zoho, and the approval would fail at
+       * the order with the supplier apparently named — which is exactly how
+       * "none on this request" appeared beside a supplier the request
+       * plainly showed.
+       */
+      if (clean.type === 'Vendors Payments' && !vendorZohoId) {
+        throw new BadRequestException(
+          'Choose the supplier from the list rather than typing one: the '
+          + 'purchase order is raised against their record in Zoho.');
       }
 
       return {

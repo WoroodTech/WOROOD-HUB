@@ -190,7 +190,12 @@ export class FinanceController {
   @Post('requests/:id/decide')
   decide(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string,
          @Body() dto: DecideRequest) {
-    return this.requests.decide(p, id, dto.decision, dto.reason, dto.pricing);
+    return this.requests.decide(
+      p, id, dto.decision, dto.reason, dto.pricing,
+      /* The order travels with the approval: Purchasing commits to a
+         supplier and raises the order in one act, and two calls let the
+         first succeed and the second never happen. */
+      (dto as any).purchaseOrder);
   }
 
   @Delete('requests/:id')
