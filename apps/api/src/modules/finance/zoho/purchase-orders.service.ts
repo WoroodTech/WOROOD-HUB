@@ -368,6 +368,26 @@ export class PurchaseOrdersService {
           [requestId, dto.vendorId, dto.vendorName, null,
            JSON.stringify(lines), total, p.id]);
 
+    /*
+     * A purchase account for the lines.
+     *
+     * Zoho refuses a purchase order whose line is not a stock item it knows
+     * — "Purchase order cannot be created for a non-purchase item". These
+     * lines are free text — a description and a price — not catalogue items,
+     * so each is booked against an account instead. That is what an
+     * account-based line is, and how a service or a one-off purchase goes on
+     * an order without first being invented as an item.
+     *
+     * One expense account for the lot, chosen by name so it is stable rather
+     * than depending on row order. If none is synced the order goes out
+     * without one and Zoho decides — no worse than before, which is where
+     * this was failing.
+     */
+    const purchaseAccount = await one<any>(
+      `SELECT account_id FROM fin_zoho_accounts
+        WHERE active AND is_expense ORDER BY account_name LIMIT 1`);
+    const accountId: string | null = purchaseAccount?.account_id ?? null;
+
     try {
       const out = await this.books.call('POST', '/purchaseorders', {
         body: {
@@ -388,6 +408,9 @@ export class PurchaseOrdersService {
             name: l.name.slice(0, 200),
             quantity: l.quantity,
             rate: l.rate,
+            /* Books the line against an account rather than a stock item,
+               which is what lets a free-text line onto the order at all. */
+            ...(accountId ? { account_id: accountId } : {}),
           })),
         },
       });
