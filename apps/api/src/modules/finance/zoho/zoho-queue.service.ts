@@ -67,7 +67,10 @@ export class ZohoQueueService {
        */
       `SELECT pm.*, r.reference, r.description, r.type,
               COALESCE(NULLIF(r.vendor_name, ''), po.vendor_name) AS vendor_name,
-              po.vendor_zoho_id,
+              /* From the request when Finance pays a supplier directly, from
+                 the order when Purchasing sourced it. Either way it is the id
+                 Zoho matches the payment against. */
+              COALESCE(NULLIF(r.vendor_zoho_id, ''), po.vendor_zoho_id) AS vendor_zoho_id,
               po.zoho_po_id,
               po.zoho_po_number,
               po.reference AS po_reference,
@@ -207,7 +210,19 @@ export class ZohoQueueService {
         amount, date,
         reference_number: referenceShown,
         description,
-        vendor_name: pm.vendor_name,
+        /*
+         * `vendor_id`, not `vendor_name`.
+         *
+         * Zoho matches the vendor by id and refuses a bare name — "The
+         * Vendor field can neither be blank nor be incorrect", which is
+         * exactly what these payments died on. The id comes from the
+         * request when Finance pays a supplier directly, or from the
+         * purchase order when Purchasing sourced it; the name stays too,
+         * for the ones that have no id.
+         */
+        ...(pm.vendor_zoho_id
+          ? { vendor_id: pm.vendor_zoho_id }
+          : { vendor_name: pm.vendor_name }),
         paid_through_account_id: pm.zoho_paid_through_account_id,
         ...branch,
       };

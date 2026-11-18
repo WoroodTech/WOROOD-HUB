@@ -503,7 +503,13 @@ export function FinanceNew() {
             });
             if (!put.ok) throw new Error(file.name);
             await api(`/finance/files/${ticket.fileId}/confirm`, { method: 'POST' });
-          } catch { failed.push(file.name); }
+          } catch (e: any) {
+            /* With the reason, not just the name. A refused type, a file
+               too big and a network drop all looked identical before —
+               "could not be uploaded" — and the only way to tell them
+               apart was to try again and watch. */
+            failed.push(`${file.name}: ${e?.message ?? 'upload failed'}`);
+          }
         }
         setUploading(false);
         if (failed.length) {
@@ -716,7 +722,12 @@ export function FinanceNew() {
             <label className="btn btn--ghost btn--sm filelist__add">
               <Icon name="plus" size={13} /> Choose files
               <input type="file" hidden multiple
-                     accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.xlsx,.xls,.doc,.docx"
+                     /* Exactly what the server accepts. Offering .heic,
+                        .xlsx or .doc here let somebody pick one, watch the
+                        request be created, and find the attachment gone —
+                        the upload was refused after the fact and the only
+                        sign was its absence. */
+                     accept="image/jpeg,image/png,image/webp,application/pdf"
                      onChange={(e) => {
                        setPending((f) => [...f, ...Array.from(e.target.files ?? [])]);
                        /* Cleared so the same file can be picked again. */
@@ -745,9 +756,14 @@ export function FinanceNew() {
 
           {uploadFailed.length ? (
             <p className="notice notice--warn" role="alert">
-              The request was raised, but {uploadFailed.join(', ')} could not be
-              uploaded. Attach {uploadFailed.length === 1 ? 'it' : 'them'} from
-              the request itself.
+              The request was raised, but {uploadFailed.length === 1
+                ? 'one file' : `${uploadFailed.length} files`} could not be
+              uploaded:
+              <ul>
+                {uploadFailed.map((f, i) => <li key={i}>{f}</li>)}
+              </ul>
+              Attach {uploadFailed.length === 1 ? 'it' : 'them'} from the
+              request itself.
             </p>
           ) : null}
 
@@ -1107,6 +1123,11 @@ export function FinanceRequestPage() {
           </ol>
         )}
       </Card>
+
+      {/* The order in Zoho and Purchasing's button to issue it. Returns
+          nothing at all until an order exists, so it costs nothing on a
+          request that has none. */}
+      <PurchaseOrderStatusCard requestId={id} />
 
       {/* Only where there is something to show: a request nobody has paid and
           that this reader may not see money on has no payments card at all. */}
@@ -2477,5 +2498,86 @@ function PurchaseOrderLines({
         </p>
       ) : null}
     </div>
+  );
+}
+
+/* ---------------------------------------------------- mark as received -- */
+
+/**
+ * The purchase order in Zoho, and Purchasing's button to issue it.
+ *
+ * Its own card rather than a branch inside the raise form, because the two
+ * happen at different moments and to different people: the form is how
+ * Purchasing commits to the order, and this is how they confirm, days later,
+ * that the goods are coming.
+ *
+ * Shown to anybody who can see the request; the button only to Purchasing.
+ * Issuing moves the order from Draft to Open in Zoho and does nothing else —
+ * no bill, no payment, and the order is not closed.
+ */
+export function PurchaseOrderStatusCard({ requestId }: { requestId: string }) {
+  const qc = useQueryClient();
+  const { can: may } = useAuth();
+
+  const po = useQuery({
+    queryKey: qk.financePurchaseOrder(requestId),
+    queryFn: () => api<PurchaseOrder | null>(
+      `/finance/requests/${requestId}/purchase-order`),
+  });
+
+  const markReceived = useMutation({
+    mutationFn: () => api(
+      `/finance/requests/${requestId}/purchase-order/received`, { method: 'POST' }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.financePurchaseOrder(requestId) });
+    },
+  });
+
+  const order = po.data;
+  /* Nothing to show until the order actually exists in Zoho. */
+  if (!order || order.status !== 'DRAFTED' || !order.zohoPoId) return null;
+
+  return (
+    <Card title="Purchase order in Zoho">
+      <dl className="kv">
+        <dt>Number</dt>
+        <dd><strong>{order.zohoPoNumber ?? order.reference ?? '—'}</strong></dd>
+        <dt>Supplier</dt><dd>{order.vendorName}</dd>
+        <dt>Status</dt>
+        <dd>
+          {order.issuedAt
+            ? <span className="idtag idtag--good">Issued</span>
+            : <span className="idtag idtag--warn">Draft</span>}
+        </dd>
+      </dl>
+
+      {order.issuedAt ? (
+        <p className="field__hint">
+          Issued in Zoho. Billing and payment are done there.
+        </p>
+      ) : (
+        <>
+          <p className="field__hint">
+            A draft in Zoho. Mark it received once the goods are on their
+            way — that makes it Issued. Nothing else changes: no bill is
+            raised and the order is not closed.
+          </p>
+          {may('finance.purchases.decide') ? (
+            <>
+              {markReceived.isError ? (
+                <ErrorState error={markReceived.error} compact />
+              ) : null}
+              <div className="formrow--actions">
+                <button type="button" className="btn btn--primary btn--sm"
+                        disabled={markReceived.isPending}
+                        onClick={() => markReceived.mutate()}>
+                  {markReceived.isPending ? 'Marking…' : 'Mark as received'}
+                </button>
+              </div>
+            </>
+          ) : null}
+        </>
+      )}
+    </Card>
   );
 }
