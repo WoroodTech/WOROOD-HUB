@@ -1203,6 +1203,8 @@ export interface PurchaseOrder {
   status: 'PENDING' | 'DRAFTED' | 'FAILED';
   zohoPoId: string | null;
   zohoPoNumber: string | null;
+  /** When Purchasing marked it received (Draft → Open in Zoho), if it has. */
+  issuedAt: string | null;
   error: string | null;
   createdAt: string | null;
 }

@@ -699,19 +699,31 @@ export function FinanceNew() {
             * moment it is — an upload has to belong to something, and there
             * is nothing to belong to until then.
             */}
-          <label className="field">
+          {/*
+            * The same control as the request page's Files card: a hidden
+            * input behind a styled label.
+            *
+            * A bare `<input type="file" class="input">` was being styled as a
+            * text box and, nested with the label text the way it was, the
+            * picked file often never reached onChange — so the attachment
+            * looked chosen and then was not there. This is the pattern that
+            * works elsewhere, so it is the pattern here too.
+            */}
+          <div className="field">
             <span className="field__label">
               Attachments <span className="field__opt">quotation, invoice, receipt</span>
             </span>
-            <input className="input" type="file" multiple
-                   accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.xlsx,.xls,.doc,.docx"
-                   onChange={(e) => {
-                     setPending((f) => [...f, ...Array.from(e.target.files ?? [])]);
-                     /* Cleared so the same file can be picked again after
-                        being removed. */
-                     e.target.value = '';
-                   }} />
-          </label>
+            <label className="btn btn--ghost btn--sm filelist__add">
+              <Icon name="plus" size={13} /> Choose files
+              <input type="file" hidden multiple
+                     accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.xlsx,.xls,.doc,.docx"
+                     onChange={(e) => {
+                       setPending((f) => [...f, ...Array.from(e.target.files ?? [])]);
+                       /* Cleared so the same file can be picked again. */
+                       e.target.value = '';
+                     }} />
+            </label>
+          </div>
 
           {pending.length ? (
             <ul className="finfiles">
@@ -2110,6 +2122,19 @@ function PurchaseOrderCard({
     queryFn: () => api<PurchaseOrder | null>(`/finance/requests/${requestId}/purchase-order`),
   });
 
+  const qc = useQueryClient();
+  const { can: may } = useAuth();
+
+  /* Purchasing confirms the goods are coming: Draft → Open in Zoho. Only
+     Purchasing sees the button, and only while the order is still a draft. */
+  const markReceived = useMutation({
+    mutationFn: () => api(`/finance/requests/${requestId}/purchase-order/received`,
+      { method: 'POST' }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.financePurchaseOrder(requestId) });
+    },
+  });
+
   /*
    * The reference, read from Zoho and not typed.
    *
@@ -2184,9 +2209,31 @@ function PurchaseOrderCard({
             </li>
           ))}
         </ul>
-        <p className="field__hint">
-          Created as a draft in Zoho Books. Approving it is done there.
-        </p>
+        {po.issuedAt ? (
+          <p className="field__hint">
+            Marked as received, so it is Open in Zoho. Billing and payment are
+            done in Zoho.
+          </p>
+        ) : (
+          <>
+            <p className="field__hint">
+              A draft in Zoho. Mark it received once the goods are on their way,
+              which makes it Open — billing and payment stay in Zoho.
+            </p>
+            {may('finance.purchases.decide') ? (
+              <div className="formrow--actions">
+                {markReceived.isError ? (
+                  <ErrorState error={markReceived.error} compact />
+                ) : null}
+                <button type="button" className="btn btn--primary btn--sm"
+                        disabled={markReceived.isPending}
+                        onClick={() => markReceived.mutate()}>
+                  {markReceived.isPending ? 'Marking…' : 'Mark as received'}
+                </button>
+              </div>
+            ) : null}
+          </>
+        )}
       </Card>
     );
   }

@@ -327,6 +327,13 @@ export class FinanceController {
     return this.purchaseOrders.forRequest(p, id);
   }
 
+  /** Purchasing confirms the goods are coming: Draft → Open in Zoho. */
+  @Post('requests/:id/purchase-order/received')
+  @Permissions('finance.purchases.decide')
+  markReceived(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string) {
+    return this.purchaseOrders.markReceived(p, id);
+  }
+
   /** Purchasing raises it; Finance pays against it later. */
   @Post('requests/:id/purchase-order')
   @Permissions('finance.purchases.decide')
