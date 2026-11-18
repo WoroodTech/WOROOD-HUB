@@ -40,7 +40,9 @@ export class PurchaseOrdersService {
    * cost nothing and short enough that a second person does not get a
    * number that has just been used.
    */
-  private readonly refCache = new Map<string, { at: number; reference: string }>();
+  /* One suggestion for the whole organisation: the series is Zoho's, not
+     each supplier's. */
+  private numberCache: { at: number; reference: string } | null = null;
 
   private readonly log = new Logger('PurchaseOrders');
 
@@ -86,43 +88,57 @@ export class PurchaseOrdersService {
   }
 
   /** Ask Zoho what this supplier's next reference should be. */
-  async suggestReference(p: Principal, vendorId: string): Promise<{ reference: string }> {
-    /* Same as the list: reading the next number is not raising an order. */
+  /**
+   * The next purchase-order number.
+   *
+   * `purchaseorder_number` — the `WoR-PO-00292` on the order itself — and
+   * organisation-wide, because that is the series Zoho keeps.
+   *
+   * Two things were wrong before. It read `reference_number`, which is the
+   * separate Reference# field: usually empty, sometimes carrying the
+   * supplier's own numbering, and never ours. And it narrowed to one vendor,
+   * which would restart the count for every supplier when the series runs
+   * across all of them.
+   *
+   * `created_time` rather than `date`: the order date can be backdated, and
+   * the newest order is the one most recently made.
+   */
+  async nextPurchaseOrderNumber(p: Principal): Promise<{ reference: string }> {
     if (!can(p, PURCHASES) && !can(p, MANAGE)) {
       throw new ForbiddenException('You cannot see purchase order numbers.');
     }
-    /*
-     * One page, newest first — not every order this vendor has ever had.
-     *
-     * `listAll` walks up to twenty-five pages, and this is called every time
-     * the form re-renders. Between them they burned the organisation's
-     * 10,000-call daily limit, which is what the "exceeded the maximum call
-     * rate limit" error was: not Zoho being slow, us asking 25 times for an
-     * answer that is in the first row.
-     *
-     * The next reference only needs the highest already used, and sorted
-     * newest first that is on page one.
-     *
-     * From purchase orders rather than bills, too: a bill is what the vendor
-     * sends afterwards and carries their numbering; a purchase order is what
-     * we send and carries ours.
-     */
+
+    /* The form asks on every render and the answer cannot change between
+       two of them. Cleared when an order is created, so the next person
+       does not get a number that has just been used. */
+    if (this.numberCache && Date.now() - this.numberCache.at < 120_000) {
+      return { reference: this.numberCache.reference };
+    }
+
     const res = await this.books.call('GET', '/purchaseorders', {
       query: {
-        vendor_id: vendorId,
-        sort_column: 'date',
+        sort_column: 'created_time',
         sort_order: 'D',
-        per_page: '50',
+        /* One page. `listAll` walks twenty-five, and between them and this
+           being called on every render they spent the organisation's daily
+           API allowance — which is what the "exceeded the maximum call rate
+           limit" error was. */
+        per_page: '25',
       },
     });
 
-    const refs = (res?.purchaseorders ?? [])
-      .map((o: any) => o.reference_number)
+    const numbers = (res?.purchaseorders ?? [])
+      .map((o: any) => o.purchaseorder_number)
       .filter(Boolean);
 
-    const reference = PurchaseOrdersService.nextReference(refs);
-    this.refCache.set(vendorId, { at: Date.now(), reference });
+    const reference = PurchaseOrdersService.nextReference(numbers);
+    this.numberCache = { at: Date.now(), reference };
     return { reference };
+  }
+
+  /** The old name, kept so existing callers keep working. */
+  async suggestReference(p: Principal, _vendorId?: string) {
+    return this.nextPurchaseOrderNumber(p);
   }
 
   /** Suppliers, from the cache. */
@@ -242,6 +258,9 @@ export class PurchaseOrdersService {
   async draft(p: Principal, requestId: string, dto: {
     vendorId: string; vendorName: string;
     lines: PurchaseOrderLine[]; reference?: string;
+    /* What the request was priced at, when the approval has not been
+       recorded yet and the row still carries the old figure. */
+    expectedTotal?: number;
   }) {
     this.assertPurchases(p);
 
@@ -273,22 +292,44 @@ export class PurchaseOrdersService {
       throw new BadRequestException(`A purchase order can carry up to ${MAX_LINES} lines.`);
     }
 
+    /*
+     * One raiser at a time, for this request.
+     *
+     * Two Approve presses landing together would both read no existing order
+     * and both create one in Zoho — two orders for one request, and a
+     * payment that cannot say which it is an advance against. Held to the
+     * end of the statement, and free when uncontended.
+     */
+    await query(`SELECT pg_advisory_xact_lock(hashtext($1))`,
+      [`fin-po:${requestId}`]);
+
     const existing = await one<any>(
       `SELECT id, status FROM fin_purchase_orders WHERE request_id=$1`, [requestId]);
     if (existing && existing.status === 'DRAFTED') {
       throw new BadRequestException('This request already has a purchase order.');
     }
 
-    /* The suggestion for this vendor is now one behind. */
-    this.refCache.delete(dto.vendorId);
+    /*
+     * No reference of ours.
+     *
+     * Zoho assigns the purchase-order number when it creates the order, and
+     * that number is the reference. Asking for a suggestion here and sending
+     * it was a second numbering alongside Zoho's own — and a wasted API call
+     * on every approval.
+     */
+    this.numberCache = null;
 
-    /* Zoho's answer wins over whatever the form is holding. */
-    const suggested = await this.suggestReference(p, dto.vendorId)
-      .then((x) => x.reference)
-      .catch(() => '');
-    const reference = suggested || dto.reference || '';
-
-    const total = lines.reduce((n, l) => n + l.quantity * l.rate, 0);
+    /*
+     * Added as hundredths.
+     *
+     * 0.1 × 3 is 0.30000000000000004 in floating point, and this figure is
+     * compared against the amount the request was priced at a few lines
+     * below. A comparison that fails by a ten-thousandth of a piastre would
+     * refuse a correct order.
+     */
+    const total = Math.round(
+      lines.reduce((n, l) =>
+        n + Math.round(l.quantity * 100) * Math.round(l.rate * 100), 0) / 100) / 100;
 
     /*
      * The order has to come to what the request was priced at.
@@ -301,7 +342,7 @@ export class PurchaseOrdersService {
      *
      * A pound either way is rounding on a line rate.
      */
-    const priced = Number(r.requested_amount ?? 0);
+    const priced = Number(dto.expectedTotal ?? r.requested_amount ?? 0);
     if (priced > 0 && Math.abs(total - priced) > 1) {
       throw new BadRequestException(
         `The lines come to ${total.toFixed(2)} and the request was priced at `
@@ -315,21 +356,31 @@ export class PurchaseOrdersService {
               SET vendor_zoho_id=$2, vendor_name=$3, reference=$4, lines=$5,
                   total=$6, status='PENDING', error=NULL
             WHERE id=$1 RETURNING *`,
-          [existing.id, dto.vendorId, dto.vendorName, reference,
+          /* Null until Zoho answers: the number is Zoho's to assign, and
+             writing a guess here would be a reference nothing matches. */
+          [existing.id, dto.vendorId, dto.vendorName, null,
            JSON.stringify(lines), total])
       : await one<any>(
           `INSERT INTO fin_purchase_orders
              (request_id, vendor_zoho_id, vendor_name, reference, lines, total,
               created_by_id)
            VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-          [requestId, dto.vendorId, dto.vendorName, reference,
+          [requestId, dto.vendorId, dto.vendorName, null,
            JSON.stringify(lines), total, p.id]);
 
     try {
       const out = await this.books.call('POST', '/purchaseorders', {
         body: {
           vendor_id: dto.vendorId,
-          reference_number: reference || undefined,
+          /*
+           * No `reference_number`.
+           *
+           * That field is the *supplier's* reference on the order, and
+           * filling it with our next number put our numbering in a box
+           * meant for theirs — while Zoho assigned the real
+           * purchase-order number anyway. Zoho numbers it; we read the
+           * number back below.
+           */
           /* Draft, always. Approving a purchase order is a decision taken in
              Zoho, where that approval chain lives. */
           status: 'draft',
@@ -344,19 +395,26 @@ export class PurchaseOrdersService {
       const poId = out?.purchaseorder?.purchaseorder_id ?? out?.purchaseorder_id ?? null;
       if (!poId) throw new Error('Zoho accepted the order but returned no id');
 
+      /* The number Zoho assigned — `WoR-PO-00292` — which is the reference
+         the supplier and the accounts both work from. */
+      const zohoNumber = out?.purchaseorder?.purchaseorder_number
+        ?? out?.purchaseorder_number ?? null;
+
       await query(
         `UPDATE fin_purchase_orders
-            SET status='DRAFTED', zoho_po_id=$2, zoho_po_number=$3, posted_at=now()
+            SET status='DRAFTED', zoho_po_id=$2, zoho_po_number=$3,
+                reference=$3, posted_at=now()
           WHERE id=$1`,
-        [row.id, String(poId),
-         out?.purchaseorder?.purchaseorder_number ?? null]);
+        [row.id, String(poId), zohoNumber]);
 
       /* The payment that goes out later carries this reference, which is what
          lets the two be matched in Zoho. */
       await query(
         `UPDATE fin_requests SET purchase_order_reference=$2, vendor_name=$3,
                                  vendor_zoho_id=$4 WHERE id=$1`,
-        [requestId, reference || null, dto.vendorName, dto.vendorId]);
+        /* Zoho's own number, read back from its answer — the reference the
+           supplier and the accounts both see. */
+        [requestId, zohoNumber || null, dto.vendorName, dto.vendorId]);
 
       return this.view({ ...row, status: 'DRAFTED', zoho_po_id: poId });
     } catch (e: any) {

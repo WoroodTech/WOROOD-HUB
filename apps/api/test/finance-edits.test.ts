@@ -28,7 +28,8 @@ const notifications = { notify: async () => 'n', notifyPermissionHolders: async 
 const audit = { write: async () => undefined } as any;
 
 async function main() {
-  const reqs = new FinanceRequestsService(notifications, audit);
+  const reqs = new FinanceRequestsService(
+    notifications, audit, { draft: async () => undefined } as any);
   const edits = new FinanceEditsService(notifications, audit);
   const stamp = Date.now();
 

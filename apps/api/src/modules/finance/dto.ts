@@ -78,10 +78,24 @@ export class PurchasePricing {
   @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0.01) @Max(1_000_000_000) requestedAmount?: number;
   @IsOptional() @IsString() @MaxLength(200) vendorName?: string;
+  /** Zoho's id for that supplier, so the order can be raised against it. */
+  @IsOptional() @IsString() @MaxLength(64) vendorZohoId?: string;
   @IsOptional() @IsString() @MaxLength(60) paymentMethod?: string;
   @IsOptional() @IsString() @MaxLength(200) accountNumber?: string;
   @IsOptional() @IsString() @MaxLength(120) bankName?: string;
   @IsOptional() @IsString() @MaxLength(100) beneficiaryName?: string;
+}
+
+/**
+ * The order's lines, raised with a vendor-payment approval.
+ *
+ * Lines only. The supplier comes from the pricing in the same call, not from
+ * here: taking it from the body would let an order name a supplier the
+ * request does not.
+ */
+export class PurchaseOrderForApproval {
+  @IsArray() @ArrayMaxSize(40) @ValidateNested({ each: true })
+  @Type(() => PurchaseOrderLineDto) lines!: PurchaseOrderLineDto[];
 }
 
 export class DecideRequest {
@@ -89,6 +103,10 @@ export class DecideRequest {
 
   /** Only read at the Purchases step. */
   @IsOptional() @ValidateNested() @Type(() => PurchasePricing) pricing?: PurchasePricing;
+
+  /** Required with a vendor-payment approval: the order is raised with it. */
+  @IsOptional() @ValidateNested() @Type(() => PurchaseOrderForApproval)
+  purchaseOrder?: PurchaseOrderForApproval;
 
   /* Required for a rejection, in the service: being told no without being told
      why is the complaint the legacy app generated most. */
