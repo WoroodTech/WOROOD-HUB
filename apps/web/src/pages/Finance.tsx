@@ -1034,7 +1034,6 @@ export function FinanceRequestPage() {
             */}
           {r.needsPricing && pricing.type === 'Vendors Payments' ? (
             <PurchaseOrderLines
-              vendorZohoId={pricing.vendorZohoId ?? ''}
               vendorName={pricing.vendorName ?? ''}
               expectedTotal={Number(pricing.requestedAmount) || 0}
               lines={poLines}
@@ -1582,9 +1581,11 @@ function PricingFields({ value, onChange, banks }: {
           <SearchSelect
             value={value.vendorZohoId ?? ''}
             onChange={(id: string) => {
+              /* Both in one update. Two `set` calls each read the same stale
+                 `value`, so the second wiped the first — the id was kept and
+                 the name lost, which is why the order showed no supplier. */
               const picked = suppliers.data?.find((v) => v.id === id);
-              set('vendorZohoId', id);
-              set('vendorName', picked?.name ?? '');
+              onChange({ ...value, vendorZohoId: id, vendorName: picked?.name ?? '' });
             }}
             placeholder="Search suppliers…"
             disabled={value.type === 'Petty Cash'}
@@ -2321,25 +2322,25 @@ export interface POLine { name: string; quantity: string; rate: string }
  * anything — which is exactly what happened.
  */
 function PurchaseOrderLines({
-  vendorZohoId, vendorName, expectedTotal, lines, onChange,
+  vendorName, expectedTotal, lines, onChange,
 }: {
-  vendorZohoId: string;
   vendorName: string;
   expectedTotal: number;
   lines: POLine[];
   onChange: (lines: POLine[]) => void;
 }) {
   /*
-   * The reference, read from Zoho and never typed.
+   * The next number, read as soon as the card opens.
    *
-   * It is the next in this supplier's own series — one right answer, and a
-   * free field only gives somebody the chance to reuse a number.
+   * It is the organisation's next purchase-order number — the last one in
+   * Zoho plus one — not anything to do with the supplier, so it does not
+   * wait for one to be chosen. The vendor in the key is a holdover; the
+   * route ignores it.
    */
   const suggested = useQuery({
-    queryKey: ['finance', 'po-ref', vendorZohoId],
+    queryKey: ['finance', 'po-ref'],
     queryFn: () => api<{ reference: string }>(
-      `/finance/vendors/${vendorZohoId}/next-reference`),
-    enabled: !!vendorZohoId,
+      '/finance/vendors/next-po-number/next-reference'),
   });
 
   const total = lines.reduce(
@@ -2372,20 +2373,18 @@ function PurchaseOrderLines({
           {/* Every case says what it is, rather than leaving an empty box
               that reads as something to fill in. */}
           <p className="field__fixed mono">
-            {!vendorZohoId
-              ? <span className="muted">choose a supplier above</span>
-              : suggested.isLoading
-                ? <span className="muted">reading Zoho…</span>
-                : suggested.isError
-                  ? <span className="muted">
-                      Zoho could not be reached — it will be numbered when the
-                      order is created
-                    </span>
-                  : suggested.data?.reference
-                    ? suggested.data.reference
-                    : <span className="muted">
-                        first order for this supplier — Zoho will number it
-                      </span>}
+            {suggested.isLoading
+              ? <span className="muted">reading Zoho…</span>
+              : suggested.isError
+                ? <span className="muted">
+                    Zoho could not be reached — it will be numbered when the
+                    order is created
+                  </span>
+                : suggested.data?.reference
+                  ? suggested.data.reference
+                  : <span className="muted">
+                      Zoho will number it when the order is created
+                    </span>}
           </p>
         </label>
       </div>
