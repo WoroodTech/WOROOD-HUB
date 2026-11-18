@@ -131,12 +131,34 @@ export function canDecide(p: Principal, r: RequestShape): boolean {
   const step = stepOf(r.approvalState);
   if (!step) return false;
 
-  // Never your own request, at any step, however senior you are.
-  if (r.requesterId === p.id) return false;
+  /* Whoever this step belongs to. */
+  const holdsTheStep =
+    step === 'MANAGER' ? p.managedDepartmentIds.includes(r.departmentId)
+    : step === 'PURCHASES' ? p.permissions.includes('finance.purchases.decide')
+    : p.permissions.includes('finance.request.manage');
 
-  if (step === 'MANAGER') return p.managedDepartmentIds.includes(r.departmentId);
-  if (step === 'PURCHASES') return p.permissions.includes('finance.purchases.decide');
-  return p.permissions.includes('finance.request.manage');
+  if (!holdsTheStep) return false;
+
+  /*
+   * Including your own request, when this step is yours.
+   *
+   * A blanket "never your own" stranded every request raised by the desk it
+   * was routed to: Purchasing asking for something that goes to Purchasing,
+   * or Finance asking for something that comes back to Finance. Nobody else
+   * holds the step, so nobody could ever take it, and the request sat Open
+   * for ever with no control anywhere to move it.
+   *
+   * `firstState` already skips the manager step on the same reasoning — a
+   * step taken by the person who just took it is not a check. This is that
+   * rule applied to the other two.
+   *
+   * Nothing else is relaxed. The lifecycle is unchanged: Purchasing still
+   * prices the request, names the supplier and raises the order before it
+   * can leave their step, and Finance still records the payment against it.
+   * What goes is an approval that could never happen, not the work it was
+   * standing in front of.
+   */
+  return true;
 }
 
 /**

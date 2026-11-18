@@ -721,12 +721,16 @@ export function FinanceNew() {
             </span>
             <label className="btn btn--ghost btn--sm filelist__add">
               <Icon name="plus" size={13} /> Choose files
+              {/* `accept` is exactly what the server takes. Offering .heic,
+                  .xlsx or .doc let somebody pick one, watch the request be
+                  created, and find the attachment gone — refused after the
+                  fact, with its absence the only sign.
+
+                  The comment sits outside the tag on purpose: a C-style
+                  comment placed between attributes is not a JSX comment at
+                  all. It parses as broken attributes, which detached
+                  onChange — and is why picking a file did nothing. */}
               <input type="file" hidden multiple
-                     /* Exactly what the server accepts. Offering .heic,
-                        .xlsx or .doc here let somebody pick one, watch the
-                        request be created, and find the attachment gone —
-                        the upload was refused after the fact and the only
-                        sign was its absence. */
                      accept="image/jpeg,image/png,image/webp,application/pdf"
                      onChange={(e) => {
                        setPending((f) => [...f, ...Array.from(e.target.files ?? [])]);
@@ -1051,24 +1055,6 @@ export function FinanceRequestPage() {
             <PricingFields value={pricing} onChange={setPricing} banks={banks.data ?? []} />
           ) : null}
 
-          {/*
-            * The order is part of the decision, not a step after it.
-            *
-            * Splitting them meant Approve could be pressed with no order
-            * raised — the request moved to Finance, the form closed, and
-            * nothing could create one afterwards. Purchasing commits to a
-            * supplier and raises the order in the same act, which is what
-            * actually happens at the desk.
-            */}
-          {r.needsPricing && pricing.type === 'Vendors Payments' ? (
-            <PurchaseOrderLines
-              vendorName={pricing.vendorName ?? ''}
-              expectedTotal={Number(pricing.requestedAmount) || 0}
-              lines={poLines}
-              onChange={setPoLines}
-            />
-          ) : null}
-
           <label className="field">
             <span className="field__label">Reason <span className="field__opt">required to reject</span></span>
             <textarea className="input" rows={2} value={reason} maxLength={1000}
@@ -1124,10 +1110,24 @@ export function FinanceRequestPage() {
         )}
       </Card>
 
-      {/* The order in Zoho and Purchasing's button to issue it. Returns
-          nothing at all until an order exists, so it costs nothing on a
-          request that has none. */}
-      <PurchaseOrderStatusCard requestId={id} />
+      {/*
+        * One purchase-order card, not two.
+        *
+        * Before the approval it is the form the lines are typed into; after
+        * it, the order those lines became and Purchasing's button to issue
+        * it. The same subject at two moments, so it reads as one thing in
+        * one place rather than the same facts twice on one page.
+        */}
+      <PurchaseOrderSection
+        requestId={id}
+        /* The form side, only while this person is the one pricing it. */
+        editable={!!r.canDecide && !!r.needsPricing
+          && pricing.type === 'Vendors Payments'}
+        vendorName={pricing.vendorName ?? ''}
+        expectedTotal={Number(pricing.requestedAmount) || 0}
+        lines={poLines}
+        onLinesChange={setPoLines}
+      />
 
       {/* Only where there is something to show: a request nobody has paid and
           that this reader may not see money on has no payments card at all. */}
@@ -1147,55 +1147,13 @@ export function FinanceRequestPage() {
       ) : null}
 
       {/*
-        * Raised by Purchasing, while the request is still with them.
+        * There is no second "raise a purchase order" card.
         *
-        * This used to appear only once Finance had approved — which put the
-        * order after the payment decision, and meant Purchasing could not
-        * raise one at all. Purchasing sources the thing, prices it, and
-        * commits to the supplier; Finance pays against that commitment.
-        *
-        * Still shown afterwards, read-only, so anybody looking at a paid
-        * request can see which order it went against.
+        * Raising the order is part of Purchasing's decision above — one act,
+        * one form. A separate card below it offered the same thing again at a
+        * point where the decision had already been taken, which is how an
+        * order could be raised that disagreed with the one approved.
         */}
-      {(r.route === 'purchases' || r.type === 'Vendors Payments')
-        && (r.approvalState === 'PURCHASES_PENDING'
-            || r.approvalState === 'FINANCE_PENDING'
-            || r.approvalState === 'APPROVED') ? (
-        <PurchaseOrderCard
-          requestId={id}
-          vendorName={r.vendorName ?? null}
-          vendorZohoId={(r as any).vendorZohoId ?? null}
-          expectedTotal={Number(r.requestedAmount ?? 0)}
-          /*
-           * Purchasing's permission alone, not `canDecidePurchases` —
-           * which includes `finance.request.manage`, so the Finance manager
-           * was being shown the form for a step that is not theirs.
-           *
-           * Everyone else sees the order once it exists, read-only.
-           */
-          /*
-           * Raisable while Purchasing still has it *and* after they have
-           * approved it on to Finance.
-           *
-           * Tying it to PURCHASES_PENDING alone closed the form the moment
-           * Approve was pressed — so the order could never be raised at
-           * all, and Finance was left looking at "Purchases will raise one
-           * before this is paid" for an order nobody could create.
-           *
-           * It closes once the money has gone out: an order raised after
-           * payment is a record of something that already happened.
-           */
-          canDraft={may('finance.purchases.decide')
-            && r.paymentState !== 'PAID'
-            && (r.approvalState === 'PURCHASES_PENDING'
-                || r.approvalState === 'FINANCE_PENDING'
-                || r.approvalState === 'APPROVED')}
-          onChanged={() => {
-            void qc.invalidateQueries({ queryKey: qk.financePurchaseOrder(id) });
-            void qc.invalidateQueries({ queryKey: qk.financeItem(id) });
-          }}
-        />
-      ) : null}
 
       <FilesCard
         requestId={id}
@@ -2102,156 +2060,121 @@ export function FinanceToPay() {
 
 /* ------------------------------------------------------ purchase orders -- */
 
+/* ------------------------------------------------------ purchase order -- */
+
+export interface POLine { name: string; quantity: string; rate: string }
+
 /**
- * The draft purchase order a supplier is shown.
+ * The purchase order, at both of its moments.
  *
- * Created in Zoho as a **draft** and never approved from here: approving one
- * is a decision taken in Zoho, where purchase orders already have an approval
- * chain of their own.
+ * One card rather than two. Before the approval it is the form the lines are
+ * typed into, and those lines travel with the approval — raising the order is
+ * part of the decision, not a step somebody can skip afterwards. Once the
+ * order exists it is the order: its number, its supplier, and Purchasing's
+ * button to issue it.
  *
- * The reference is not typed. It continues the supplier's own numbering and is
- * worked out from their bills, because a gap or a repeat in that sequence is
- * the supplier's problem and they will notice it.
+ * They were separate cards, which put the same supplier and the same number
+ * on the page twice and left a reader working out which one was the real
+ * state. It is one subject at two moments, so it is one card.
  */
-function PurchaseOrderCard({
-  requestId, canDraft, onChanged, vendorName, vendorZohoId, expectedTotal,
+function PurchaseOrderSection({
+  requestId, editable, vendorName, expectedTotal, lines, onLinesChange,
 }: {
   requestId: string;
-  canDraft: boolean;
-  onChanged: () => void;
-  /** Already chosen when the request was priced; not asked for again. */
-  vendorName: string | null;
-  vendorZohoId: string | null;
-  /** What the request was priced at. The order has to come to the same. */
+  /** True while this person is pricing the request and typing the lines. */
+  editable: boolean;
+  vendorName: string;
   expectedTotal: number;
+  lines: POLine[];
+  onLinesChange: (lines: POLine[]) => void;
 }) {
-  /*
-   * The supplier comes from the request, not from a second picker.
-   *
-   * It was chosen when the request was priced. Offering the list again
-   * invites a different answer, and then the order and the request disagree
-   * about who is being paid.
-   */
-  const vendorId = vendorZohoId ?? '';
-  const [lines, setLines] = useState<{ name: string; quantity: string; rate: string }[]>(
-    [{ name: '', quantity: '1', rate: '' }]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const existing = useQuery({
-    queryKey: qk.financePurchaseOrder(requestId),
-    queryFn: () => api<PurchaseOrder | null>(`/finance/requests/${requestId}/purchase-order`),
-  });
-
   const qc = useQueryClient();
   const { can: may } = useAuth();
 
-  /* Purchasing confirms the goods are coming: Draft → Open in Zoho. Only
-     Purchasing sees the button, and only while the order is still a draft. */
+  const po = useQuery({
+    queryKey: qk.financePurchaseOrder(requestId),
+    queryFn: () => api<PurchaseOrder | null>(
+      `/finance/requests/${requestId}/purchase-order`),
+  });
+
+  /*
+   * The next number, read as soon as the form opens.
+   *
+   * The organisation's next purchase-order number — the last one in Zoho
+   * plus one — and nothing to do with the supplier, so it does not wait for
+   * one to be chosen.
+   */
+  const suggested = useQuery({
+    queryKey: ['finance', 'po-ref'],
+    queryFn: () => api<{ reference: string }>(
+      '/finance/vendors/next-po-number/next-reference'),
+    enabled: editable,
+  });
+
   const markReceived = useMutation({
-    mutationFn: () => api(`/finance/requests/${requestId}/purchase-order/received`,
-      { method: 'POST' }),
+    mutationFn: () => api(
+      `/finance/requests/${requestId}/purchase-order/received`, { method: 'POST' }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.financePurchaseOrder(requestId) });
     },
   });
 
-  /*
-   * The reference, read from Zoho and not typed.
-   *
-   * It is the next in this supplier's series, so there is one right answer
-   * and a free field only gives somebody the chance to get it wrong —
-   * or to reuse one. Shown, locked, and recomputed on the server anyway.
-   */
-  const suggested = useQuery({
-    queryKey: ['finance', 'po-ref', vendorId],
-    queryFn: () => api<{ reference: string }>(
-      `/finance/vendors/${vendorId}/next-reference`),
-    enabled: canDraft && !!vendorId,
-  });
+  const order = po.data;
 
-  const total = lines.reduce(
-    (n, l) => n + (Number(l.quantity) || 0) * (Number(l.rate) || 0), 0);
+  /* ------------------------------------------- the order, once it exists -- */
 
-  /*
-   * The order has to come to what the request was priced at.
-   *
-   * Finance approved a figure and will pay it; an order for a different one
-   * means the supplier is owed something nobody approved. A pound either way
-   * is rounding, and anything more is a mistake worth stopping.
-   */
-  const gap = Math.round((total - expectedTotal) * 100) / 100;
-  const mismatched = lines.some((l) => l.name.trim()) && Math.abs(gap) > 1;
-
-  const create = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await api(`/finance/requests/${requestId}/purchase-order`, {
-        method: 'POST',
-        body: {
-          vendorId,
-          vendorName: vendorName ?? '',
-          lines: lines
-            .filter((l) => l.name.trim())
-            .map((l) => ({
-              name: l.name,
-              quantity: Number(l.quantity) || 1,
-              rate: Number(l.rate) || 0,
-            })),
-        },
-      });
-      onChanged();
-    } catch (e: any) {
-      setError(e?.message ?? 'The purchase order could not be created.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const po = existing.data;
-
-  /* Already drafted: show it and stop. A second order against one request
-     would leave the payment ambiguous about which it is an advance on. */
-  if (po?.status === 'DRAFTED') {
+  if (order?.status === 'DRAFTED' && order.zohoPoId) {
     return (
       <Card title="Purchase order">
         <dl className="kv">
-          <dt>Supplier</dt><dd>{po.vendorName}</dd>
-          <dt>Reference</dt><dd><strong>{po.reference ?? '—'}</strong></dd>
-          {po.zohoPoNumber ? <><dt>In Zoho</dt><dd>{po.zohoPoNumber}</dd></> : null}
-          <dt>Total</dt><dd>{po.total !== null ? money(po.total) : '—'}</dd>
+          <dt>Number</dt>
+          <dd><strong>{order.zohoPoNumber ?? order.reference ?? '—'}</strong></dd>
+          <dt>Supplier</dt><dd>{order.vendorName}</dd>
+          <dt>Total</dt>
+          <dd>{order.total !== null ? money(order.total) : '—'}</dd>
+          <dt>Status</dt>
+          <dd>
+            {order.issuedAt
+              ? <span className="idtag idtag--good">Issued</span>
+              : <span className="idtag idtag--warn">Draft</span>}
+          </dd>
         </dl>
-        <ul className="polines">
-          {po.lines.map((l, i) => (
-            <li key={i}>
-              <span>{l.name}</span>
-              <span className="muted">{l.quantity} × {money(l.rate)}</span>
-            </li>
-          ))}
-        </ul>
-        {po.issuedAt ? (
+
+        {order.lines?.length ? (
+          <ul className="polines">
+            {order.lines.map((l, i) => (
+              <li key={i}>
+                <span>{l.name}</span>
+                <span className="muted">{l.quantity} × {money(l.rate)}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
+        {order.issuedAt ? (
           <p className="field__hint">
-            Marked as received, so it is Open in Zoho. Billing and payment are
-            done in Zoho.
+            Issued in Zoho. Billing and payment are done there.
           </p>
         ) : (
           <>
             <p className="field__hint">
-              A draft in Zoho. Mark it received once the goods are on their way,
-              which makes it Open — billing and payment stay in Zoho.
+              A draft in Zoho. Mark it received once the goods are on their
+              way — that makes it Issued. Nothing else changes: no bill is
+              raised and the order is not closed.
             </p>
             {may('finance.purchases.decide') ? (
-              <div className="formrow--actions">
+              <>
                 {markReceived.isError ? (
                   <ErrorState error={markReceived.error} compact />
                 ) : null}
-                <button type="button" className="btn btn--primary btn--sm"
-                        disabled={markReceived.isPending}
-                        onClick={() => markReceived.mutate()}>
-                  {markReceived.isPending ? 'Marking…' : 'Mark as received'}
-                </button>
-              </div>
+                <div className="formrow--actions">
+                  <button type="button" className="btn btn--primary btn--sm"
+                          disabled={markReceived.isPending}
+                          onClick={() => markReceived.mutate()}>
+                    {markReceived.isPending ? 'Marking…' : 'Mark as received'}
+                  </button>
+                </div>
+              </>
             ) : null}
           </>
         )}
@@ -2259,157 +2182,19 @@ function PurchaseOrderCard({
     );
   }
 
-  if (!canDraft) {
+  /* A failure is said rather than swallowed: returning nothing made a broken
+     endpoint look exactly like a request with no order. */
+  if (po.isError) {
     return (
       <Card title="Purchase order">
-        <p className="muted">Purchases will raise one before this is paid.</p>
+        <ErrorState error={po.error} compact />
       </Card>
     );
   }
 
-  const ready = vendorId && lines.some((l) => l.name.trim());
+  /* ------------------------------------------------ the form, before it -- */
 
-  return (
-    <Card title="Raise a purchase order">
-      {po?.status === 'FAILED' && po.error ? (
-        <p className="state state--error">
-          The last attempt failed: {po.error}
-        </p>
-      ) : null}
-
-      <div className="stackform">
-        <div className="formrow">
-          {/* Stated, not offered: it was chosen when the request was
-              priced, and a second picker only invites a different answer. */}
-          <label className="field">
-            <span className="field__label">Supplier</span>
-            <p className="field__fixed">
-              {vendorName || <span className="muted">none on this request</span>}
-              <small>chosen when the request was priced</small>
-            </p>
-          </label>
-          <label className="field">
-            <span className="field__label">
-              Reference <span className="field__opt">the next in their series</span>
-            </span>
-            {/*
-              * Read from Zoho, never typed.
-              *
-              * It is the next in this supplier's own series, so there is one
-              * right answer and a free field only gives somebody the chance
-              * to reuse a number. Every case says what it is rather than
-              * leaving an empty box that reads as something to fill in.
-              */}
-            <p className="field__fixed mono">
-              {!vendorId
-                ? <span className="muted">no supplier on this request yet</span>
-                : suggested.isLoading
-                  ? <span className="muted">reading Zoho…</span>
-                  : suggested.isError
-                    ? <span className="muted">
-                        Zoho could not be reached — the order will take the
-                        next number when it is created
-                      </span>
-                    : suggested.data?.reference
-                      ? suggested.data.reference
-                      : <span className="muted">
-                          first order for this supplier — Zoho will number it
-                        </span>}
-            </p>
-          </label>
-        </div>
-
-        <div className="polines polines--edit">
-          {lines.map((l, i) => (
-            <div key={i} className="polines__row">
-              <input className="input" placeholder="What is being bought"
-                     value={l.name} maxLength={200}
-                     onChange={(e) => setLines((xs) =>
-                       xs.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} />
-              <input className="input" type="number" min="0.01" step="0.01"
-                     placeholder="Qty" value={l.quantity}
-                     onChange={(e) => setLines((xs) =>
-                       xs.map((x, j) => j === i ? { ...x, quantity: e.target.value } : x))} />
-              <input className="input" type="number" min="0" step="0.01"
-                     placeholder="Rate" value={l.rate}
-                     onChange={(e) => setLines((xs) =>
-                       xs.map((x, j) => j === i ? { ...x, rate: e.target.value } : x))} />
-              <button type="button" className="linkbtn"
-                      disabled={lines.length === 1}
-                      onClick={() => setLines((xs) => xs.filter((_, j) => j !== i))}>
-                Remove
-              </button>
-            </div>
-          ))}
-        </div>
-
-        <div className="formrow--actions">
-          <button type="button" className="btn btn--ghost btn--sm"
-                  disabled={lines.length >= 40}
-                  onClick={() => setLines((xs) => [...xs, { name: '', quantity: '1', rate: '' }])}>
-            <Icon name="plus" size={13} /> Add a line
-          </button>
-          <span className="polines__total">Total {money(total)}</span>
-        </div>
-
-        {error ? <p className="state state--error">{error}</p> : null}
-
-        {mismatched ? (
-          <p className="notice notice--warn" role="alert">
-            {/* Finance approved a figure and will pay it. An order for a
-                different one means the supplier is owed something nobody
-                approved. */}
-            The lines come to {total.toLocaleString()} and the request was
-            priced at {expectedTotal.toLocaleString()} —{' '}
-            {gap > 0 ? `${gap.toLocaleString()} over` : `${Math.abs(gap).toLocaleString()} under`}.
-            Put the lines right, or re-price the request first.
-          </p>
-        ) : null}
-
-        <div className="formrow--actions">
-          <button type="button" className="btn btn--primary"
-                  disabled={!ready || busy || mismatched}
-                  onClick={() => void create()}>
-            {busy ? 'Creating…' : 'Create the draft in Zoho'}
-          </button>
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-/* ------------------------------------------------- purchase order lines -- */
-
-export interface POLine { name: string; quantity: string; rate: string }
-
-/**
- * The order's lines, inside Purchasing's decision.
- *
- * Not a card of its own: raising the order is part of approving the
- * request, and two separate forms let somebody approve without raising
- * anything — which is exactly what happened.
- */
-function PurchaseOrderLines({
-  vendorName, expectedTotal, lines, onChange,
-}: {
-  vendorName: string;
-  expectedTotal: number;
-  lines: POLine[];
-  onChange: (lines: POLine[]) => void;
-}) {
-  /*
-   * The next number, read as soon as the card opens.
-   *
-   * It is the organisation's next purchase-order number — the last one in
-   * Zoho plus one — not anything to do with the supplier, so it does not
-   * wait for one to be chosen. The vendor in the key is a holdover; the
-   * route ignores it.
-   */
-  const suggested = useQuery({
-    queryKey: ['finance', 'po-ref'],
-    queryFn: () => api<{ reference: string }>(
-      '/finance/vendors/next-po-number/next-reference'),
-  });
+  if (!editable) return null;
 
   const total = lines.reduce(
     (n, l) => n + (Number(l.quantity) || 0) * (Number(l.rate) || 0), 0);
@@ -2418,11 +2203,10 @@ function PurchaseOrderLines({
     && Math.abs(gap) > 1;
 
   const set = (i: number, patch: Partial<POLine>) =>
-    onChange(lines.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+    onLinesChange(lines.map((l, j) => (j === i ? { ...l, ...patch } : l)));
 
   return (
-    <div className="poblock">
-      <h4 className="poblock__title">The purchase order</h4>
+    <Card title="Purchase order">
       <p className="muted poblock__hint">
         Raised in Zoho when you approve. The lines here are the lines on it.
       </p>
@@ -2436,7 +2220,7 @@ function PurchaseOrderLines({
         </label>
         <label className="field">
           <span className="field__label">
-            Reference <span className="field__opt">the next in their series</span>
+            Reference <span className="field__opt">the next in the series</span>
           </span>
           {/* Every case says what it is, rather than leaving an empty box
               that reads as something to fill in. */}
@@ -2471,7 +2255,7 @@ function PurchaseOrderLines({
                    onChange={(e) => set(i, { rate: e.target.value })} />
             <button type="button" className="btn btn--ghost btn--sm"
                     disabled={lines.length === 1}
-                    onClick={() => onChange(lines.filter((_, j) => j !== i))}>
+                    onClick={() => onLinesChange(lines.filter((_, j) => j !== i))}>
               Remove
             </button>
           </div>
@@ -2480,7 +2264,8 @@ function PurchaseOrderLines({
 
       <div className="poblock__foot">
         <button type="button" className="btn btn--ghost btn--sm"
-                onClick={() => onChange([...lines, { name: '', quantity: '1', rate: '' }])}>
+                onClick={() => onLinesChange(
+                  [...lines, { name: '', quantity: '1', rate: '' }])}>
           + Add a line
         </button>
         <span className={`poblock__total${off ? ' is-bad' : ''}`}>
@@ -2497,87 +2282,6 @@ function PurchaseOrderLines({
           {gap > 0 ? `${gap.toLocaleString()} over` : `${Math.abs(gap).toLocaleString()} under`}.
         </p>
       ) : null}
-    </div>
-  );
-}
-
-/* ---------------------------------------------------- mark as received -- */
-
-/**
- * The purchase order in Zoho, and Purchasing's button to issue it.
- *
- * Its own card rather than a branch inside the raise form, because the two
- * happen at different moments and to different people: the form is how
- * Purchasing commits to the order, and this is how they confirm, days later,
- * that the goods are coming.
- *
- * Shown to anybody who can see the request; the button only to Purchasing.
- * Issuing moves the order from Draft to Open in Zoho and does nothing else —
- * no bill, no payment, and the order is not closed.
- */
-export function PurchaseOrderStatusCard({ requestId }: { requestId: string }) {
-  const qc = useQueryClient();
-  const { can: may } = useAuth();
-
-  const po = useQuery({
-    queryKey: qk.financePurchaseOrder(requestId),
-    queryFn: () => api<PurchaseOrder | null>(
-      `/finance/requests/${requestId}/purchase-order`),
-  });
-
-  const markReceived = useMutation({
-    mutationFn: () => api(
-      `/finance/requests/${requestId}/purchase-order/received`, { method: 'POST' }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.financePurchaseOrder(requestId) });
-    },
-  });
-
-  const order = po.data;
-  /* Nothing to show until the order actually exists in Zoho. */
-  if (!order || order.status !== 'DRAFTED' || !order.zohoPoId) return null;
-
-  return (
-    <Card title="Purchase order in Zoho">
-      <dl className="kv">
-        <dt>Number</dt>
-        <dd><strong>{order.zohoPoNumber ?? order.reference ?? '—'}</strong></dd>
-        <dt>Supplier</dt><dd>{order.vendorName}</dd>
-        <dt>Status</dt>
-        <dd>
-          {order.issuedAt
-            ? <span className="idtag idtag--good">Issued</span>
-            : <span className="idtag idtag--warn">Draft</span>}
-        </dd>
-      </dl>
-
-      {order.issuedAt ? (
-        <p className="field__hint">
-          Issued in Zoho. Billing and payment are done there.
-        </p>
-      ) : (
-        <>
-          <p className="field__hint">
-            A draft in Zoho. Mark it received once the goods are on their
-            way — that makes it Issued. Nothing else changes: no bill is
-            raised and the order is not closed.
-          </p>
-          {may('finance.purchases.decide') ? (
-            <>
-              {markReceived.isError ? (
-                <ErrorState error={markReceived.error} compact />
-              ) : null}
-              <div className="formrow--actions">
-                <button type="button" className="btn btn--primary btn--sm"
-                        disabled={markReceived.isPending}
-                        onClick={() => markReceived.mutate()}>
-                  {markReceived.isPending ? 'Marking…' : 'Mark as received'}
-                </button>
-              </div>
-            </>
-          ) : null}
-        </>
-      )}
     </Card>
   );
 }
