@@ -701,7 +701,10 @@ export class FinanceRequestsService {
    */
   async approvalsQueue(p: Principal) {
     const clauses: string[] = [];
-    const params: any[] = [p.id];
+    /* Nothing is bound up front any more: the own-request exclusion was the
+       only thing that used p.id, and Postgres refuses a parameter the
+       statement never mentions. */
+    const params: any[] = [];
 
     const managed = p.managedDepartmentIds ?? [];
     if (managed.length) {
@@ -723,8 +726,10 @@ export class FinanceRequestsService {
          LEFT JOIN fin_departments f ON f.department_id = r.department_id
         WHERE r.deleted_at IS NULL
           AND (${clauses.join(' OR ')})
-          -- never your own, at any step
-          AND r.requester_id <> $1
+          /* Your own included, when the step is yours.
+             Excluding them hid exactly the requests nobody else could take —
+             Purchasing's own purchases, Finance's own expenses — so they
+             never appeared in anyone's queue and sat Open for ever. */
         ORDER BY r.due_date, r.created_at`, params);
 
     return {
@@ -844,10 +849,10 @@ export class FinanceRequestsService {
           : 'This request has already been decided.');
     }
     if (!canDecide(p, shape)) {
-      throw new ForbiddenException(
-        row.requester_id === p.id
-          ? 'You cannot decide your own request.'
-          : 'This request is not waiting for you.');
+      /* Own-request is no longer a reason on its own — the step's own
+         authority may take it, or it would strand. What is left is simply
+         not holding the step. */
+      throw new ForbiddenException('This request is not waiting for you.');
     }
     if (decision === 'REJECTED' && !reason?.trim()) {
       throw new BadRequestException('Say why it is being rejected.');
