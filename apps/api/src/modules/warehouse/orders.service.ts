@@ -63,10 +63,11 @@ export class WarehouseOrdersService {
    * cached: a cached number is a number two people can both be given, and
    * the whole point of issuing it here is that they cannot.
    */
-  async nextPatch(): Promise<string> {
+  async nextPatch(kind = 'NEW ORDER'): Promise<string> {
     const rows = await this.sheet.read(TX_TAB);
     let highest = 0;
     let width = 0;
+    const want = kind.trim().toLowerCase();
 
     for (let i = 1; i < rows.length; i++) {
       const patch = String(rows[i]?.[TX.patch] ?? '').trim();
@@ -74,6 +75,22 @@ export class WarehouseOrdersService {
          a different sequence. */
       const m = patch.match(/^(\d+)$/);
       if (!m) continue;
+
+      /*
+       * And only this kind of transaction.
+       *
+       * The Apps Script keeps a sequence per kind — `nextPatch_(c, kind)`
+       * takes the highest number whose patch has been used by that kind and
+       * adds one. Taking the highest in the whole column instead handed a
+       * New Order the number a Transfer or a Return had just used, so two
+       * unrelated movements shared a patch and neither could be traced from
+       * it. Receiving and Quality Check are separate again: they carry
+       * `R.O …` and `Q.C …`, which the plain-number test already excludes.
+       */
+      if (String(rows[i]?.[TX.kind] ?? '').trim().toLowerCase() !== want) {
+        continue;
+      }
+
       const n = Number(m[1]);
       if (Number.isFinite(n) && n > highest) {
         highest = n;
