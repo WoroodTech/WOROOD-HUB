@@ -7,7 +7,7 @@
  * second set that looked almost the same would drift apart the first time
  * either was touched.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type {
@@ -55,6 +55,8 @@ export function WarehouseDashboard() {
   /* Which warehouse the location chart is showing. Null means none is
      chosen, and that chart is simply absent rather than empty. */
   const [focus, setFocus] = useState<string | null>(null);
+  /* Which headline count the reader has opened, if any. */
+  const [band, setBand] = useState<'low' | 'out' | null>(null);
   const [showNegative, setShowNegative] = useState(false);
 
   const tiles = useQuery({
@@ -86,6 +88,7 @@ export function WarehouseDashboard() {
   return (
     <div className="page">
       <SheetStatusBanner />
+      {band ? <StockBandDialog band={band} onClose={() => setBand(null)} /> : null}
       <header className="pagehead">
         <div>
           <h1 className="pagehead__title">Warehouse</h1>
@@ -109,24 +112,29 @@ export function WarehouseDashboard() {
         </div>
 
         <div className="grid__cell" style={{ '--span': 3 } as any}>
-          <div className="tile"><div className="kpi">
-            <div className="kpi__top"><p className="kpi__label">Running low</p></div>
-            <p className="kpi__value">{t.low.toLocaleString()}</p>
-            {/* The threshold is on the tile rather than in the code: "47
-                running low" means nothing without it. */}
-            <p className="kpi__sub">at {t.lowAt} pieces or fewer · sellable</p>
-          </div>
+          {/* A count is a question — which 47? — so the tile answers it. */}
+          <div className="tile">
+            <button type="button" className="kpi kpi--pick"
+                    onClick={() => setBand('low')}>
+              <div className="kpi__top"><p className="kpi__label">Running low</p></div>
+              <p className="kpi__value">{t.low.toLocaleString()}</p>
+              {/* The threshold is on the tile rather than in the code: "47
+                  running low" means nothing without it. */}
+              <p className="kpi__sub">at {t.lowAt} pieces or fewer · sellable</p>
+            </button>
           </div>
         </div>
 
         <div className="grid__cell" style={{ '--span': 3 } as any}>
-          <div className="tile"><div className="kpi">
-            <div className="kpi__top"><p className="kpi__label">Out of stock</p></div>
-            <p className="kpi__value">{t.outOfStock.toLocaleString()}</p>
-            {/* Sellable places only. A piece in the workshop was never
-                sellable, so counting it here would make the number lie. */}
-            <p className="kpi__sub">items in WH-02 · Local and Global</p>
-          </div>
+          <div className="tile">
+            <button type="button" className="kpi kpi--pick"
+                    onClick={() => setBand('out')}>
+              <div className="kpi__top"><p className="kpi__label">Out of stock</p></div>
+              <p className="kpi__value">{t.outOfStock.toLocaleString()}</p>
+              {/* Sellable places only. A piece in the workshop was never
+                  sellable, so counting it here would make the number lie. */}
+              <p className="kpi__sub">items in WH-02 · Local and Global</p>
+            </button>
           </div>
         </div>
 
@@ -320,5 +328,112 @@ function SheetStatusBanner() {
           to reach the sheet.</>
       )}
     </p>
+  );
+}
+
+/* -------------------------------------------------- items behind a count -- */
+
+interface BandRow {
+  item: string;
+  balance: number;
+  places: { where: string; qty: number }[];
+}
+
+/**
+ * The items making up "running low" or "out of stock".
+ *
+ * Counted on the server from the same map the tile is counted from, so this
+ * list and that number cannot disagree — which is exactly what writing the
+ * rule twice would eventually cause.
+ *
+ * Each row carries where the pieces actually sit, because "Sira: 4" is a
+ * different problem from "Sira: 4, all of them in WH-05".
+ */
+function StockBandDialog({ band, onClose }: {
+  band: 'low' | 'out';
+  onClose: () => void;
+}) {
+  const [q, setQ] = useState('');
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const data = useQuery({
+    queryKey: ['warehouse', 'behind', band],
+    queryFn: () => api<{ band: string; lowAt: number; total: number; rows: BandRow[] }>(
+      `/warehouse/stock/behind?band=${band}`),
+  });
+
+  const title = band === 'out' ? 'Out of stock' : 'Running low';
+  const needle = q.trim().toLowerCase();
+  const rows = (data.data?.rows ?? []).filter(
+    (r) => !needle || r.item.toLowerCase().includes(needle));
+
+  return (
+    <div className="modal" role="dialog" aria-modal="true" aria-label={title}>
+      <button type="button" className="modal__scrim" aria-label="Close"
+              onClick={onClose} />
+      <div className="modal__panel">
+        <div className="confirm__body">
+          <h2 className="confirm__title">
+            {title}
+            {data.data ? <span className="muted"> · {data.data.total} items</span> : null}
+          </h2>
+          <p className="confirm__text muted">
+            {band === 'out'
+              ? 'Nothing sellable left in WH-02, Local or Global.'
+              : `At ${data.data?.lowAt ?? 20} sellable pieces or fewer.`}
+          </p>
+
+          <label className="field">
+            <span className="field__label">Search</span>
+            <input className="input" value={q} autoFocus
+                   placeholder="Item name…"
+                   onChange={(e) => setQ(e.target.value)} />
+          </label>
+
+          {data.isLoading ? <LoadingState label="Counting" />
+           : data.isError ? <ErrorState error={data.error} compact />
+           : !rows.length ? (
+             <p className="muted">
+               {needle ? 'Nothing matches that.' : 'Nothing in this band.'}
+             </p>
+           ) : (
+            <div className="tablewrap tablewrap--scroll">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th scope="col">Item</th>
+                    <th scope="col" className="is-end">Sellable</th>
+                    <th scope="col">Where the pieces are</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.item}>
+                      <td>{r.item}</td>
+                      <td className="is-end mono">{r.balance}</td>
+                      <td className="muted">
+                        {r.places.length
+                          ? r.places.map((p) => `${p.where}: ${p.qty}`).join(' · ')
+                          : 'nowhere'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+        <div className="confirm__actions">
+          <button type="button" className="btn btn--ghost" onClick={onClose}>
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

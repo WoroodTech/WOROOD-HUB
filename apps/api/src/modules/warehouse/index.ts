@@ -216,6 +216,13 @@ export class WarehouseController {
    *
    * Reported so the page can say it rather than leaving it to be discovered.
    */
+  /** Which items make up the "running low" or "out of stock" tile. */
+  @Get('stock/behind')
+  @Permissions(WAREHOUSE_PERMISSIONS.STOCK_VIEW)
+  itemsBehind(@Query('band') band?: string) {
+    return this.dashboard.itemsBehind(band === 'out' ? 'out' : 'low');
+  }
+
   @Get('sheet-status')
   @Permissions(WAREHOUSE_PERMISSIONS.VIEW)
   async sheetStatus() {
@@ -534,6 +541,13 @@ export class WarehouseController {
   /* ------------------------------------------------------- insights -- */
 
   /** Each warehouse broken down by what is inside it, with shares. */
+  /** Everything inside one warehouse, with each item's balance elsewhere. */
+  @Get('dashboard/warehouses/:code')
+  @Permissions(WAREHOUSE_PERMISSIONS.STOCK_VIEW)
+  warehouseInventory(@Param('code') code: string) {
+    return this.insights.warehouseInventory(code);
+  }
+
   @Get('dashboard/warehouses')
   @Permissions(WAREHOUSE_PERMISSIONS.STOCK_VIEW)
   warehouseDetail() { return this.insights.warehouseDetail(); }

@@ -6,7 +6,7 @@
  * The thresholds and definitions are the Apps Script's, so a number somebody
  * already reads keeps meaning what it meant.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { CategoryPayload, WarehouseItem } from '../contract';
 import { api } from '../lib/api';
@@ -27,6 +27,9 @@ interface WarehouseDetail {
 }
 
 export function WarehouseBreakdown() {
+  /* Which warehouse the reader has opened, if any. */
+  const [open, setOpen] = useState<string | null>(null);
+
   const detail = useQuery({
     queryKey: ['wh', 'warehouse-detail'],
     queryFn: () => api<WarehouseDetail[]>('/warehouse/dashboard/warehouses'),
@@ -41,9 +44,12 @@ export function WarehouseBreakdown() {
   return (
     <Card title="Your warehouses"
           subtitle="What is inside each one, and how it is split.">
-      <div className="whgrid">
+      <div className="whgrid whgrid--wide">
         {(detail.data ?? []).map((w) => (
-          <div className="whbox" key={w.code}>
+          /* A button, because the question a total raises is what is inside
+             it — and the answer was two screens away. */
+          <button type="button" className="whbox whbox--pick" key={w.code}
+                  onClick={() => setOpen(w.code)}>
             <div className="whbox__head">
               <span className="whbox__code mono">{w.code}</span>
               <span className="whbox__purpose">{w.purpose}</span>
@@ -69,10 +75,117 @@ export function WarehouseBreakdown() {
             ) : (
               <p className="whbox__none">no locations inside</p>
             )}
-          </div>
+          </button>
         ))}
       </div>
+
+      {open ? (
+        <WarehouseInventoryDialog code={open} onClose={() => setOpen(null)} />
+      ) : null}
     </Card>
+  );
+}
+
+interface InventoryRow {
+  item: string;
+  total: number;
+  locations: { label: string; pieces: number }[];
+  elsewhere: { warehouse: string; pieces: number }[];
+}
+
+/**
+ * What is inside one warehouse, searchable.
+ *
+ * Each row also shows the same item in every other warehouse, because the
+ * question after "how many Sira in WH-02" is almost always "and where is the
+ * rest" — and answering that from another screen means carrying the first
+ * number in your head while you go and look.
+ */
+function WarehouseInventoryDialog({ code, onClose }: {
+  code: string;
+  onClose: () => void;
+}) {
+  const [q, setQ] = useState('');
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const data = useQuery({
+    queryKey: ['wh', 'warehouse-inventory', code],
+    queryFn: () => api<{
+      warehouse: string; items: number; total: number; rows: InventoryRow[];
+    }>(`/warehouse/dashboard/warehouses/${encodeURIComponent(code)}`),
+  });
+
+  const needle = q.trim().toLowerCase();
+  const rows = (data.data?.rows ?? []).filter(
+    (r) => !needle || r.item.toLowerCase().includes(needle));
+
+  return (
+    <div className="modal" role="dialog" aria-modal="true" aria-label={`Inside ${code}`}>
+      <button type="button" className="modal__scrim" aria-label="Close" onClick={onClose} />
+      <div className="modal__panel">
+        <div className="confirm__body">
+          <h2 className="confirm__title">
+            Inside {code}
+            {data.data ? (
+              <span className="muted">
+                {' '}· {data.data.items} items · {data.data.total.toLocaleString()} pieces
+              </span>
+            ) : null}
+          </h2>
+
+          <label className="field">
+            <span className="field__label">Search</span>
+            <input className="input" value={q} autoFocus placeholder="Item name…"
+                   onChange={(e) => setQ(e.target.value)} />
+          </label>
+
+          {data.isLoading ? <LoadingState label="Reading the warehouse" />
+           : data.isError ? <ErrorState error={data.error} compact />
+           : !rows.length ? (
+             <p className="muted">
+               {needle ? 'Nothing matches that.' : 'Nothing inside.'}
+             </p>
+           ) : (
+            <div className="tablewrap tablewrap--scroll">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th scope="col">Item</th>
+                    <th scope="col" className="is-end">Here</th>
+                    <th scope="col">Split</th>
+                    <th scope="col">Elsewhere</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.item}>
+                      <td>{r.item}</td>
+                      <td className="is-end mono">{r.total.toLocaleString()}</td>
+                      <td className="muted">
+                        {r.locations.map((l) => `${l.label}: ${l.pieces}`).join(' · ')}
+                      </td>
+                      <td className="muted">
+                        {r.elsewhere.length
+                          ? r.elsewhere.map((e) => `${e.warehouse}: ${e.pieces}`).join(' · ')
+                          : 'nowhere else'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+        <div className="confirm__actions">
+          <button type="button" className="btn btn--ghost" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>
   );
 }
 
