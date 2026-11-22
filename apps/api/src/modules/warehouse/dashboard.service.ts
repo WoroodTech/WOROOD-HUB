@@ -14,6 +14,7 @@ import { DateTime } from 'luxon';
 import { WarehouseReaderService } from './sheets/warehouse-reader.service';
 import { counts, WAREHOUSE_PURPOSE } from './sheets/tabs';
 import { parseSheetDate } from './sheets/parse-date';
+import { SELLABLE } from './sheets/tabs';
 
 const TZ = 'Africa/Cairo';
 
@@ -33,11 +34,6 @@ const LOW_AT = 20;
  * the workshop or with quality. Counting those as out of stock makes the
  * number meaningless: a piece in WH-04 awaiting revision was never sellable.
  */
-const SELLABLE: Array<{ warehouse: string; location: string }> = [
-  { warehouse: 'WH-02', location: 'Local' },
-  { warehouse: 'WH-02', location: 'Global' },
-];
-
 @Injectable()
 export class WarehouseDashboardService {
   constructor(private readonly reader: WarehouseReaderService) {}

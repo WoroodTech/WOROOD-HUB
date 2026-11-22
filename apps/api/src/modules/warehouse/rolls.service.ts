@@ -20,6 +20,7 @@ import { Principal } from '../../common/auth';
 import { AuditService } from '../../core/core.module';
 import { WarehouseSheetClient } from './sheets/warehouse-sheet.client';
 import { WarehouseReaderService } from './sheets/warehouse-reader.service';
+import { sheetDate } from './sheets/parse-date';
 import {
   ROLL_NEXT, ROLL_STATUS, RollStatus,
   ROLLS_BATCHES, ROLLS_BATCHES_TAB,
@@ -233,7 +234,7 @@ export class WarehouseRollsService {
     row[ROLLS_REGISTER.rollName] = WarehouseSheetClient.safe(dto.rollName ?? '');
     row[ROLLS_REGISTER.ctn] = WarehouseSheetClient.safe(dto.ctn ?? '');
     row[ROLLS_REGISTER.meters] = meters;
-    row[ROLLS_REGISTER.received] = serial(DateTime.now().setZone(TZ));
+    row[ROLLS_REGISTER.received] = sheetDate(DateTime.now().setZone(TZ));
     row[ROLLS_REGISTER.receivedBy] = WarehouseSheetClient.safe(who(p));
     row[ROLLS_REGISTER.status] = 'Received';
     row[ROLLS_REGISTER.note] = WarehouseSheetClient.safe(dto.note ?? '');
@@ -262,7 +263,7 @@ export class WarehouseRollsService {
     const at = roll.rowNumber;
     await this.sheet.write(ROLLS_REGISTER_TAB, `I${at}:K${at}`, [[
       WarehouseSheetClient.safe(dto.priority ?? ''),
-      dto.plannedDate ? serial(DateTime.fromISO(dto.plannedDate, { zone: TZ })) : '',
+      dto.plannedDate ? sheetDate(DateTime.fromISO(dto.plannedDate, { zone: TZ })) : '',
       WarehouseSheetClient.safe(dto.note ?? ''),
     ]]);
     await this.setStatus(roll, 'Planned');
@@ -313,7 +314,7 @@ export class WarehouseRollsService {
 
     const row = new Array(ROLLS_WORKSHOP.flag + 1).fill('');
     row[ROLLS_WORKSHOP.operationOrder] = WarehouseSheetClient.safe(oo);
-    row[ROLLS_WORKSHOP.issued] = serial(DateTime.now().setZone(TZ));
+    row[ROLLS_WORKSHOP.issued] = sheetDate(DateTime.now().setZone(TZ));
     row[ROLLS_WORKSHOP.issuedBy] = WarehouseSheetClient.safe(who(p));
     row[ROLLS_WORKSHOP.rolls] = chosen.length;
     row[ROLLS_WORKSHOP.meters] = chosen.reduce((n, r) => n + r.meters, 0);
@@ -330,7 +331,7 @@ export class WarehouseRollsService {
     for (const roll of chosen) {
       await this.sheet.write(
         ROLLS_REGISTER_TAB, `L${roll.rowNumber}:N${roll.rowNumber}`,
-        [[WarehouseSheetClient.safe(oo), serial(DateTime.now().setZone(TZ)), expected]]);
+        [[WarehouseSheetClient.safe(oo), sheetDate(DateTime.now().setZone(TZ)), expected]]);
       await this.setStatus(roll, 'Issued');
     }
 
@@ -390,7 +391,7 @@ export class WarehouseRollsService {
     const row = new Array(ROLLS_BATCHES.fullyDelivered + 1).fill('');
     row[ROLLS_BATCHES.operationOrder] = WarehouseSheetClient.safe(job.operationOrder);
     row[ROLLS_BATCHES.batch] = batch;
-    row[ROLLS_BATCHES.reportedAt] = serial(DateTime.now().setZone(TZ));
+    row[ROLLS_BATCHES.reportedAt] = sheetDate(DateTime.now().setZone(TZ));
     row[ROLLS_BATCHES.reportedBy] = WarehouseSheetClient.safe(who(p));
     row[ROLLS_BATCHES.workshopTotal] = total;
     row[ROLLS_BATCHES.workshopA] = a;
@@ -442,7 +443,7 @@ export class WarehouseRollsService {
 
     const at = row.rowNumber;
     await this.sheet.write(ROLLS_BATCHES_TAB, `K${at}:P${at}`, [[
-      serial(DateTime.now().setZone(TZ)),
+      sheetDate(DateTime.now().setZone(TZ)),
       WarehouseSheetClient.safe(who(p)),
       a, b, c,
       WarehouseSheetClient.safe(dto.note ?? ''),
@@ -499,7 +500,7 @@ export class WarehouseRollsService {
     const at = job.rowNumber;
 
     await this.sheet.write(ROLLS_WORKSHOP_TAB, `L${at}:P${at}`, [[
-      serial(DateTime.now().setZone(TZ)),
+      sheetDate(DateTime.now().setZone(TZ)),
       WarehouseSheetClient.safe(who(p)),
       /* Variance against what was expected when the fabric went out — the
          one number that says whether the order went well. */
@@ -569,11 +570,6 @@ export class WarehouseRollsService {
   }
 }
 
-/** A sheet date: days since 30 December 1899. */
-function serial(d: DateTime): number {
-  return Math.round(
-    d.startOf('day').diff(DateTime.fromISO('1899-12-30', { zone: TZ }), 'days').days);
-}
 
 function who(p: Principal): string {
   return p.fullName ?? p.email ?? '';

@@ -20,6 +20,7 @@ import { DateTime } from 'luxon';
 import { Principal } from '../../common/auth';
 import { AuditService } from '../../core/core.module';
 import { WarehouseSheetClient } from './sheets/warehouse-sheet.client';
+import { sheetDate } from './sheets/parse-date';
 import {
   BATCH_COMMENTS, BATCH_COMMENTS_TAB,
   PATCH_LOG, PATCH_LOG_TAB,
@@ -140,7 +141,7 @@ export class WarehouseReturnsService {
       + String(Math.floor(Math.random() * 10000)).padStart(4, '0');
 
     const row = new Array(RETURN_ISSUES.rows + 1).fill('');
-    row[RETURN_ISSUES.loggedAt] = serial(now);
+    row[RETURN_ISSUES.loggedAt] = sheetDate(now);
     row[RETURN_ISSUES.issueId] = id;
     row[RETURN_ISSUES.order] = WarehouseSheetClient.safe(order);
     row[RETURN_ISSUES.orderType] = WarehouseSheetClient.safe(dto.orderType ?? '');
@@ -216,7 +217,7 @@ export class WarehouseReturnsService {
       dto.status === 'Resolved' ? 'Resolved' : 'Open',
       WarehouseSheetClient.safe(comment || issue.comment),
       WarehouseSheetClient.safe(p.fullName ?? p.email ?? ''),
-      serial(DateTime.now().setZone(TZ)),
+      sheetDate(DateTime.now().setZone(TZ)),
     ]]);
 
     await this.audit.write({
@@ -295,7 +296,7 @@ export class WarehouseReturnsService {
 
     const row = new Array(BATCH_COMMENTS.comment + 1).fill('');
     row[BATCH_COMMENTS.patch] = WarehouseSheetClient.safe(name);
-    row[BATCH_COMMENTS.at] = serial(DateTime.now().setZone(TZ));
+    row[BATCH_COMMENTS.at] = sheetDate(DateTime.now().setZone(TZ));
     row[BATCH_COMMENTS.byEmail] = WarehouseSheetClient.safe(p.email ?? '');
     row[BATCH_COMMENTS.by] = WarehouseSheetClient.safe(p.fullName ?? '');
     row[BATCH_COMMENTS.comment] = WarehouseSheetClient.safe(body);
@@ -329,7 +330,7 @@ export class WarehouseReturnsService {
     await this.sheet.write(PATCH_LOG_TAB, `I${at}:K${at}`, [[
       status,
       status === 'Closed' ? WarehouseSheetClient.safe(p.fullName ?? p.email ?? '') : '',
-      status === 'Closed' ? serial(DateTime.now().setZone(TZ)) : '',
+      status === 'Closed' ? sheetDate(DateTime.now().setZone(TZ)) : '',
     ]]);
 
     await this.audit.write({
@@ -353,10 +354,6 @@ export class WarehouseReturnsService {
   }
 }
 
-function serial(d: DateTime): number {
-  return Math.round(
-    d.startOf('day').diff(DateTime.fromISO('1899-12-30', { zone: TZ }), 'days').days);
-}
 
 function num(v: unknown): number {
   if (v === null || v === undefined || v === '') return 0;

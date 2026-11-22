@@ -17,6 +17,7 @@ import { Card } from '../components/Card';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import { SeriesChart } from '../charts/SeriesChart';
 import { CategoryChart } from '../charts/CategoryChart';
+import { Icon } from '../components/Icon';
 
 interface Preset { key: string; label: string; from: string; to: string }
 
@@ -39,6 +40,27 @@ interface Report {
   mostReturned: {
     item: string; quantity: number; returned: number; returnRate: number;
   }[];
+  /** Pieces a day, with what that leaves on the shelf. */
+  fastMovers: {
+    item: string; quantity: number; perDay: number;
+    stock: number; daysOfCover: number | null; forecast30: number;
+  }[];
+  /** Ranked by how little cover is left, not by how fast it sells. */
+  actNow: {
+    item: string; perDay: number; stock: number;
+    daysOfCover: number | null; forecast30: number;
+    needed30: number; priority: 'now' | 'soon' | 'watch';
+  }[];
+  /** On the shelf, nothing sold in the range. */
+  slowMovers: { item: string; stock: number }[];
+  demandForecast: {
+    item: string; forecast30: number; stock: number; shortfall: number;
+  }[];
+  movementByWarehouse: {
+    warehouse: string; in: number; out: number; net: number;
+  }[];
+  /** WH-02's two shelves, the stock anything can be promised from. */
+  sellableStock: number;
   trendWeeks: number;
 }
 
@@ -78,12 +100,6 @@ export function WarehouseReports() {
             What sold, from where, and what came back — over any two dates.
           </p>
         </div>
-        {r ? (
-          <button type="button" className="notebtn no-print"
-                  onClick={() => window.print()}>
-            Print / Save as PDF
-          </button>
-        ) : null}
       </header>
 
       <div className="no-print">
@@ -115,6 +131,31 @@ export function WarehouseReports() {
                      })} />
             </label>
           </div>
+
+          {/*
+            * Under the filters, because that is what they act on.
+            *
+            * The browser's own print is both buttons: Print sends it to the
+            * printer and the same dialogue saves it as a PDF. A second route
+            * to a PDF would be a second renderer to keep in step with this
+            * page, and it would drift.
+            *
+            * Whatever is on screen is what comes out — the range chosen
+            * above, the tables below it — because print hides the controls
+            * rather than rebuilding the report.
+            */}
+          {r ? (
+            <div className="formrow--actions" style={{ marginBlockStart: 12 }}>
+              <button type="button" className="btn btn--ghost btn--sm"
+                      onClick={() => window.print()}>
+                <Icon name="download" size={14} /> Export PDF
+              </button>
+              <button type="button" className="btn btn--primary btn--sm"
+                      onClick={() => window.print()}>
+                Print
+              </button>
+            </div>
+          ) : null}
         </Card>
       </div>
 
@@ -138,6 +179,12 @@ export function WarehouseReports() {
                ['Orders', r.totals.orders.toLocaleString()],
                ['A day', String(r.totals.perDay)],
                ['Returned', `${r.totals.returned} · ${r.totals.returnRate}%`],
+               /* What actually left, once returns are taken off — the
+                  figure the other four get mistaken for. */
+               ['Net sold', (r.totals.units - r.totals.returned).toLocaleString()],
+               /* WH-02's two shelves: what can be promised to a customer
+                  today, which is not the same as what the company holds. */
+               ['Sellable stock', r.sellableStock.toLocaleString()],
              ] as const).map(([label, value]) => (
                <div className="grid__cell" key={label} style={{ '--span': 3 } as any}>
                  <div className="tile"><div className="kpi">
@@ -160,6 +207,166 @@ export function WarehouseReports() {
                <CategoryChart payload={r.byCollection} height={240} />
              </Card>
            </div>
+
+           {/* What to do something about, before anything else on the page:
+               it is the only panel here that is a decision rather than a
+               description. */}
+           {r.actNow.length ? (
+             <Card title="Act now"
+                   subtitle="Least cover first. Needed is the shortfall against the next 30 days.">
+               <div className="tablewrap">
+                 <table className="table">
+                   <thead>
+                     <tr>
+                       <th scope="col">Item</th>
+                       <th scope="col">Priority</th>
+                       <th scope="col" className="is-end">A day</th>
+                       <th scope="col" className="is-end">Stock</th>
+                       <th scope="col" className="is-end">Days of cover</th>
+                       <th scope="col" className="is-end">Needed · 30d</th>
+                     </tr>
+                   </thead>
+                   <tbody>
+                     {r.actNow.map((x) => (
+                       <tr key={x.item}>
+                         <td>{x.item}</td>
+                         <td>
+                           <span className={`idtag idtag--${
+                             x.priority === 'now' ? 'danger'
+                             : x.priority === 'soon' ? 'warn' : 'info'}`}>
+                             {x.priority === 'now' ? 'Now'
+                              : x.priority === 'soon' ? 'Soon' : 'Watch'}
+                           </span>
+                         </td>
+                         <td className="is-end mono">{x.perDay}</td>
+                         <td className="is-end mono">{x.stock}</td>
+                         <td className="is-end mono">
+                           {x.daysOfCover === null ? '—' : x.daysOfCover}
+                         </td>
+                         <td className="is-end mono">
+                           {x.needed30 > 0 ? <strong>{x.needed30}</strong> : '—'}
+                         </td>
+                       </tr>
+                     ))}
+                   </tbody>
+                 </table>
+               </div>
+             </Card>
+           ) : null}
+
+           <div className="panes">
+             {r.fastMovers.length ? (
+               <Card title="Fast movers"
+                     subtitle="By pieces a day, not by total — a rate says what is moving now.">
+                 <div className="tablewrap tablewrap--scroll">
+                   <table className="table">
+                     <thead>
+                       <tr>
+                         <th scope="col">Item</th>
+                         <th scope="col" className="is-end">A day</th>
+                         <th scope="col" className="is-end">Days left</th>
+                       </tr>
+                     </thead>
+                     <tbody>
+                       {r.fastMovers.map((x) => (
+                         <tr key={x.item}>
+                           <td>{x.item}</td>
+                           <td className="is-end mono">{x.perDay}</td>
+                           <td className="is-end mono">
+                             {x.daysOfCover === null ? '—' : x.daysOfCover}
+                           </td>
+                         </tr>
+                       ))}
+                     </tbody>
+                   </table>
+                 </div>
+               </Card>
+             ) : null}
+
+             {r.slowMovers.length ? (
+               <Card title="Slow movers"
+                     subtitle="On the shelf, nothing sold in this range.">
+                 <div className="tablewrap tablewrap--scroll">
+                   <table className="table">
+                     <thead>
+                       <tr>
+                         <th scope="col">Item</th>
+                         <th scope="col" className="is-end">Stock</th>
+                       </tr>
+                     </thead>
+                     <tbody>
+                       {r.slowMovers.map((x) => (
+                         <tr key={x.item}>
+                           <td>{x.item}</td>
+                           <td className="is-end mono">{x.stock}</td>
+                         </tr>
+                       ))}
+                     </tbody>
+                   </table>
+                 </div>
+               </Card>
+             ) : null}
+           </div>
+
+           {r.demandForecast.length ? (
+             <Card title={`Demand · next 30 days`}
+                   subtitle={`From the ${r.trendWeeks} weeks behind today, averaged — one quiet week does not halve it.`}>
+               <div className="tablewrap tablewrap--scroll">
+                 <table className="table">
+                   <thead>
+                     <tr>
+                       <th scope="col">Item</th>
+                       <th scope="col" className="is-end">Forecast</th>
+                       <th scope="col" className="is-end">Stock</th>
+                       <th scope="col" className="is-end">Short by</th>
+                     </tr>
+                   </thead>
+                   <tbody>
+                     {r.demandForecast.map((x) => (
+                       <tr key={x.item}>
+                         <td>{x.item}</td>
+                         <td className="is-end mono">{x.forecast30}</td>
+                         <td className="is-end mono">{x.stock}</td>
+                         <td className="is-end mono">
+                           {x.shortfall > 0 ? <strong>{x.shortfall}</strong> : '—'}
+                         </td>
+                       </tr>
+                     ))}
+                   </tbody>
+                 </table>
+               </div>
+             </Card>
+           ) : null}
+
+           {r.movementByWarehouse.length ? (
+             <Card title="Movement per warehouse">
+               <div className="tablewrap">
+                 <table className="table">
+                   <thead>
+                     <tr>
+                       <th scope="col">Warehouse</th>
+                       <th scope="col" className="is-end">In</th>
+                       <th scope="col" className="is-end">Out</th>
+                       <th scope="col" className="is-end">Net</th>
+                     </tr>
+                   </thead>
+                   <tbody>
+                     {r.movementByWarehouse.map((x) => (
+                       <tr key={x.warehouse}>
+                         <td className="mono">{x.warehouse}</td>
+                         <td className="is-end mono">{x.in.toLocaleString()}</td>
+                         <td className="is-end mono">{x.out.toLocaleString()}</td>
+                         <td className="is-end mono">
+                           {/* Signed, because the direction is the point. */}
+                           {x.net > 0 ? `+${x.net.toLocaleString()}` : x.net.toLocaleString()}
+                         </td>
+                       </tr>
+                     ))}
+                   </tbody>
+                 </table>
+               </div>
+             </Card>
+           ) : null}
 
            <Card title="Top sellers"
                  subtitle={`With the last ${r.trendWeeks} weeks beside each.`}>

@@ -95,6 +95,20 @@ export const ITEMS_SHAPE: Record<string, number> = {
   'Group': ITEMS.group,
 };
 
+/**
+ * Where a piece has to be for the business to be able to sell it.
+ *
+ * WH-02's two shelves and nothing else: a piece in the workshop or with
+ * quality is real stock but not stock anybody can promise a customer. Kept
+ * here rather than in one service because the dashboard's tiles, the running
+ * low list and the reports all have to agree about it — they each held their
+ * own copy before, which is how a count and the list behind it could differ.
+ */
+export const SELLABLE: Array<{ warehouse: string; location: string }> = [
+  { warehouse: 'WH-02', location: 'Local' },
+  { warehouse: 'WH-02', location: 'Global' },
+];
+
 /** The three coding tables an item's code is built from. */
 export const KEYS_TAB = 'Keys';
 export const KEYS = {
@@ -334,6 +348,18 @@ export const WAREHOUSE_PURPOSE: Record<string, string> = {
 
 /** Where a receiving lands, always. */
 export const RECEIVING_WAREHOUSE = 'WH-01';
+
+/**
+ * Where a return may go.
+ *
+ * The Apps Script's rule: "A return goes to WH-02 or WH-05 only". WH-02 is
+ * the shelf it goes back on sale from, WH-05 is where it waits to be looked
+ * at. A return into the workshop or into receiving is stock nobody counts.
+ */
+export const RETURN_WAREHOUSES = ['WH-02', 'WH-05'];
+
+/** Inside WH-05, a return always lands here — the Apps Script fixes it. */
+export const RETURN_LOCATION = 'Return Check';
 
 export const WAREHOUSE_LOCATIONS: Record<string, string[]> = {
   'WH-01': [],
