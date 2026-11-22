@@ -39,6 +39,36 @@ export class WarehouseSheetClient {
     'Creating New Item': 2,
   };
 
+  /**
+   * Which column says whether a row holds real data.
+   *
+   * It has to be one a person fills in, never one the sheet computes: both
+   * these tabs carry formulas copied thousands of rows past their last
+   * entry, and probing one of those would report the bottom of the prepared
+   * block as the end of the data.
+   *
+   * The ledger's A is its date — the same column the Apps Script walks up,
+   * with the comment "rows below are pre-filled formulas". The catalogue's B
+   * is Colour: A there is `=H{row}` and is filled all the way down.
+   */
+  private static readonly PROBE_COLUMN: Record<string, string> = {
+    'Scarves Inventory': 'A',
+    'Creating New Item': 'B',
+  };
+
+  /**
+   * The first column a written row actually starts at.
+   *
+   * The catalogue's A is `=H{row}`, one of the formulas that computes the
+   * item's code, name and group from the three typed cells. A row written
+   * from A would put a blank into it and leave that item with no code at
+   * all, so the write starts at B and the formulas either side are left
+   * alone. The ledger is written from A as before.
+   */
+  private static readonly WRITE_FROM: Record<string, string> = {
+    'Creating New Item': 'B',
+  };
+
   get mode(): 'off' | 'dry' | 'live' { return config.warehouseSheets.mode; }
 
   get configured(): boolean {
@@ -159,50 +189,69 @@ export class WarehouseSheetClient {
     }
 
     /*
-     * Anchored below the header, not at the tab.
+     * Written onto the first free row, not appended to the tab.
      *
-     * Given a bare tab name the API finds "the table" itself, starting at
-     * row 1. `Creating New Item` has a blank row 1 and its header on row 2,
-     * so the API decides the table is the empty first row and the append
-     * lands nowhere useful — which is why new items were never appearing
-     * while every other tab was fine.
+     * `values.append` asks the API to find the end of "the table", and the
+     * API counts a cell holding a formula as filled. Both of these tabs are
+     * prepared far below their real data — the ledger's balance column is
+     * copied down to about row 61,000 and the catalogue's coding columns to
+     * about row 3,500 — so the end of the table is tens of thousands of rows
+     * past the last real entry. Receiving wrote at row 61,023 with nothing
+     * between it and row 36,000, and every new item landed on row 3 and
+     * overwrote the one already there.
+     *
+     * The Apps Script never had this problem because it does not ask: it
+     * walks up column A for the last row carrying a date, with the comment
+     * "rows below are pre-filled formulas". This is that, generalised to a
+     * probe column per tab.
      */
-    const from = this.headerRow(tab) + 1;
+    const at = (await this.lastDataRow(tab)) + 1;
+    const from = WarehouseSheetClient.WRITE_FROM[tab] ?? 'A';
 
-    /*
-     * Filled into the template, not inserted through it.
-     *
-     * `Creating New Item` is a prepared block: its A, E–J columns carry
-     * formulas down to about row 210, and the Item Name validation the rest
-     * of the workbook reads is the fixed range I3:I220. INSERT_ROWS pushes a
-     * new row *into* that block, which shifts the formulas out from under
-     * the ranges pointing at them — and the API answers a bare "Internal
-     * error encountered", which is what every new item died on.
-     *
-     * OVERWRITE puts the values on the first empty row inside the block
-     * instead, so the formulas beside them compute the code, the description
-     * and the group exactly as they do for every item already there.
-     *
-     * The ledger is the opposite case: it is an open-ended log with nothing
-     * below it to disturb, so it keeps INSERT_ROWS and grows as it always
-     * has.
-     */
-    const prepared = tab === ITEMS_TAB;
+    /* Trimmed to match where the write starts, so column B's value does not
+       land in C. The caller builds the row by its own column indexes, which
+       are counted from A. */
+    const skip = from.charCodeAt(0) - 65;
+    const values = skip ? row.slice(skip) : row;
 
-    const res = await this.client().spreadsheets.values.append({
+    await this.client().spreadsheets.values.update({
       spreadsheetId: this.id,
-      range: `${tab}!A${from}`,
+      range: `${tab}!${from}${at}`,
       valueInputOption: 'RAW',
-      insertDataOption: prepared ? 'OVERWRITE' : 'INSERT_ROWS',
-      requestBody: { values: [row] },
+      requestBody: { values: [values] },
     });
 
-    /* "'Scarves Inventory'!A4521:Z4521" — the row it landed on, so a ledger
-       entry here can be traced to a line in the sheet. */
-    const updated = res.data.updates?.updatedRange ?? '';
-    const m = updated.match(/![A-Z]+(\d+)/);
-    return { tab, rowNumber: m ? Number(m[1]) : 0 };
+    return { tab, rowNumber: at };
   }
+
+  /**
+   * The last row of this tab carrying real data, ignoring the formulas
+   * pre-filled beneath it.
+   *
+   * Probed on the column that is typed rather than computed: the ledger's
+   * date, the catalogue's colour. A formula column would answer with the
+   * bottom of the prepared block, which is the whole problem.
+   */
+  private async lastDataRow(tab: string): Promise<number> {
+    const probe = WarehouseSheetClient.PROBE_COLUMN[tab] ?? 'A';
+    const header = this.headerRow(tab);
+
+    const col = await this.read(tab, `${probe}${header}:${probe}`);
+
+    /* Walk up from the bottom: the first row with something in it wins. The
+       read returns evaluated values, so a formula producing "" reads as
+       empty here and is skipped, which is exactly what is wanted. */
+    let last = header;
+    for (let i = col.length - 1; i >= 0; i--) {
+      const v = col[i]?.[0];
+      if (v !== undefined && v !== null && String(v).trim() !== '') {
+        last = header + i;
+        break;
+      }
+    }
+    return last;
+  }
+
 
   /** Overwrite one range. Used for corrections, never for appends. */
   async write(tab: string, range: string, values: any[][]): Promise<void> {
