@@ -85,6 +85,7 @@ export function WarehouseDashboard() {
 
   return (
     <div className="page">
+      <SheetStatusBanner />
       <header className="pagehead">
         <div>
           <h1 className="pagehead__title">Warehouse</h1>
@@ -229,6 +230,17 @@ export function WarehouseDashboard() {
              <WarehouseDefects onPick={openItem} />
 
              <Card title={focus ? `Inside ${focus}` : 'Running low'}>
+               {/* The card above counts every item at or below the
+                   threshold; this lists the lowest few of them. They were the
+                   same rule all along — 47 against 28 read as a miscount
+                   because nothing here said the table was a top slice. */}
+               {!focus && charts.data!.low.rows.length && t
+                 && charts.data!.low.rows.length < t.low ? (
+                 <p className="muted">
+                   The {charts.data!.low.rows.length} lowest of {t.low} items
+                   at or below {t.lowAt} pieces.
+                 </p>
+               ) : null}
                {focus && charts.data!.byLocation ? (
                  <CategoryChart payload={charts.data!.byLocation} height={240} />
                ) : charts.data!.low.rows.length ? (
@@ -260,5 +272,53 @@ export function WarehouseDashboard() {
          </>
        )}
     </div>
+  );
+}
+
+/* ------------------------------------------------------- sheet status -- */
+
+/**
+ * Whether movements are actually reaching Scarves Inventory.
+ *
+ * Every movement is queued and sent by the warehouse worker. With the
+ * connection off the queue holds, and because balances are computed from the
+ * portal's own ledger they keep moving — so receiving raised WH-01 on this
+ * dashboard and left no row in the sheet, with nothing anywhere to say why.
+ *
+ * Renders nothing while the sheet is live and the queue is clear, which is
+ * almost always.
+ */
+function SheetStatusBanner() {
+  const status = useQuery({
+    queryKey: ['warehouse', 'sheet-status'],
+    queryFn: () => api<{
+      mode: string; writing: boolean;
+      pending: number; failed: number; oldestPending: string | null;
+    }>('/warehouse/sheet-status'),
+    /* Cheap, and the answer changes when somebody fixes the server. */
+    refetchInterval: 60_000,
+  });
+
+  const s = status.data;
+  if (!s) return null;
+  if (s.writing && !s.pending && !s.failed) return null;
+
+  return (
+    <p className="notice notice--warn" role="status">
+      {!s.writing ? (
+        <>
+          <strong>Nothing is being written to Scarves Inventory.</strong>{' '}
+          The sheet connection is {s.mode === 'dry' ? 'in dry mode' : 'off'},
+          so movements are being kept and will go out once it is live.
+          Balances here are the portal's own and stay correct.
+        </>
+      ) : s.failed ? (
+        <><strong>{s.failed}</strong> movement{s.failed === 1 ? '' : 's'} could
+          not be written to the sheet.</>
+      ) : (
+        <><strong>{s.pending}</strong> movement{s.pending === 1 ? '' : 's'} waiting
+          to reach the sheet.</>
+      )}
+    </p>
   );
 }

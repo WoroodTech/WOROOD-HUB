@@ -16,6 +16,8 @@ import {
   Post, Query,
 } from '@nestjs/common';
 import { CurrentUser, Permissions, Principal, can } from '../../common/auth';
+import { one } from '../../common/db';
+import { config } from '../../common/config';
 import { registerHubModule } from '../../core/hub-registry';
 import { CoreModule } from '../../core/core.module';
 import { WarehouseSheetClient } from './sheets/warehouse-sheet.client';
@@ -202,6 +204,37 @@ export class WarehouseController {
   /* --------------------------------------------- costing & planning -- */
 
   /** The planning constants — pieces per metre, and the allowances. */
+  /**
+   * Whether the sheet is actually being written, and what is waiting.
+   *
+   * Every movement is queued in `wh_sheet_events` and sent by the worker.
+   * With the connection off the queue simply holds — the balances still move,
+   * because they are computed from the ledger the portal keeps, so the only
+   * sign that nothing reached the sheet is its absence from the sheet. That
+   * is how receiving could raise WH-01 on the dashboard and leave no row in
+   * Scarves Inventory at all.
+   *
+   * Reported so the page can say it rather than leaving it to be discovered.
+   */
+  @Get('sheet-status')
+  @Permissions(WAREHOUSE_PERMISSIONS.VIEW)
+  async sheetStatus() {
+    const waiting = await one<{ pending: string; failed: string; oldest: string | null }>(
+      `SELECT count(*) FILTER (WHERE status = 'PENDING')  AS pending,
+              count(*) FILTER (WHERE status IN ('FAILED','DEAD')) AS failed,
+              min(created_at) FILTER (WHERE status = 'PENDING') AS oldest
+         FROM wh_sheet_events`);
+
+    return {
+      mode: config.warehouseSheets.mode,
+      /* `live` writes, `dry` logs what it would write, `off` does not run. */
+      writing: config.warehouseSheets.mode === 'live',
+      pending: Number(waiting?.pending ?? 0),
+      failed: Number(waiting?.failed ?? 0),
+      oldestPending: waiting?.oldest ?? null,
+    };
+  }
+
   @Get('settings')
   @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_PLAN)
   settings() { return this.costing.settings(); }
