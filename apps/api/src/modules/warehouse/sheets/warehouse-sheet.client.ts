@@ -11,6 +11,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { google, sheets_v4 } from 'googleapis';
 import { config } from '../../../common/config';
+import { ITEMS_TAB } from './tabs';
 
 /** Raised when the connection is switched off deliberately. */
 export class WarehouseSheetOffError extends Error {
@@ -168,11 +169,31 @@ export class WarehouseSheetClient {
      */
     const from = this.headerRow(tab) + 1;
 
+    /*
+     * Filled into the template, not inserted through it.
+     *
+     * `Creating New Item` is a prepared block: its A, E–J columns carry
+     * formulas down to about row 210, and the Item Name validation the rest
+     * of the workbook reads is the fixed range I3:I220. INSERT_ROWS pushes a
+     * new row *into* that block, which shifts the formulas out from under
+     * the ranges pointing at them — and the API answers a bare "Internal
+     * error encountered", which is what every new item died on.
+     *
+     * OVERWRITE puts the values on the first empty row inside the block
+     * instead, so the formulas beside them compute the code, the description
+     * and the group exactly as they do for every item already there.
+     *
+     * The ledger is the opposite case: it is an open-ended log with nothing
+     * below it to disturb, so it keeps INSERT_ROWS and grows as it always
+     * has.
+     */
+    const prepared = tab === ITEMS_TAB;
+
     const res = await this.client().spreadsheets.values.append({
       spreadsheetId: this.id,
       range: `${tab}!A${from}`,
       valueInputOption: 'RAW',
-      insertDataOption: 'INSERT_ROWS',
+      insertDataOption: prepared ? 'OVERWRITE' : 'INSERT_ROWS',
       requestBody: { values: [row] },
     });
 
