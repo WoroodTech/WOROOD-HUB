@@ -4263,6 +4263,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
      light enough to come out of a printer. */
   .page { padding: 0 !important; }
   .card { break-inside: avoid; border-color: #ddd; }
+
+  /* A list that scrolls on screen prints whole. The cap exists so a
+     dialogue does not push its own buttons off the bottom; on paper it
+     would silently cut the report to its first few rows. */
+  .tablewrap--scroll { max-height: none; overflow: visible; }
   .tabs, .field, .notebtn, .btn { display: none !important; }
 }
 

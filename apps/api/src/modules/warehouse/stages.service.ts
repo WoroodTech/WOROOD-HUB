@@ -20,6 +20,7 @@ import { DateTime } from 'luxon';
 import { Principal } from '../../common/auth';
 import { AuditService } from '../../core/core.module';
 import { WarehouseSheetClient } from './sheets/warehouse-sheet.client';
+import { sheetDate } from './sheets/parse-date';
 
 const TZ = 'Africa/Cairo';
 
@@ -168,7 +169,7 @@ export class WarehouseStagesService {
 
     const row = new Array(STAGES.cutEndAt + 1).fill('');
     row[STAGES.operationOrder] = WarehouseSheetClient.safe(oo);
-    row[STAGES.cutStartAt] = serial(DateTime.now().setZone(TZ));
+    row[STAGES.cutStartAt] = sheetDate(DateTime.now().setZone(TZ));
     row[STAGES.cutStartBy] = WarehouseSheetClient.safe(who(p));
 
     await this.sheet.append(STAGES_TAB, row);
@@ -211,7 +212,7 @@ export class WarehouseStagesService {
     row[LOTS.lot] = lot;
     row[LOTS.operationOrder] = WarehouseSheetClient.safe(oo);
     row[LOTS.meters] = meters;
-    row[LOTS.cutAt] = serial(DateTime.now().setZone(TZ));
+    row[LOTS.cutAt] = sheetDate(DateTime.now().setZone(TZ));
     row[LOTS.cutBy] = WarehouseSheetClient.safe(who(p));
     row[LOTS.status] = 'Cut';
     row[LOTS.note] = WarehouseSheetClient.safe(dto.note ?? '');
@@ -250,7 +251,7 @@ export class WarehouseStagesService {
     }
 
     await this.sheet.write(STAGES_TAB, `E${stage.rowNumber}:E${stage.rowNumber}`,
-      [[serial(DateTime.now().setZone(TZ))]]);
+      [[sheetDate(DateTime.now().setZone(TZ))]]);
 
     await this.audit.write({
       actorId: p.id, moduleKey: 'warehouse', action: 'warehouse.stages.cutEnd',
@@ -272,7 +273,7 @@ export class WarehouseStagesService {
 
     const at = lot.rowNumber;
     await this.sheet.write(LOTS_TAB, `F${at}:H${at}`, [[
-      qty, serial(DateTime.now().setZone(TZ)), WarehouseSheetClient.safe(who(p)),
+      qty, sheetDate(DateTime.now().setZone(TZ)), WarehouseSheetClient.safe(who(p)),
     ]]);
     await this.sheet.write(LOTS_TAB, `M${at}:M${at}`, [['In production']]);
     if (dto.note) {
@@ -308,7 +309,7 @@ export class WarehouseStagesService {
 
     const at = lot.rowNumber;
     await this.sheet.write(LOTS_TAB, `I${at}:L${at}`, [[
-      counted, serial(DateTime.now().setZone(TZ)),
+      counted, sheetDate(DateTime.now().setZone(TZ)),
       WarehouseSheetClient.safe(who(p)), difference,
     ]]);
     await this.sheet.write(LOTS_TAB, `M${at}:M${at}`, [['Counted']]);
@@ -344,7 +345,7 @@ export class WarehouseStagesService {
 
     const at = lot.rowNumber;
     await this.sheet.write(LOTS_TAB, `N${at}:O${at}`, [[
-      serial(DateTime.now().setZone(TZ)), WarehouseSheetClient.safe(who(p)),
+      sheetDate(DateTime.now().setZone(TZ)), WarehouseSheetClient.safe(who(p)),
     ]]);
     await this.sheet.write(LOTS_TAB, `M${at}:M${at}`, [['With warehouse']]);
 
@@ -406,10 +407,6 @@ export class WarehouseStagesService {
   }
 }
 
-function serial(d: DateTime): number {
-  return Math.round(
-    d.startOf('day').diff(DateTime.fromISO('1899-12-30', { zone: TZ }), 'days').days);
-}
 
 function who(p: Principal): string { return p.fullName ?? p.email ?? ''; }
 

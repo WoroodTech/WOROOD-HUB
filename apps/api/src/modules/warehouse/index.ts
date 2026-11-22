@@ -13,7 +13,7 @@
  */
 import {
   BadRequestException, Body, Controller, Get, Module, Param, ParseUUIDPipe,
-  Post, Query,
+  Delete, Post, Query,
 } from '@nestjs/common';
 import { CurrentUser, Permissions, Principal, can } from '../../common/auth';
 import { one } from '../../common/db';
@@ -24,6 +24,9 @@ import { WarehouseSheetClient } from './sheets/warehouse-sheet.client';
 import { WarehouseReaderService } from './sheets/warehouse-reader.service';
 import { WarehouseQueueService } from './sheets/warehouse-queue.service';
 import { WarehouseWorker } from './sheets/warehouse-worker';
+import {
+  SubjectKind, WarehouseAttachmentsService,
+} from './attachments.service';
 import { WarehouseTransactionsService, PostInput } from './transactions.service';
 import { WarehouseApprovalsService } from './approvals.service';
 import { WarehouseDashboardService } from './dashboard.service';
@@ -144,6 +147,7 @@ export class WarehouseController {
     private readonly dashboard: WarehouseDashboardService,
     private readonly itemsSvc: WarehouseItemsService,
     private readonly insights: WarehouseInsightsService,
+    private readonly attachmentsSvc: WarehouseAttachmentsService,
     private readonly rolls: WarehouseRollsService,
     private readonly stages: WarehouseStagesService,
     private readonly qc: WarehouseQcService,
@@ -221,6 +225,56 @@ export class WarehouseController {
   @Permissions(WAREHOUSE_PERMISSIONS.STOCK_VIEW)
   itemsBehind(@Query('band') band?: string) {
     return this.dashboard.itemsBehind(band === 'out' ? 'out' : 'low');
+  }
+
+  /* ------------------------------------------------------ attachments -- */
+
+  /**
+   * Files on one return issue or one movement.
+   *
+   * The subject lives in the Google Sheet, so it is named by the sheet's own
+   * identifier — an issue's `Issue ID`, a movement's patch number — rather
+   * than by anything in this database.
+   */
+  @Get('attachments/:kind/:subjectId')
+  @Permissions(WAREHOUSE_PERMISSIONS.STOCK_VIEW)
+  attachments(
+    @CurrentUser() p: Principal,
+    @Param('kind') kind: string,
+    @Param('subjectId') subjectId: string,
+  ) {
+    return this.attachmentsSvc.list(p, this.subjectKind(kind), subjectId);
+  }
+
+  @Post('attachments/:kind/:subjectId')
+  @Permissions(WAREHOUSE_PERMISSIONS.VIEW)
+  attachmentUpload(
+    @CurrentUser() p: Principal,
+    @Param('kind') kind: string,
+    @Param('subjectId') subjectId: string,
+    @Body() dto: { name: string; type: string; size: number },
+  ) {
+    return this.attachmentsSvc.requestUpload(
+      p, this.subjectKind(kind), subjectId, dto);
+  }
+
+  @Post('attachments/:fileId/confirm')
+  @Permissions(WAREHOUSE_PERMISSIONS.VIEW)
+  attachmentConfirm(@CurrentUser() p: Principal, @Param('fileId') fileId: string) {
+    return this.attachmentsSvc.confirm(p, fileId);
+  }
+
+  @Delete('attachments/:fileId')
+  @Permissions(WAREHOUSE_PERMISSIONS.VIEW)
+  attachmentRemove(@CurrentUser() p: Principal, @Param('fileId') fileId: string) {
+    return this.attachmentsSvc.remove(p, fileId);
+  }
+
+  /** The path says which kind; anything else is not one. */
+  private subjectKind(raw: string): SubjectKind {
+    if (raw === 'return-issue') return 'RETURN_ISSUE';
+    if (raw === 'movement') return 'MOVEMENT';
+    throw new BadRequestException(`"${raw}" is not something files attach to.`);
   }
 
   @Get('sheet-status')
@@ -751,7 +805,8 @@ export class WarehouseController {
   controllers: [WarehouseController],
   providers: [
     WarehouseSheetClient, WarehouseReaderService, WarehouseQueueService,
-    WarehouseWorker, WarehouseTransactionsService, WarehouseApprovalsService,
+    WarehouseWorker, WarehouseAttachmentsService,
+    WarehouseTransactionsService, WarehouseApprovalsService,
     WarehouseDashboardService, WarehouseItemsService, WarehouseInsightsService,
     WarehouseRollsService, WarehouseStagesService, WarehouseQcService,
     WarehouseReturnsService, WarehouseDocumentsService, WarehouseCostingService,

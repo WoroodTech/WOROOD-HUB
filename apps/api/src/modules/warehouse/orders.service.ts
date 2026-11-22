@@ -23,6 +23,7 @@ import { WarehouseSheetClient } from './sheets/warehouse-sheet.client';
 import { WarehouseReaderService } from './sheets/warehouse-reader.service';
 import { WarehouseQueueService } from './sheets/warehouse-queue.service';
 import { TX, TX_TAB } from './sheets/tabs';
+import { sheetDate } from './sheets/parse-date';
 
 const TZ = 'Africa/Cairo';
 
@@ -258,7 +259,7 @@ export class WarehouseOrdersService {
     }
 
     /* Everything checks out; now it can be written. */
-    const date = serial(DateTime.now().setZone(TZ));
+    const date = sheetDate(DateTime.now().setZone(TZ));
     const by = WarehouseSheetClient.safe(p.fullName ?? p.email ?? '');
     const events: string[] = [];
 
@@ -390,9 +391,4 @@ export class WarehouseOrdersService {
 /** Names are compared with their spacing collapsed; 216 have a double space. */
 function loose(s: string): string {
   return String(s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
-}
-
-function serial(d: DateTime): number {
-  return Math.round(
-    d.startOf('day').diff(DateTime.fromISO('1899-12-30', { zone: TZ }), 'days').days);
 }

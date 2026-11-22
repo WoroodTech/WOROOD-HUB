@@ -56,3 +56,17 @@ export function parseSheetDate(value: unknown): DateTime | null {
   const iso = DateTime.fromISO(t, { zone: SHEET_TZ });
   return iso.isValid ? iso : null;
 }
+
+/**
+ * A date the sheet will store as a date.
+ *
+ * Written as text in the day-first order Egypt uses and sent with
+ * USER_ENTERED, so Sheets parses it exactly as typing it would. The serial
+ * number behind a date is not used: sent raw it stays the plain number it
+ * is, and the rows at the bottom of the ledger carry no date format to dress
+ * it up — 11 November 2026 appeared there as `46348`, which no reader and no
+ * date filter could do anything with.
+ */
+export function sheetDate(d: DateTime): string {
+  return d.toFormat('dd/LL/yyyy');
+}

@@ -17,8 +17,10 @@ import { AuditService } from '../../core/core.module';
 import { WarehouseReaderService } from './sheets/warehouse-reader.service';
 import { WarehouseQueueService } from './sheets/warehouse-queue.service';
 import { WarehouseSheetClient } from './sheets/warehouse-sheet.client';
+import { sheetDate } from './sheets/parse-date';
 import {
-  RECEIVING_WAREHOUSE, TX, TX_TYPES, TxType, WAREHOUSE_LOCATIONS,
+  RECEIVING_WAREHOUSE, RETURN_LOCATION, RETURN_WAREHOUSES,
+  TX, TX_TYPES, TxType, WAREHOUSE_LOCATIONS,
 } from './sheets/tabs';
 
 /** Cairo, because a movement is dated by the day it happened there. */
@@ -280,6 +282,32 @@ export class WarehouseTransactionsService {
       }
     };
 
+    /*
+     * A return goes to WH-02 or WH-05, and nowhere else.
+     *
+     * The Apps Script's own rule, word for word: "A return goes to WH-02 or
+     * WH-05 only". WH-02 is the shelf it goes back on sale from and WH-05 is
+     * where it waits to be looked at; a return into the workshop or into
+     * receiving is stock nobody is counting.
+     */
+    if (dto.type === 'RETURN'
+        && !RETURN_WAREHOUSES.includes(dto.warehouse)) {
+      throw new BadRequestException(
+        `A return goes to ${RETURN_WAREHOUSES.join(' or ')} only.`);
+    }
+
+    /*
+     * Inside WH-05 a return lands on Return Check, whatever was chosen.
+     *
+     * The Apps Script sets it rather than asking — `h.loc = 'Return Check'`
+     * — because the other two locations there are quality cycles a return
+     * has not entered yet. Set here too, so a return cannot be filed under
+     * a shelf it is not on.
+     */
+    if (dto.type === 'RETURN' && dto.warehouse === 'WH-05') {
+      dto.location = RETURN_LOCATION;
+    }
+
     check(dto.warehouse, dto.location ?? '', 'warehouse');
 
     if (type.mode === 'transfer') {
@@ -426,7 +454,7 @@ export class WarehouseTransactionsService {
      * time belongs to that day there, not to the one before it.
      */
     const today = DateTime.now().setZone(TZ).startOf('day');
-    const date = today.toFormat('dd/MM/yyyy');
+    const date = sheetDate(today);
     const by = WarehouseSheetClient.safe(p.fullName ?? p.email ?? '');
 
     const rows: any[][] = [];

@@ -25,6 +25,7 @@ import {
   DOC_TYPES, DOCS_REGISTER, DOCS_REGISTER_TAB,
   PRINT_DOCS, PRINT_DOCS_TAB,
 } from './sheets/tabs';
+import { sheetDate } from './sheets/parse-date';
 
 const TZ = 'Africa/Cairo';
 
@@ -200,7 +201,7 @@ export class WarehouseDocumentsService {
     row[PRINT_DOCS.ref] = WarehouseSheetClient.safe(dto.ref ?? '');
     row[PRINT_DOCS.units] = Number(dto.units) || '';
     row[PRINT_DOCS.items] = WarehouseSheetClient.safe(dto.items ?? '');
-    row[PRINT_DOCS.created] = serial(DateTime.now().setZone(TZ));
+    row[PRINT_DOCS.created] = sheetDate(DateTime.now().setZone(TZ));
     row[PRINT_DOCS.createdBy] = WarehouseSheetClient.safe(who(p));
     row[PRINT_DOCS.timesPrinted] = 0;
 
@@ -229,7 +230,7 @@ export class WarehouseDocumentsService {
     const at = doc.rowNumber;
     await this.sheet.write(PRINT_DOCS_TAB, `I${at}:K${at}`, [[
       doc.timesPrinted + 1,
-      serial(DateTime.now().setZone(TZ)),
+      sheetDate(DateTime.now().setZone(TZ)),
       WarehouseSheetClient.safe(who(p)),
     ]]);
 
@@ -282,10 +283,6 @@ export class WarehouseDocumentsService {
   }
 }
 
-function serial(d: DateTime): number {
-  return Math.round(
-    d.startOf('day').diff(DateTime.fromISO('1899-12-30', { zone: TZ }), 'days').days);
-}
 
 function who(p: Principal): string { return p.fullName ?? p.email ?? ''; }
 

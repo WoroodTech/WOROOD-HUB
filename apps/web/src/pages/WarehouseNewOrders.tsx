@@ -186,13 +186,34 @@ export function WarehouseNewOrders() {
       {orders.map((o, i) => (
         <Card key={o.reference}
               title={o.reference}
-              subtitle={`${o.scope === 'global' ? 'Global' : 'Local'} · `
-                + `${o.lines.reduce((n, l) => n + l.quantity, 0)} pieces`}
+              subtitle={`${o.lines.reduce((n, l) => n + l.quantity, 0)} pieces`}
               actions={
-                <button type="button" className="btn btn--ghost"
-                        onClick={() => setOrders((os) => os.filter((_, j) => j !== i))}>
-                  Remove
-                </button>
+                <>
+                  {/*
+                    * Local or global, taken from the order's currency and
+                    * changeable here.
+                    *
+                    * It decides which of the sheet's two order columns the
+                    * row carries — the ledger keeps national and global
+                    * order numbers apart — so getting it wrong files the
+                    * order under a number nobody will find it by. The
+                    * currency is right almost always; this is for the time
+                    * it is not.
+                    */}
+                  <select className="input input--sm" value={o.scope}
+                          aria-label={`Market for ${o.reference}`}
+                          onChange={(e) => setOrders((os) => os.map((x, j) => (
+                            j === i
+                              ? { ...x, scope: e.target.value as 'local' | 'global' }
+                              : x)))}>
+                    <option value="local">Local</option>
+                    <option value="global">Global</option>
+                  </select>
+                  <button type="button" className="btn btn--ghost"
+                          onClick={() => setOrders((os) => os.filter((_, j) => j !== i))}>
+                    Remove
+                  </button>
+                </>
               }>
           <div className="tablewrap">
             <table className="table">

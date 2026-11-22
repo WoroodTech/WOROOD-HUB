@@ -28,6 +28,7 @@ import { WarehouseSheetClient } from './sheets/warehouse-sheet.client';
 import { WarehouseReaderService } from './sheets/warehouse-reader.service';
 import { WarehouseQueueService } from './sheets/warehouse-queue.service';
 import { QC, QC_TAB, TX, WAREHOUSE_LOCATIONS } from './sheets/tabs';
+import { sheetDate } from './sheets/parse-date';
 
 const TZ = 'Africa/Cairo';
 
@@ -138,7 +139,7 @@ export class WarehouseQcService {
 
     const state = {
       ...b.state,
-      received: serial(DateTime.now().setZone(TZ)),
+      received: sheetDate(DateTime.now().setZone(TZ)),
       receivedBy: who(p),
       receiveNote: String(dto.note ?? '').trim(),
       rounds: b.state.rounds ?? [],
@@ -247,7 +248,7 @@ export class WarehouseQcService {
 
     const round = {
       n: (b.state.rounds?.length ?? 0) + 1,
-      at: serial(DateTime.now().setZone(TZ)),
+      at: sheetDate(DateTime.now().setZone(TZ)),
       by: who(p),
       note: String(dto.note ?? '').trim(),
       status: 'Waiting' as const,
@@ -282,7 +283,7 @@ export class WarehouseQcService {
     }
 
     r.status = 'Recalled';
-    r.recalledAt = serial(DateTime.now().setZone(TZ));
+    r.recalledAt = sheetDate(DateTime.now().setZone(TZ));
     r.recalledBy = who(p);
     r.recallReason = String(reason ?? '').trim();
 
@@ -355,7 +356,7 @@ export class WarehouseQcService {
      * like every other movement — a confirm that cannot reach the sheet
      * right now is not a confirm that should be lost.
      */
-    const date = serial(DateTime.now().setZone(TZ));
+    const date = sheetDate(DateTime.now().setZone(TZ));
     const by = WarehouseSheetClient.safe(who(p));
     const from = locationOf(b.serial);
     let rows = 0;
@@ -459,7 +460,7 @@ export class WarehouseQcService {
       ...b.state,
       shortages: [...(b.state.shortages ?? []), {
         item, quantity: qty, reason,
-        at: serial(DateTime.now().setZone(TZ)), by: who(p),
+        at: sheetDate(DateTime.now().setZone(TZ)), by: who(p),
       }],
     };
 
@@ -564,15 +565,11 @@ export class WarehouseQcService {
     await this.sheet.write(QC_TAB, `F${rowNumber}:H${rowNumber}`, [[
       JSON.stringify(lines),
       JSON.stringify(state),
-      serial(DateTime.now().setZone(TZ)),
+      sheetDate(DateTime.now().setZone(TZ)),
     ]]);
   }
 }
 
-function serial(d: DateTime): number {
-  return Math.round(
-    d.startOf('day').diff(DateTime.fromISO('1899-12-30', { zone: TZ }), 'days').days);
-}
 
 function who(p: Principal): string { return p.fullName ?? p.email ?? ''; }
 
