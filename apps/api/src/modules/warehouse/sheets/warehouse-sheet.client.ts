@@ -163,10 +163,11 @@ export class WarehouseSheetClient {
   /**
    * Add a row at the end of a tab.
    *
-   * `RAW`, deliberately. `USER_ENTERED` would let the sheet interpret what it
-   * is given: a value beginning `=` becomes a live formula, and an item code
-   * like `0012` loses its leading zeros by being read as a number. Dates are
-   * sent as text in the sheet's own format for the same reason.
+   * Written with USER_ENTERED so a date arrives as a date — see the note on
+   * the write itself. Nothing written here is a code with leading zeros: the
+   * catalogue's codes are formulas the sheet computes, and the three cells
+   * this sends it are plain words. `safe()` guards the one real risk, a
+   * value beginning `=` becoming a live formula.
    */
   async append(tab: string, row: any[]): Promise<{ tab: string; rowNumber: number }> {
     if (this.mode === 'off') {
@@ -212,12 +213,35 @@ export class WarehouseSheetClient {
        land in C. The caller builds the row by its own column indexes, which
        are counted from A. */
     const skip = from.charCodeAt(0) - 65;
-    const values = skip ? row.slice(skip) : row;
+    const values = (skip ? row.slice(skip) : row)
+      /*
+       * `null`, not `''`, for a cell this row does not set.
+       *
+       * The catalogue's E to H are the formulas that compute the item's
+       * code; writing `''` into them would wipe all four and leave the item
+       * with none. The API skips a null and leaves the cell exactly as it
+       * was, so a row can reach past those formulas to column I without
+       * destroying them on the way.
+       */
+      .map((v) => (v === '' || v === undefined ? null : v));
 
     await this.client().spreadsheets.values.update({
       spreadsheetId: this.id,
       range: `${tab}!${from}${at}`,
-      valueInputOption: 'RAW',
+      /*
+       * Parsed, as the Apps Script's own writes are.
+       *
+       * RAW stores a date as whatever it was handed — a serial number stayed
+       * the number `46348` in a column with no date format this far down,
+       * which no reader and no date filter could use. USER_ENTERED reads
+       * `11/11/2026` as the date it is, the same way typing it would.
+       *
+       * Everything else written here is a name, a code or a quantity, none
+       * of which USER_ENTERED changes. `safe()` already puts a leading
+       * apostrophe in front of anything that would otherwise be taken for a
+       * formula.
+       */
+      valueInputOption: 'USER_ENTERED',
       requestBody: { values: [values] },
     });
 

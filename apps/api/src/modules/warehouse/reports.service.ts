@@ -14,6 +14,7 @@ import { DateTime } from 'luxon';
 import { one, query } from '../../common/db';
 import { WarehouseReaderService } from './sheets/warehouse-reader.service';
 import { counts } from './sheets/tabs';
+import { parseSheetDate } from './sheets/parse-date';
 
 const TZ = 'Africa/Cairo';
 
@@ -111,7 +112,7 @@ export class WarehouseReportsService {
     let units = 0, returned = 0, rows = 0, received = 0;
 
     for (const m of movements) {
-      const d = this.parseDate(m.date);
+      const d = parseSheetDate(m.date);
       if (!d || d < scanFrom || d > to) continue;
       if (!counts(m.warehouse)) continue;
 
@@ -244,22 +245,6 @@ export class WarehouseReportsService {
     return edge === 'start' ? d.startOf('day') : d.endOf('day');
   }
 
-  private parseDate(s: unknown): DateTime | null {
-    if (typeof s === 'number' && Number.isFinite(s)) {
-      return DateTime.fromISO('1899-12-30', { zone: TZ }).plus({ days: s });
-    }
-    const t = String(s ?? '').trim();
-    if (!t) return null;
-    if (/^\d+(\.\d+)?$/.test(t)) {
-      return DateTime.fromISO('1899-12-30', { zone: TZ }).plus({ days: Number(t) });
-    }
-    for (const fmt of ['dd/LL/yyyy', 'yyyy-LL-dd', 'd/L/yyyy']) {
-      const d = DateTime.fromFormat(t, fmt, { zone: TZ });
-      if (d.isValid) return d;
-    }
-    const iso = DateTime.fromISO(t, { zone: TZ });
-    return iso.isValid ? iso : null;
-  }
 }
 
 function loose(s: string): string {

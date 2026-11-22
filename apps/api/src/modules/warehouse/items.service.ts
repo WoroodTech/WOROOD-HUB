@@ -22,6 +22,16 @@ export interface CreateItemInput {
   color: string;
   kind: string;
   material: string;
+  /**
+   * A name of the creator's own, instead of the one the sheet builds.
+   *
+   * Column I is normally `=B&" "&C&" "&D`, so the name is the three parts
+   * read out. That is right for almost everything and wrong for the few
+   * items whose usual name is not their description. Given one, it is
+   * written over that row's formula — the rest of the column keeps its own,
+   * and the ledger reads column I either way.
+   */
+  name?: string;
 }
 
 @Injectable()
@@ -129,10 +139,27 @@ export class WarehouseItemsService {
      * the sheet's formulas fill them. A row shorter than the tab is extended
      * with blanks by the API, which is exactly what is wanted here.
      */
-    const row = new Array(ITEMS.material + 1).fill('');
+    /*
+     * As wide as the description column, so a chosen name has a place to sit
+     * — the cells between stay empty and the sheet's formulas fill them.
+     */
+    const row = new Array(ITEMS.description + 1).fill('');
     row[ITEMS.color] = WarehouseSheetClient.safe(color);
     row[ITEMS.kind] = WarehouseSheetClient.safe(kind);
     row[ITEMS.material] = WarehouseSheetClient.safe(material);
+
+    /*
+     * A chosen name goes in as the row's own value, over the formula.
+     *
+     * Sent with the row rather than written afterwards: the row's position
+     * is decided when it is written, and a second call would have to guess
+     * at it or read the tab again, with another item possibly created in
+     * between.
+     */
+    const chosen = WarehouseSheetClient.safe(dto.name ?? '');
+    if (chosen && chosen.toLowerCase() !== preview.name!.toLowerCase()) {
+      row[ITEMS.description] = chosen;
+    }
 
     const eventId = await this.queue.enqueue('ITEM', row);
 
