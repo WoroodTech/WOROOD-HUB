@@ -207,6 +207,20 @@ export class WarehouseSheetClient {
      * probe column per tab.
      */
     const at = (await this.lastDataRow(tab)) + 1;
+
+    /*
+     * Room to land on.
+     *
+     * A sheet has a fixed grid, and writing one row past its last is refused
+     * outright: "Range ('Scarves Inventory'!A61024) exceeds grid limits".
+     * The ledger had been filled to its own bottom edge, so the next
+     * movement had nowhere to go and the queue simply stopped.
+     *
+     * Asked for in blocks rather than a row at a time: a thousand empty rows
+     * cost nothing, and one request every thousand movements is better than
+     * one before each.
+     */
+    await this.ensureRoom(tab, at);
     const from = WarehouseSheetClient.WRITE_FROM[tab] ?? 'A';
 
     /* Trimmed to match where the write starts, so column B's value does not
@@ -246,6 +260,40 @@ export class WarehouseSheetClient {
     });
 
     return { tab, rowNumber: at };
+  }
+
+  /**
+   * Make sure the grid reaches the row about to be written.
+   *
+   * Does nothing in the ordinary case, which is every write until the tab
+   * fills up. When it does fill, a thousand rows are appended so the next
+   * thousand movements need no further call.
+   */
+  private async ensureRoom(tab: string, row: number): Promise<void> {
+    const meta = await this.client().spreadsheets.get({
+      spreadsheetId: this.id,
+      fields: 'sheets(properties(sheetId,title,gridProperties/rowCount))',
+    });
+    const sheet = meta.data.sheets?.find(
+      (s) => s.properties?.title === tab);
+    if (!sheet?.properties) return;
+
+    const have = sheet.properties.gridProperties?.rowCount ?? 0;
+    if (have >= row) return;
+
+    await this.client().spreadsheets.batchUpdate({
+      spreadsheetId: this.id,
+      requestBody: {
+        requests: [{
+          appendDimension: {
+            sheetId: sheet.properties.sheetId!,
+            dimension: 'ROWS',
+            length: Math.max(1000, row - have),
+          },
+        }],
+      },
+    });
+    this.log.log(`${tab}: grew from ${have} rows to fit row ${row}`);
   }
 
   /**

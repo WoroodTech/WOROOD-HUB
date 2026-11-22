@@ -149,7 +149,11 @@ export function WarehouseNewOrders() {
                     disabled={!reference.trim() || lookup.isPending
                       || alreadyAdded(reference)}
                     onClick={() => lookup.mutate(reference.trim())}>
-              {lookup.isPending ? 'Looking it up…' : 'Next order'}
+              {/* One act: the order is fetched and put on the patch, and
+                  the box clears for the next one. Two buttons — fetch, then
+                  confirm — would leave an order sitting in between,
+                  belonging to nothing, with nothing saying so. */}
+              {lookup.isPending ? 'Looking it up…' : 'Add to patch'}
             </button>
           </div>
         </div>
@@ -251,7 +255,14 @@ export function WarehouseNewOrders() {
           <button type="button" className="notebtn"
                   disabled={save.isPending || !!unknown.length || !!shortfall.length}
                   onClick={() => setConfirming(true)}>
-            {save.isPending ? 'Saving…' : `Save patch ${patch.data}`}
+            {/* Named for what it does rather than for the mechanism: this
+                closes the patch, writes every order in it to the sheet and
+                takes the stock. "Save" reads like something you could do
+                twice. */}
+            {save.isPending
+              ? 'Completing…'
+              : `Complete patch ${patch.data} · ${orders.length} order`
+                + `${orders.length === 1 ? '' : 's'}`}
           </button>
         </div>
       ) : null}
