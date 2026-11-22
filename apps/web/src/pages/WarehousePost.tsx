@@ -316,6 +316,20 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
               <span className="field__label">Patch number</span>
               <input className="input mono" value={patch} maxLength={60}
                      onChange={(e) => setPatch(e.target.value)} />
+              {/*
+                * Said here because the number is typed, not issued.
+                *
+                * Each kind of movement keeps its own run, as the Apps Script
+                * does — a transfer never continues a return's numbering and
+                * a plain number never continues the `R.O` or `Q.C` serials.
+                * Reusing one groups the two movements together, which is
+                * what the number is for and so is sometimes meant.
+                */}
+              <span className="field__hint">
+                Its own run per kind of movement — a transfer does not
+                continue a return's numbers. Reuse a number to group several
+                movements into one patch.
+              </span>
             </label>
           ) : null}
         </div>

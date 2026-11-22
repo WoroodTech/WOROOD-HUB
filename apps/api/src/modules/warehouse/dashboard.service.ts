@@ -193,6 +193,57 @@ export class WarehouseDashboardService {
    * ordering more, and a bar chart of fifteen item names is harder to read
    * than fifteen rows.
    */
+  /**
+   * The items running low, lowest first.
+   *
+   * The same rule as the summary tile — sellable stock at or below LOW_AT —
+   * so the two can never disagree about which items count. What differs is
+   * only how many are shown: the tile counts them all, this returns the
+   * worst `limit` of them. The total travels with the rows so the page can
+   * say "25 of 47" rather than leaving a reader to notice the gap and
+   * conclude one of the two numbers is wrong.
+   */
+  /**
+   * The items behind a headline count, in full.
+   *
+   * The tiles say 47 running low and 12 out of stock; this is which 47 and
+   * which 12. Counted from the same `sellable` map the tiles are counted
+   * from, so the list cannot drift from the number above it — two passes
+   * over the balances with the same rule written twice is how they would.
+   */
+  async itemsBehind(band: 'low' | 'out') {
+    const balances = await this.reader.balances();
+
+    /* Sellable total per item, and where each piece sits, in one pass. */
+    const sellable = new Map<string, number>();
+    const places = new Map<string, { where: string; qty: number }[]>();
+
+    for (const b of balances) {
+      const isSellable = SELLABLE.some(
+        (s) => s.warehouse === b.warehouse && s.location === b.location);
+      if (!isSellable) continue;
+
+      sellable.set(b.item, (sellable.get(b.item) ?? 0) + b.balance);
+      if (b.balance !== 0) {
+        const at = places.get(b.item) ?? [];
+        at.push({
+          where: b.location ? `${b.warehouse} / ${b.location}` : b.warehouse,
+          qty: b.balance,
+        });
+        places.set(b.item, at);
+      }
+    }
+
+    const rows = [...sellable.entries()]
+      .filter(([, qty]) => (band === 'out' ? qty <= 0 : qty > 0 && qty <= LOW_AT))
+      .sort((a, b) => a[1] - b[1])
+      .map(([item, balance]) => ({
+        item, balance, places: places.get(item) ?? [],
+      }));
+
+    return { band, lowAt: LOW_AT, total: rows.length, rows };
+  }
+
   async runningLow(limit = 25) {
     const balances = await this.reader.balances();
     const sellable = new Map<string, number>();
@@ -203,6 +254,10 @@ export class WarehouseDashboardService {
       if (isSellable) sellable.set(b.item, (sellable.get(b.item) ?? 0) + b.balance);
     }
 
+    const matching = [...sellable.entries()]
+      .filter(([, qty]) => qty > 0 && qty <= LOW_AT)
+      .sort((a, b) => a[1] - b[1]);
+
     return {
       kind: 'table' as const,
       columns: [
@@ -210,10 +265,10 @@ export class WarehouseDashboardService {
         { key: 'balance', label: 'Sellable', format: 'integer' as const,
           align: 'end' as const },
       ],
-      rows: [...sellable.entries()]
-        .filter(([, qty]) => qty > 0 && qty <= LOW_AT)
-        .sort((a, b) => a[1] - b[1])
-        .slice(0, limit)
+      /* How many meet the rule, against how many are listed. */
+      total: matching.length,
+      shown: Math.min(limit, matching.length),
+      rows: matching.slice(0, limit)
         .map(([item, balance]) => ({ item, balance })),
     };
   }

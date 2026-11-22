@@ -41,6 +41,57 @@ export class WarehouseInsightsService {
    * versus C versus Sewing. The share is given as well as the count, because
    * "1,200 in B" means nothing without knowing whether that is most of it.
    */
+  /**
+   * Everything inside one warehouse, item by item.
+   *
+   * Each row also carries the same item's balance in every other warehouse,
+   * because the question that follows "how many Sira are in WH-02" is almost
+   * always "and where is the rest of it" — and answering it from a second
+   * screen means holding the first number in your head while you look.
+   */
+  async warehouseInventory(code: string) {
+    const balances = await this.reader.balances();
+    const want = code.trim().toUpperCase();
+
+    /* Per item: what is here, split by location, and what is elsewhere. */
+    const here = new Map<string, Map<string, number>>();
+    const elsewhere = new Map<string, Map<string, number>>();
+
+    for (const b of balances) {
+      if (!b.item || b.balance === 0) continue;
+      const wh = String(b.warehouse ?? '').trim().toUpperCase();
+
+      if (wh === want) {
+        const locs = here.get(b.item) ?? new Map<string, number>();
+        const key = b.location || '—';
+        locs.set(key, (locs.get(key) ?? 0) + b.balance);
+        here.set(b.item, locs);
+      } else if (counts(b.warehouse)) {
+        const other = elsewhere.get(b.item) ?? new Map<string, number>();
+        other.set(b.warehouse, (other.get(b.warehouse) ?? 0) + b.balance);
+        elsewhere.set(b.item, other);
+      }
+    }
+
+    const rows = [...here.entries()].map(([item, locs]) => ({
+      item,
+      total: [...locs.values()].reduce((n, v) => n + v, 0),
+      locations: [...locs.entries()]
+        .map(([label, pieces]) => ({ label, pieces }))
+        .sort((a, b) => b.pieces - a.pieces),
+      elsewhere: [...(elsewhere.get(item) ?? new Map()).entries()]
+        .map(([warehouse, pieces]) => ({ warehouse, pieces: pieces as number }))
+        .sort((a, b) => b.pieces - a.pieces),
+    })).sort((a, b) => b.total - a.total);
+
+    return {
+      warehouse: want,
+      items: rows.length,
+      total: rows.reduce((n, r) => n + r.total, 0),
+      rows,
+    };
+  }
+
   async warehouseDetail() {
     const balances = await this.reader.balances();
     const byWarehouse = new Map<string, Map<string, number>>();

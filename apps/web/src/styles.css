@@ -3703,6 +3703,39 @@ button, input, select, textarea { font: inherit; color: inherit; }
   gap: 12px;
 }
 
+/* Five warehouses, a fixed set, so they share the row evenly rather than
+   being packed to a minimum width and leaving the rest of it empty. They
+   stack on a narrow screen, where five across would be unreadable. */
+.whgrid--wide { grid-template-columns: repeat(5, 1fr); }
+
+@media (max-width: 960px) {
+  .whgrid--wide { grid-template-columns: repeat(auto-fill, minmax(208px, 1fr)); }
+}
+
+/* A warehouse that opens. Carries no button chrome — the box is the
+   control — but says so on hover and keeps the focus ring for the keyboard. */
+.whbox--pick {
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+.whbox--pick:hover { border-color: var(--accent); }
+
+.whbox--pick:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* A long list inside a dialogue scrolls rather than pushing its own buttons
+   off the bottom of the screen. */
+.tablewrap--scroll {
+  max-height: 52vh;
+  overflow-y: auto;
+}
+
 .whbox {
   background: var(--surface-2);
   border: 1px solid var(--line);
@@ -4010,7 +4043,30 @@ button, input, select, textarea { font: inherit; color: inherit; }
        break on A4. */
     break-inside: avoid;
   }
+
+  /*
+   * Block, not grid, on a label printer.
+   *
+   * `break-after: page` is ignored on a grid item in Chrome, so every copy
+   * landed on one page and the printer cut after the first — four labels on
+   * screen, one out of the machine. Laying them out as blocks puts the page
+   * break back under the browser's control.
+   */
+  .labelsheet--label {
+    display: block;
+    grid-template-columns: none;
+  }
+
   .labelsheet--label .qrlabel { break-after: page; }
+
+  /* Except the last, which would otherwise feed a blank label out after
+     every run. */
+  .labelsheet--label .qrlabel:last-child { break-after: auto; }
+
+  /* A4 keeps its grid — the sheet is meant to fill up — but never splits a
+     label across the fold. */
+  .labelsheet--a4 .qrlabel { break-inside: avoid; }
+
   @page { margin: 0; }
 }
 
