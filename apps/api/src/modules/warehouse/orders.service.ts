@@ -121,10 +121,13 @@ export class WarehouseOrdersService {
     /* Shopify order names carry a #; people type it either way. */
     const bare = ref.replace(/^#/, '');
 
+    /* Only what the patch needs: the order's own id, the name to show, and
+       the currency that decides its market. The shop was joined in for a
+       `domain` column that does not exist on `sd_shops` — nothing read it,
+       and every lookup failed on the join rather than on anything real. */
     const orders = await query<any>(
-      `SELECT o.id, o.name, o.currency_code, s.domain
+      `SELECT o.id, o.name, o.currency_code
          FROM sd_orders o
-         LEFT JOIN sd_shops s ON s.id = o.shop_id
         WHERE o.name = $1 OR o.name = $2
         ORDER BY o.shopify_created_at DESC
         LIMIT 1`, [ref, `#${bare}`]);
@@ -148,10 +151,26 @@ export class WarehouseOrdersService {
         `${order.name} has no line items — nothing to book against a patch.`);
     }
 
-    /* What the catalogue calls each item, and what WH-02 holds of it. */
-    const [items, balances] = await Promise.all([
-      this.reader.items(), this.reader.balances(),
-    ]);
+    /*
+     * What the catalogue calls each item, and what WH-02 holds of it.
+     *
+     * Both read the spreadsheet, which is the one part of this that can fail
+     * for reasons outside the portal — a revoked key, a rate limit, a tab
+     * renamed. Caught here so the screen says which, rather than turning
+     * every one of them into "Something went wrong" at the top level and
+     * leaving the number that was typed looking like the problem.
+     */
+    let items: Awaited<ReturnType<typeof this.reader.items>>;
+    let balances: Awaited<ReturnType<typeof this.reader.balances>>;
+    try {
+      [items, balances] = await Promise.all([
+        this.reader.items(), this.reader.balances(),
+      ]);
+    } catch (e: any) {
+      throw new BadRequestException(
+        `${order.name} was found, but the warehouse sheet could not be read: `
+        + `${e?.message ?? 'no reason given'}`);
+    }
 
     const byName = new Map(
       items.map((i) => [loose(i.name), i.name]));
