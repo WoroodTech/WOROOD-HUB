@@ -17,6 +17,7 @@ import { Card } from '../components/Card';
 import { Icon } from '../components/Icon';
 import { SearchSelect } from '../components/Searchselect';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
+import { WarehouseFiles } from '../components/WarehouseFiles';
 
 function sheetDate(v: string | number | undefined): string {
   if (typeof v === 'number' && Number.isFinite(v)) {
@@ -145,13 +146,22 @@ function IssueCard({ issue, onChanged }: {
         {issue.orderType ? ` · ${issue.orderType}` : ''}
       </p>
 
+      {/*
+        * The issue's own photographs.
+        *
+        * A link kept in the sheet still shows, because issues logged before
+        * this one existed have one and it is the only picture they have.
+        * New ones go into the portal's store instead.
+        */}
       {issue.attachment ? (
         <p>
           <a href={issue.attachment} target="_blank" rel="noreferrer" className="ordername">
-            <Icon name="info" size={14} /> Photo
+            <Icon name="info" size={14} /> Photo (link)
           </a>
         </p>
       ) : null}
+
+      <WarehouseFiles kind="return-issue" subjectId={issue.id} />
 
       {issue.comment ? (
         <p className="whappr__reason">
@@ -202,8 +212,17 @@ function LogIssue({ onDone }: { onDone: () => void }) {
   const [f, setF] = useState({
     order: '', orderType: '', shippedPatch: '',
     shippedItems: '', returnedItems: '', unexpectedItems: '',
-    warehouse: '', location: '', attachment: '',
+    warehouse: '', location: '',
   });
+
+  /*
+   * The issue's own id, once it exists.
+   *
+   * Photographs need something to belong to and there is nothing until the
+   * issue is logged, so the form saves first and then offers to attach. The
+   * issue is the thing that matters; a photograph can follow.
+   */
+  const [loggedId, setLoggedId] = useState<string | null>(null);
 
   const places = useQuery({
     queryKey: qk.whWarehouses,
@@ -212,8 +231,9 @@ function LogIssue({ onDone }: { onDone: () => void }) {
   });
 
   const log = useMutation({
-    mutationFn: () => api('/warehouse/returns', { method: 'POST', body: f }),
-    onSuccess: onDone,
+    mutationFn: () => api<{ ok: boolean; id: string }>(
+      '/warehouse/returns', { method: 'POST', body: f }),
+    onSuccess: (res) => { setLoggedId(res.id); },
   });
 
   const locations = places.data?.find((p) => p.code === f.warehouse)?.locations ?? [];
@@ -274,25 +294,45 @@ function LogIssue({ onDone }: { onDone: () => void }) {
                           options={locations.map((l) => ({ value: l, label: l }))} />
           </label>
         ) : null}
-        <label className="field">
-          <span className="field__label">
-            Photo link <span className="field__opt">optional</span>
-          </span>
-          <input className="input" value={f.attachment} maxLength={500}
-                 onChange={(e) => set('attachment')(e.target.value)} />
-        </label>
       </div>
+
+      {/*
+        * Photographs, once the issue exists.
+        *
+        * This was a box asking for a Drive link, so the picture lived in
+        * somebody's own Drive, was readable by anybody holding the link, and
+        * broke when that person left — on a return dispute, which is exactly
+        * when it matters.
+        */}
+      {loggedId ? (
+        <>
+          <p className="notice" role="status">
+            <Icon name="check" size={16} /> Logged as{' '}
+            <strong className="mono">{loggedId}</strong>. Attach photographs
+            now, or close this and add them from the issue.
+          </p>
+          <WarehouseFiles kind="return-issue" subjectId={loggedId} />
+        </>
+      ) : null}
 
       {log.isError ? (
         <p className="notice notice--warn">{(log.error as Error)?.message}</p>
       ) : null}
 
       <div className="modal__foot">
-        <button type="button" className="notebtn"
-                disabled={log.isPending || !f.order.trim() || !f.warehouse}
-                onClick={() => log.mutate()}>
-          {log.isPending ? 'Saving…' : 'Log it'}
-        </button>
+        {/* Once it is logged the button closes the form instead of logging
+            it again — the issue is in, and what is left is optional. */}
+        {loggedId ? (
+          <button type="button" className="notebtn" onClick={onDone}>
+            Done
+          </button>
+        ) : (
+          <button type="button" className="notebtn"
+                  disabled={log.isPending || !f.order.trim() || !f.warehouse}
+                  onClick={() => log.mutate()}>
+            {log.isPending ? 'Saving…' : 'Log it'}
+          </button>
+        )}
       </div>
     </Card>
   );
