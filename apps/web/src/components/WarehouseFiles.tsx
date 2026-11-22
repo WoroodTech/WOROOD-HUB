@@ -73,7 +73,7 @@ export function WarehouseFiles({ kind, subjectId, canAttach = true }: {
           method: 'PUT', headers: ticket.headers, body: file,
         });
         if (!put.ok) throw new Error(`${file.name} could not be uploaded.`);
-        await api(`/warehouse/attachments/${ticket.fileId}/confirm`,
+        await api(`/warehouse/attachments/file/${ticket.fileId}/confirm`,
                   { method: 'POST' });
       }
       void qc.invalidateQueries({ queryKey: key });
@@ -89,7 +89,7 @@ export function WarehouseFiles({ kind, subjectId, canAttach = true }: {
 
   const remove = useMutation({
     mutationFn: (fileId: string) =>
-      api(`/warehouse/attachments/${fileId}`, { method: 'DELETE' }),
+      api(`/warehouse/attachments/file/${fileId}`, { method: 'DELETE' }),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: key }); },
     onError: (e: any) => setError(e?.message ?? 'That could not be removed.'),
   });
