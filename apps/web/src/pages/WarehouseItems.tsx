@@ -261,6 +261,8 @@ export function WarehouseNewItem() {
   const [color, setColor] = useState('');
   const [kind, setKind] = useState('');
   const [material, setMaterial] = useState('');
+  /* Empty means the sheet's own name, built from the three parts. */
+  const [name, setName] = useState('');
   const [done, setDone] = useState<string | null>(null);
 
   const options = useQuery({
@@ -281,11 +283,12 @@ export function WarehouseNewItem() {
 
   const create = useMutation({
     mutationFn: () => api<{ code: string; name: string; note: string }>('/warehouse/items', {
-      method: 'POST', body: { color, kind, material },
+      method: 'POST',
+      body: { color, kind, material, ...(name.trim() ? { name } : {}) },
     }),
     onSuccess: (res) => {
       setDone(`${res.name} — code ${res.code}. ${res.note}`);
-      setColor(''); setKind(''); setMaterial('');
+      setColor(''); setKind(''); setMaterial(''); setName('');
       void qc.invalidateQueries({ queryKey: ['wh'] });
     },
   });
@@ -376,6 +379,31 @@ export function WarehouseNewItem() {
           )}
         </Card>
       ) : null}
+
+      {/*
+        * Last, because it is the exception.
+        *
+        * Column I is normally `=B&" "&C&" "&D` — the three parts read out —
+        * and that is right for nearly everything. The few items whose usual
+        * name is not their description get one here, written over that row's
+        * formula only.
+        */}
+      <Card title="Its name">
+        <label className="field">
+          <span className="field__label">
+            Name <span className="field__opt">optional</span>
+          </span>
+          <input className="input" value={name} maxLength={120}
+                 placeholder={preview.data?.name ?? 'built from the three parts'}
+                 onChange={(e) => setName(e.target.value)} />
+          <span className="field__hint">
+            {name.trim()
+              ? 'This is what movements will say, instead of the built name.'
+              : 'Leave it empty and the sheet builds the name from the three '
+                + 'parts above.'}
+          </span>
+        </label>
+      </Card>
 
       <div className="modal__foot">
         <button type="button" className="notebtn" disabled={!ready}

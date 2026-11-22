@@ -10,6 +10,7 @@ import { Injectable } from '@nestjs/common';
 import { DateTime } from 'luxon';
 import { WarehouseReaderService } from './sheets/warehouse-reader.service';
 import { counts, WAREHOUSE_LOCATIONS, WAREHOUSE_PURPOSE } from './sheets/tabs';
+import { parseSheetDate } from './sheets/parse-date';
 
 const TZ = 'Africa/Cairo';
 
@@ -218,7 +219,7 @@ export class WarehouseInsightsService {
     for (const m of movements) {
       if (m.kind !== 'NEW ORDER' || !m.stockOut) continue;
       if (m.warehouse !== SELLABLE_WAREHOUSE) continue;
-      const d = this.parseDate(m.date);
+      const d = parseSheetDate(m.date);
       if (!d || d < since) continue;
       soldPerItem.set(m.item, (soldPerItem.get(m.item) ?? 0) + m.stockOut);
     }
@@ -313,34 +314,4 @@ export class WarehouseInsightsService {
       .slice(0, limit);
   }
 
-  /** dd/mm/yyyy, which `Date` reads as the American order and gets wrong. */
-  private parseDate(s: unknown): DateTime | null {
-    /*
-     * Column A holds real dates, which the API returns as serial numbers
-     * when values are read unformatted — days since 30 December 1899.
-     * Reading only the text forms would drop every row in the ledger.
-     */
-    if (typeof s === 'number' && Number.isFinite(s)) {
-      return DateTime.fromISO('1899-12-30', { zone: TZ }).plus({ days: s });
-    }
-
-    const t = String(s ?? '').trim();
-    if (!t) return null;
-
-    /* A number that arrived as a string is still a serial. */
-    if (/^\d+(\.\d+)?$/.test(t)) {
-      return DateTime.fromISO('1899-12-30', { zone: TZ }).plus({ days: Number(t) });
-    }
-
-    /* And the text forms, for rows typed by hand. dd/mm/yyyy first: `Date`
-       reads it as the American order and gets every day before the
-       thirteenth of a month wrong. */
-    for (const fmt of ['dd/LL/yyyy', 'yyyy-LL-dd', 'd/L/yyyy']) {
-      const d = DateTime.fromFormat(t, fmt, { zone: TZ });
-      if (d.isValid) return d;
-    }
-
-    const iso = DateTime.fromISO(t, { zone: TZ });
-    return iso.isValid ? iso : null;
-  }
 }

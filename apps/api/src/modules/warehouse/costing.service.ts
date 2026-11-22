@@ -19,6 +19,7 @@ import { WarehouseSheetClient } from './sheets/warehouse-sheet.client';
 import { WarehouseReaderService } from './sheets/warehouse-reader.service';
 import { WarehouseRollsService } from './rolls.service';
 import { counts } from './sheets/tabs';
+import { parseSheetDate } from './sheets/parse-date';
 
 const TZ = 'Africa/Cairo';
 
@@ -363,7 +364,7 @@ export class WarehouseCostingService {
     for (const m of movements) {
       if (m.kind !== 'NEW ORDER' || !m.stockOut) continue;
       if (!counts(m.warehouse)) continue;
-      const d = this.parseDate(m.date);
+      const d = parseSheetDate(m.date);
       if (!d || d < since) continue;
       sold.set(m.item, (sold.get(m.item) ?? 0) + m.stockOut);
     }
@@ -423,26 +424,10 @@ export class WarehouseCostingService {
   /* -------------------------------------------------------- helpers -- */
 
   private monthOf(v: unknown): string {
-    const d = this.parseDate(v);
+    const d = parseSheetDate(v);
     return d ? d.toFormat('yyyy-LL') : '';
   }
 
-  private parseDate(s: unknown): DateTime | null {
-    if (typeof s === 'number' && Number.isFinite(s)) {
-      return DateTime.fromISO('1899-12-30', { zone: TZ }).plus({ days: s });
-    }
-    const t = String(s ?? '').trim();
-    if (!t) return null;
-    if (/^\d+(\.\d+)?$/.test(t)) {
-      return DateTime.fromISO('1899-12-30', { zone: TZ }).plus({ days: Number(t) });
-    }
-    for (const fmt of ['dd/LL/yyyy', 'yyyy-LL-dd', 'd/L/yyyy']) {
-      const d = DateTime.fromFormat(t, fmt, { zone: TZ });
-      if (d.isValid) return d;
-    }
-    const iso = DateTime.fromISO(t, { zone: TZ });
-    return iso.isValid ? iso : null;
-  }
 }
 
 /** Money and rates, to two places. */

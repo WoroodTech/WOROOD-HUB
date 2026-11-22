@@ -414,16 +414,19 @@ export class WarehouseTransactionsService {
      * as the text "12/11/2026" sorts as text, filters as text, and is
      * skipped by every one of those formulas, silently.
      *
-     * Sheets counts days from 30 December 1899, so that is the epoch rather
-     * than the Unix one. `RAW` keeps it a number, which is exactly what the
-     * column wants.
+     * Written as a date the sheet parses, not as the serial number behind
+     * one. A serial sent with RAW is stored as the plain number it is, and
+     * the rows down here carry no date format to dress it up — so 11
+     * November 2026 appeared in the ledger as `46348`, which no reader and
+     * no date filter can do anything with. `dd/MM/yyyy` with USER_ENTERED
+     * is parsed into a real date, exactly as the Apps Script's `new Date()`
+     * is, and the column formats it like every row above.
      *
      * The server runs in UTC. A movement posted at one in the morning Cairo
      * time belongs to that day there, not to the one before it.
      */
     const today = DateTime.now().setZone(TZ).startOf('day');
-    const date = Math.round(
-      today.diff(DateTime.fromISO('1899-12-30', { zone: TZ }), 'days').days);
+    const date = today.toFormat('dd/MM/yyyy');
     const by = WarehouseSheetClient.safe(p.fullName ?? p.email ?? '');
 
     const rows: any[][] = [];
