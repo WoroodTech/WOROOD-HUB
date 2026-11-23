@@ -258,13 +258,20 @@ export class WarehouseController {
       p, this.subjectKind(kind), subjectId, dto);
   }
 
-  @Post('attachments/:fileId/confirm')
+  /*
+   * `file/` in the path, to keep these apart from the two above.
+   *
+   * `attachments/:kind/:subjectId` matches `attachments/<uuid>/confirm` just
+   * as well, and Nest takes whichever is declared first — so confirming an
+   * upload was read as attaching to a subject whose kind was a UUID.
+   */
+  @Post('attachments/file/:fileId/confirm')
   @Permissions(WAREHOUSE_PERMISSIONS.VIEW)
   attachmentConfirm(@CurrentUser() p: Principal, @Param('fileId') fileId: string) {
     return this.attachmentsSvc.confirm(p, fileId);
   }
 
-  @Delete('attachments/:fileId')
+  @Delete('attachments/file/:fileId')
   @Permissions(WAREHOUSE_PERMISSIONS.VIEW)
   attachmentRemove(@CurrentUser() p: Principal, @Param('fileId') fileId: string) {
     return this.attachmentsSvc.remove(p, fileId);
