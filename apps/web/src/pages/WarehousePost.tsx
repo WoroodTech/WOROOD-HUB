@@ -158,6 +158,16 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
       setNationalOrder(''); setGlobalOrder(''); setPatch('');
       /* A fresh key: the next posting is a different posting. */
       setOpId(crypto.randomUUID());
+    },
+    /*
+     * The serial is re-read whether the posting worked or not.
+     *
+     * It is computed from what is in the sheet, and a posting that failed
+     * halfway may still have written. Leaving the old number on screen let
+     * the next receiving reuse it, so two unrelated deliveries ended up
+     * under one serial — which is exactly what a serial is for preventing.
+     */
+    onSettled: () => {
       void qc.invalidateQueries({ queryKey: ['wh'] });
     },
   });

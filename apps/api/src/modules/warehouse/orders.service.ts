@@ -175,6 +175,66 @@ export class WarehouseOrdersService {
     const byName = new Map(
       items.map((i) => [loose(i.name), i.name]));
 
+    /*
+     * Shopify and the sheet do not share a code.
+     *
+     * An item in the sheet is `<colour> <kind> <material>`, built from three
+     * cells — "Scarlet Rouge Printed Cotton". Shopify's own title for the
+     * same thing is written by whoever listed it — "Scarlet Rouge Modal
+     * Scarf" — and its SKU is not the sheet's item code. An exact match on
+     * the full name therefore fails for almost everything, which is why a
+     * patch of real orders came back as five items nobody could find.
+     *
+     * So the colour is matched instead: the leading words up to the kind,
+     * which is the part both names agree on.
+     *
+     * Where that leaves a choice — "Deep Maroon" is the colour of both a
+     * Plain Cotton and a Printed Cotton — nothing is matched at all. Picking
+     * one would take the stock off whichever happened to sort first, and a
+     * patch is what moves the inventory: a wrong guess here is pieces
+     * missing from a shelf nobody will reconcile for weeks. Unmatched says
+     * so on the screen and can be fixed in a moment; silently wrong cannot.
+     */
+    const byPrefix = new Map<string, string[]>();
+    for (const i of items) {
+      const words = loose(i.name).split(' ');
+      /*
+       * One and two words: the colour is sometimes one and sometimes two —
+       * "Pink Plain Cotton" against "Chocolate cocoa Plain Cotton" — and it
+       * is the colour alone that a Shopify title shares, since the words
+       * after it are that listing's own ("Modal Scarf", not "Plain Cotton").
+       */
+      for (const n of [1, 2]) {
+        if (words.length < n) continue;
+        const key = words.slice(0, n).join(' ');
+        const at = byPrefix.get(key) ?? [];
+        if (!at.includes(i.name)) at.push(i.name);
+        byPrefix.set(key, at);
+      }
+    }
+
+    /** The sheet's name for a Shopify title, where there is exactly one. */
+    const match = (title: string): string | null => {
+      const exact = byName.get(loose(title));
+      if (exact) return exact;
+
+      const words = loose(title).split(' ');
+      /* A bare colour is not a product. "Pink" on its own would match the
+         one pink item in the sheet and quietly take its stock, so a title
+         has to carry at least what it is as well. */
+      if (words.length < 2) return null;
+
+      /* Longest first: "chocolate cocoa" names one item where "chocolate"
+         alone might name several. */
+      for (const n of [2, 1]) {
+        if (words.length < n) continue;
+        const found = byPrefix.get(words.slice(0, n).join(' '));
+        /* Exactly one, or none: see above. */
+        if (found?.length === 1) return found[0];
+      }
+      return null;
+    };
+
     const onHand = new Map<string, number>();
     for (const b of balances) {
       if (b.warehouse !== SELLING_WAREHOUSE) continue;
@@ -194,7 +254,7 @@ export class WarehouseOrdersService {
       reference: order.name,
       scope,
       lines: lines.map((l) => {
-        const matched = byName.get(loose(l.title));
+        const matched = match(String(l.title ?? ''));
         return {
           item: matched ?? String(l.title ?? '').trim(),
           quantity: Number(l.qty) || 0,
