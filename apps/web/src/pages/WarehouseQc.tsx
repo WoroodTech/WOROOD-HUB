@@ -34,7 +34,20 @@ function sheetDate(v: string | number | undefined): string {
 /** What is still with quality on a line. */
 const left = (l: WarehouseQcLine) => Math.max(0, l.got - l.done - l.short);
 
-export function WarehouseQc() {
+export function WarehouseQc({ side }: {
+  /**
+   * Which half of the cycle to show, when this is a tab rather than a page.
+   *
+   * The Apps Script splits it in two because the two are different people's
+   * work: `In Quality` is what quality still holds, `Receiving From
+   * Quality` is what it has handed back and the warehouse has yet to count.
+   * One list holding both means each desk reads past the other's rows.
+   *
+   * Left out, the page shows everything — which is what the Rolls and QC
+   * page itself wants.
+   */
+  side?: 'holding' | 'returning';
+} = {}) {
   const qc = useQueryClient();
   const { can } = useAuth();
   const [cycle, setCycle] = useState<'A' | 'Q' | 'W'>('A');
@@ -48,12 +61,23 @@ export function WarehouseQc() {
 
   const refresh = () => void qc.invalidateQueries({ queryKey: ['wh'] });
 
+  /* A batch is "returning" once quality has handed something back and the
+     warehouse has not confirmed it; everything else it still holds. */
+  const shown = (batches.data ?? []).filter((b) => {
+    if (!side) return true;
+    /* "Waiting for warehouse" is the handover: quality has let go of it and
+       the warehouse has not counted it yet. Everything before that, quality
+       still holds. */
+    const handedBack = b.status === 'Waiting for warehouse';
+    return side === 'returning' ? handedBack : !handedBack;
+  });
+
   if (batches.isLoading) return <LoadingState label="Reading quality batches" />;
   if (batches.isError) {
     return <ErrorState error={batches.error} onRetry={() => void batches.refetch()} />;
   }
 
-  const rows = batches.data ?? [];
+  const rows = shown;
   const counts = rows.reduce((m, b) => {
     m[b.status] = (m[b.status] ?? 0) + 1;
     return m;

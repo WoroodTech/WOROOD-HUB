@@ -3828,6 +3828,41 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .fcrow__days.is-soon { color: var(--warn-ink, #8a6400); }
 .fcrow__days.is-ok { color: var(--good-ink, var(--good)); }
 
+/* What is left at the end of each week ahead. Sits under its row, indented
+   past the name, so it reads as detail on that item rather than as a row of
+   its own. */
+.fcweeks {
+  display: flex;
+  gap: 6px;
+  margin-block: 2px 8px;
+  padding-inline-start: 4px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.fcweeks__cell {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink-2, inherit);
+}
+
+.fcweeks__label { font-style: normal; opacity: 0.6; }
+
+/* An empty week reads as empty rather than as the number nought. */
+.fcweeks__cell.is-out {
+  border-color: var(--danger);
+  color: var(--danger-ink, var(--danger));
+}
+
+@media (max-width: 640px) {
+  /* Two weeks is still useful; four across a phone is not. */
+  .fcweeks__cell:nth-child(n+3) { display: none; }
+}
+
 @media (max-width: 640px) {
   /* The bar is the first thing to go: the name and the number still say
      everything, and a 40px track says nothing. */
@@ -4069,6 +4104,32 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
   @page { margin: 0; }
 }
+
+/*
+ * The paper, not just its margins.
+ *
+ * `@page { margin: 0 }` alone leaves the sheet at the browser's default,
+ * which is A4 — so a 50 x 30 mm label was laid out correctly and then
+ * printed in the corner of a full page, and the label printer fed a whole
+ * sheet per label.
+ *
+ * `size` has to be declared outside the media query: `@page` is not a
+ * normal rule and does not take the cascade from one. The body class says
+ * which stock is loaded, because a label printer and an A4 printer cannot
+ * both be right.
+ */
+@page label {
+  size: 50mm 30mm;
+  margin: 0;
+}
+
+@page a4 {
+  size: A4;
+  margin: 8mm;
+}
+
+body.printing-label { page: label; }
+body.printing-a4 { page: a4; }
 
 /* A value the server decides, shown where its input would have been. */
 .field__fixed {

@@ -166,6 +166,10 @@ than resolving it through a path alias — no runtime resolver, no build step.
 
 ## The parts worth reading first
 
+[`docs/API-AND-MODULE-ROUTE-GUIDE.md`](docs/API-AND-MODULE-ROUTE-GUIDE.md) — the
+module-by-module map from browser page calls and endpoints to clickable API
+`Controller.method()` source links, service files and external-system flows.
+
 **`src/core/hub-registry.ts`** — the module contract. A module declares one descriptor
 and the platform derives the sidebar (filtered per employee), the home portlet grid, the
 permission rows and the `GET /hub/modules` response. The portal has no hard-coded menu.

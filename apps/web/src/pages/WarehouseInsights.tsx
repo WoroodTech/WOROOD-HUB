@@ -297,6 +297,9 @@ interface RunOut {
     item: string; pieces: number; perDay: number;
     days: number; band: 'urgent' | 'soon' | 'ok';
   }[];
+  weeksAhead: number;
+  /** Pieces left at the end of each week ahead, floored at zero. */
+  outlook: { item: string; weeks: number[] }[];
 }
 
 export function WarehouseRunOut({ onPick }: { onPick?: (item: string) => void }) {
@@ -318,7 +321,9 @@ export function WarehouseRunOut({ onPick }: { onPick?: (item: string) => void })
 
   return (
     <Card title="Run-out forecast"
-          subtitle={`How many days the stock in WH-02 lasts at the pace of the last ${f.paceDays} days.`}
+          subtitle={`How long the stock in WH-02 lasts at the pace of the last `
+            + `${f.paceDays} days, and what is left at the end of each of the `
+            + `next ${f.weeksAhead} weeks.`}
           actions={
             <span className="fcleg">
               <span><i className="fcleg__dot is-urgent" /> under {f.bands.urgent} days</span>
@@ -345,6 +350,31 @@ export function WarehouseRunOut({ onPick }: { onPick?: (item: string) => void })
                   <strong>{r.days < 1 ? '<1' : Math.round(r.days)}</strong> days
                 </span>
               </button>
+
+              {/*
+                * What is left at the end of each week.
+                *
+                * "Runs out in nine days" answers when; ordering asks what
+                * will be on the shelf when the delivery lands, which is a
+                * week or three from now. Zero is shown as a dash rather than
+                * a nought, so an empty week reads as empty at a glance.
+                */}
+              {(() => {
+                const weeks = f.outlook.find((o) => o.item === r.item)?.weeks;
+                if (!weeks?.length) return null;
+                return (
+                  <span className="fcweeks">
+                    {weeks.map((left, i) => (
+                      <span key={i}
+                            className={`fcweeks__cell${left ? '' : ' is-out'}`}
+                            title={`End of week ${i + 1}`}>
+                        <i className="fcweeks__label">w{i + 1}</i>
+                        {left ? left : '—'}
+                      </span>
+                    ))}
+                  </span>
+                );
+              })()}
             </li>
           ))}
         </ul>

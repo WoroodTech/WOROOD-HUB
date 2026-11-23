@@ -163,6 +163,60 @@ export class WarehouseQcService {
   }
 
   /**
+   * The manager has seen the quantity difference.
+   *
+   * A shortfall at the door is recorded when the batch is received, and then
+   * nothing happens to it: the numbers disagree, the batch carries on, and
+   * whether anybody with authority ever looked is not written down. The Apps
+   * Script has `qcAck_` for exactly this — "the manager saw the quantity
+   * difference" — and it was the one step of that tab the portal had no
+   * equivalent for.
+   *
+   * It changes no quantity and settles nothing. It records that the
+   * difference was seen, by whom and when, so an unexplained gap can be told
+   * apart from one somebody has already taken on.
+   */
+  async acknowledge(p: Principal, serial: string, note?: string) {
+    const b = await this.mustFind(serial);
+
+    if (b.status === 'Cancelled') {
+      throw new BadRequestException('That batch was cancelled.');
+    }
+    if (!b.lines.some((l: any) => l.got !== l.sent)) {
+      throw new BadRequestException('Nothing on that batch disagrees.');
+    }
+    /* Said once. A second person pressing it would overwrite the first, and
+       who looked first is the part worth keeping. */
+    if (b.state.ack) {
+      throw new BadRequestException(
+        `Already seen by ${b.state.ack.by} on ${b.state.ack.at}.`);
+    }
+
+    const state = {
+      ...b.state,
+      ack: {
+        by: who(p),
+        at: sheetDate(DateTime.now().setZone(TZ)),
+        note: String(note ?? '').trim(),
+      },
+    };
+
+    await this.save(b.rowNumber, b.lines, state);
+
+    await this.audit.write({
+      actorId: p.id, moduleKey: 'warehouse', action: 'warehouse.qc.acknowledge',
+      entityType: 'warehouse_qc_batch', entityId: b.serial,
+      payload: {
+        shortfall: b.lines
+          .filter((l: any) => l.got !== l.sent)
+          .map((l: any) => ({ item: l.item, sent: l.sent, got: l.got })),
+      },
+    });
+
+    return { ok: true, ack: state.ack };
+  }
+
+  /**
    * Quality hands pieces back, saying where each goes.
    *
    * Nothing is written to the ledger here. This records an intention; the

@@ -18,6 +18,7 @@ import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import { SeriesChart } from '../charts/SeriesChart';
 import { CategoryChart } from '../charts/CategoryChart';
 import { Icon } from '../components/Icon';
+import { ExportCsv } from '../components/ExportCsv';
 
 interface Preset { key: string; label: string; from: string; to: string }
 
@@ -146,6 +147,16 @@ export function WarehouseReports() {
             */}
           {r ? (
             <div className="formrow--actions" style={{ marginBlockStart: 12 }}>
+              {/* The numbers, to sort their own way or send to somebody
+                  without a login. Top sellers is the table people actually
+                  take away; the rest of the page is on the PDF. */}
+              <ExportCsv name="warehouse-report" rows={r.topSellers} columns={[
+                { header: 'Item', value: (x) => x.item },
+                { header: 'Sold', value: (x) => x.quantity },
+                { header: 'Orders', value: (x) => x.orders },
+                { header: 'Returned', value: (x) => x.returned },
+                { header: 'Return rate %', value: (x) => x.returnRate },
+              ]} />
               <button type="button" className="btn btn--ghost btn--sm"
                       onClick={() => window.print()}>
                 <Icon name="download" size={14} /> Export PDF

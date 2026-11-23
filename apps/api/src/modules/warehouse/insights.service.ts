@@ -252,7 +252,26 @@ export class WarehouseInsightsService {
       .sort((a, b) => a.days! - b.days!)
       .slice(0, limit);
 
-    return { bands: RUN_OUT, paceDays: PACE_DAYS, rows };
+    /*
+     * The weeks ahead, as pieces left rather than as a date.
+     *
+     * "Runs out in 9.4 days" answers when; planning asks what will be on the
+     * shelf at the end of each week, because an order placed now arrives
+     * against that, not against today. Four weeks is as far as the pace is
+     * worth trusting — beyond it the forecast is arithmetic rather than
+     * evidence.
+     *
+     * Floored at zero: an item that runs out in week two is empty in weeks
+     * three and four, not increasingly negative.
+     */
+    const weeksAhead = 4;
+    const outlook = rows.map((r) => ({
+      item: r.item,
+      weeks: Array.from({ length: weeksAhead }, (_, i) =>
+        Math.max(0, Math.round(r.pieces - r.perDay * 7 * (i + 1)))),
+    }));
+
+    return { bands: RUN_OUT, paceDays: PACE_DAYS, weeksAhead, rows, outlook };
   }
 
   /**

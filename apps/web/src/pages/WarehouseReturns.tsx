@@ -9,6 +9,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
+  WarehouseItem,
   WarehousePatch, WarehousePatchComment, WarehousePlace, WarehouseReturnIssue,
 } from '../contract';
 import { api } from '../lib/api';
@@ -256,27 +257,29 @@ function LogIssue({ onDone }: { onDone: () => void }) {
         </label>
       </div>
 
-      <div className="formrow">
-        <label className="field">
-          <span className="field__label">What was shipped</span>
-          <input className="input" value={f.shippedItems} maxLength={300}
-                 placeholder="3 Azalea Printed Cotton"
-                 onChange={(e) => set('shippedItems')(e.target.value)} />
-        </label>
-        <label className="field">
-          <span className="field__label">What came back</span>
-          <input className="input" value={f.returnedItems} maxLength={300}
-                 placeholder="2 Azalea Printed Cotton"
-                 onChange={(e) => set('returnedItems')(e.target.value)} />
-        </label>
-        <label className="field">
-          <span className="field__label">
-            Unexpected <span className="field__opt">things nobody sent</span>
-          </span>
-          <input className="input" value={f.unexpectedItems} maxLength={300}
-                 onChange={(e) => set('unexpectedItems')(e.target.value)} />
-        </label>
-      </div>
+      {/*
+        * Picked from the catalogue, not typed.
+        *
+        * These three were free text, so "3 Azalea Printed Cotton", "3 azalea
+        * printed", "Azalea x3" and a misspelling were four different things
+        * to anybody reading the issue later and to every count made from it.
+        * The catalogue is the list of items that exist; choosing from it
+        * means the name on an issue is a name the ledger also uses.
+        *
+        * What is stored is unchanged — "3 Azalea Printed Cotton, 1 Pink
+        * Plain Cotton" — because the sheet's column is read by the Apps
+        * Script and by people, and neither wants a different shape.
+        */}
+      <ItemPicker label="What was shipped"
+                  value={f.shippedItems}
+                  onChange={set('shippedItems')} />
+      <ItemPicker label="What came back"
+                  value={f.returnedItems}
+                  onChange={set('returnedItems')} />
+      <ItemPicker label="Unexpected"
+                  hint="things nobody sent"
+                  value={f.unexpectedItems}
+                  onChange={set('unexpectedItems')} />
 
       <div className="formrow">
         <label className="field">
@@ -486,5 +489,87 @@ function PatchDetail({ patch, onChanged }: { patch: string; onChanged: () => voi
         </div>
       </div>
     </Card>
+  );
+}
+
+/* ------------------------------------------------------- item picker -- */
+
+/** One line of a picked list: the item as the ledger names it, and how many. */
+interface PickedLine { item: string; quantity: string }
+
+/**
+ * Items chosen from the catalogue, kept as the text the sheet expects.
+ *
+ * The column holds "3 Azalea Printed Cotton, 1 Pink Plain Cotton" and is
+ * read by the Apps Script and by people, so that is still what is stored.
+ * What changes is how it is produced: the names come from the catalogue
+ * rather than from typing, so an issue cannot name an item that does not
+ * exist or spell one three different ways.
+ *
+ * Text typed before this existed is parsed back into lines where it can be,
+ * and left alone where it cannot — an old issue is not worth losing.
+ */
+function ItemPicker({ label, hint, value, onChange }: {
+  label: string;
+  hint?: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const items = useQuery({
+    queryKey: qk.whItems,
+    queryFn: () => api<WarehouseItem[]>('/warehouse/items'),
+    staleTime: 30 * 60_000,
+  });
+
+  /* "3 Azalea Printed Cotton" → { quantity: 3, item: 'Azalea Printed Cotton' } */
+  const lines: PickedLine[] = value.trim()
+    ? value.split(',').map((part) => {
+        const m = part.trim().match(/^(\d+)\s+(.*)$/);
+        return m
+          ? { quantity: m[1], item: m[2].trim() }
+          : { quantity: '1', item: part.trim() };
+      }).filter((l) => l.item)
+    : [];
+
+  const write = (next: PickedLine[]) =>
+    onChange(next
+      .filter((l) => l.item)
+      .map((l) => `${Number(l.quantity) || 1} ${l.item}`)
+      .join(', '));
+
+  const set = (i: number, patch: Partial<PickedLine>) =>
+    write(lines.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+
+  return (
+    <div className="field">
+      <span className="field__label">
+        {label}{hint ? <span className="field__opt"> {hint}</span> : null}
+      </span>
+
+      {lines.map((l, i) => (
+        <div key={i} className="polines__row">
+          <SearchSelect
+            value={l.item}
+            onChange={(v: string) => set(i, { item: v })}
+            placeholder="Search the catalogue…"
+            options={(items.data ?? []).map((it) => ({
+              value: it.name, label: it.name,
+            }))} />
+          <input className="input" type="number" min="1" step="1"
+                 aria-label="Quantity"
+                 value={l.quantity}
+                 onChange={(e) => set(i, { quantity: e.target.value })} />
+          <button type="button" className="btn btn--ghost btn--sm"
+                  onClick={() => write(lines.filter((_, j) => j !== i))}>
+            Remove
+          </button>
+        </div>
+      ))}
+
+      <button type="button" className="btn btn--ghost btn--sm"
+              onClick={() => write([...lines, { item: '', quantity: '1' }])}>
+        + Add an item
+      </button>
+    </div>
   );
 }
