@@ -19,6 +19,7 @@ import { Icon } from '../components/Icon';
 import { SearchSelect } from '../components/Searchselect';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import { WarehouseFiles } from '../components/WarehouseFiles';
+import { useAuth } from '../lib/auth';
 
 function sheetDate(v: string | number | undefined): string {
   if (typeof v === 'number' && Number.isFinite(v)) {
@@ -343,99 +344,197 @@ function LogIssue({ onDone }: { onDone: () => void }) {
 
 /* ====================================================== patch log ====== */
 
-export function WarehousePatchLog() {
+export function WarehousePatchLog({ onOpenTemplate }: {
+  /** Opens the Order Template tab on this patch, when shown as a tab. */
+  onOpenTemplate?: (patch: string) => void;
+} = {}) {
   const qc = useQueryClient();
   const [status, setStatus] = useState('');
+  const [q, setQ] = useState('');
   const [open, setOpen] = useState<string | null>(null);
+  const [note, setNote] = useState<Record<string, string>>({});
+  const { can } = useAuth();
 
   const patches = useQuery({
     queryKey: qk.whPatches(status),
     queryFn: () => api<WarehousePatch[]>(
-      `/warehouse/patches${status ? `?status=${status}` : ''}`),
+      `/warehouse/patches${status ? `?status=${encodeURIComponent(status)}` : ''}`),
   });
 
   const refresh = () => void qc.invalidateQueries({ queryKey: ['wh'] });
+
+  /*
+   * A note and a decision are one act.
+   *
+   * Reporting a problem with nothing written is a patch nobody can act on,
+   * so the comment goes with the status rather than being a separate step
+   * somebody may not take.
+   */
+  const act = useMutation({
+    mutationFn: async (v: {
+      patch: string;
+      status: 'Complete' | 'Issue reported' | 'Resolved';
+      comment?: string;
+    }) => {
+      if (v.comment?.trim()) {
+        await api('/warehouse/patches/comment', {
+          method: 'POST', body: { patch: v.patch, body: v.comment.trim() },
+        });
+      }
+      return api('/warehouse/patches/status', {
+        method: 'POST', body: { patch: v.patch, status: v.status },
+      });
+    },
+    onSuccess: (_r, v) => {
+      setNote((n) => ({ ...n, [v.patch]: '' }));
+      refresh();
+    },
+  });
 
   if (patches.isLoading) return <LoadingState label="Reading the patch log" />;
   if (patches.isError) {
     return <ErrorState error={patches.error} onRetry={() => void patches.refetch()} />;
   }
 
+  const needle = q.trim().toLowerCase();
+  const rows = (patches.data ?? []).filter(
+    (p) => !needle
+      || p.patch.toLowerCase().includes(needle)
+      || (p.sentBy ?? '').toLowerCase().includes(needle));
+
   return (
-    <div className="page">
-      <header className="pagehead">
-        <div>
-          <h1 className="pagehead__title">Patch log</h1>
-          <p className="pagehead__sub">
-            Batch sheets that have been sent, and the conversation on each.
-          </p>
+    <>
+      <Card title="Which patches">
+        <div className="tabs" role="tablist">
+          {/* The four words the sheet actually holds. "Open" and "Closed"
+              were the portal's own, and matched nothing in the column. */}
+          {([['', 'All'], ['Sent', 'Waiting'], ['Issue reported', 'Issue reported'],
+             ['Complete', 'Complete'], ['Resolved', 'Resolved']] as const)
+            .map(([k, label]) => (
+              <button key={label} type="button" role="tab"
+                      aria-selected={status === k}
+                      className={`tabs__tab${status === k ? ' is-active' : ''}`}
+                      onClick={() => setStatus(k)}>
+                {label}
+              </button>
+            ))}
         </div>
-      </header>
 
-      <div className="tabs" role="tablist">
-        {([['', 'All'], ['Open', 'Open'], ['Closed', 'Closed']] as const).map(([k, label]) => (
-          <button key={label} type="button" role="tab" aria-selected={status === k}
-                  className={`tabs__tab${status === k ? ' is-active' : ''}`}
-                  onClick={() => setStatus(k)}>
-            {label}
-          </button>
-        ))}
-      </div>
+        <label className="field">
+          <span className="field__label">Patch number or person</span>
+          <input className="input" value={q} placeholder="e.g. 6267"
+                 onChange={(e) => setQ(e.target.value)} />
+        </label>
+      </Card>
 
-      {!patches.data?.length ? (
-        <EmptyState title="Nothing sent" hint="No batch sheets have gone out." />
-      ) : (
-        <Card title={`${patches.data.length} patch${patches.data.length === 1 ? '' : 'es'}`}>
-          <div className="tablewrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th scope="col">Patch</th>
-                  <th scope="col">Last sent</th>
-                  <th scope="col">By</th>
-                  <th scope="col" className="is-end">Sent</th>
-                  <th scope="col" className="is-end">Orders</th>
-                  <th scope="col" className="is-end">Units</th>
-                  <th scope="col">Status</th>
-                  <th scope="col" className="is-end">Notes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {patches.data.map((p) => (
-                  <tr key={p.patch}>
-                    <td>
-                      <button type="button" className="ordername"
-                              onClick={() => setOpen(open === p.patch ? null : p.patch)}>
-                        {p.patch}
-                      </button>
-                    </td>
-                    <td>{sheetDate(p.lastSent)}</td>
-                    <td>{p.sentBy || '—'}</td>
-                    {/* More than once is usually a reprint, and sometimes a
-                        mistake worth noticing — so it is marked. */}
-                    <td className={`is-end mono${p.timesSent > 1 ? ' whline__have is-bad' : ''}`}>
-                      {p.timesSent || '—'}
-                    </td>
-                    <td className="is-end mono">{p.orders || '—'}</td>
-                    <td className="is-end mono">{p.units || '—'}</td>
-                    <td>
-                      <span className={`rollpill ${p.status === 'Closed' ? 'is-s5' : 'is-s1'}`}>
-                        {p.status}
-                      </span>
-                    </td>
-                    <td className="is-end mono">{p.comments || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
+      {act.isError ? <ErrorState error={act.error} compact /> : null}
 
-      {open ? <PatchDetail patch={open} onChanged={refresh} /> : null}
-    </div>
+      {!rows.length ? (
+        <EmptyState icon="list" title="Nothing here"
+                    hint={needle ? 'Nothing matches that.'
+                      : 'No batch sheets have gone out.'} />
+      ) : rows.map((p) => {
+        const sent = p.status === 'Sent';
+        const reported = p.status === 'Issue reported';
+        return (
+          <Card key={p.patch}
+                title={`Patch #${p.patch}`}
+                actions={
+                  <span className={`rollpill ${
+                    p.status === 'Complete' || p.status === 'Resolved' ? 'is-s5'
+                    : reported ? 'is-s2' : 'is-s1'}`}>
+                    {p.status}
+                  </span>
+                }>
+            <p className="muted">
+              Sent by <strong>{p.sentBy || 'somebody'}</strong>
+              {' · '}{sheetDate(p.lastSent)}
+              {' · '}{p.orders} order{p.orders === 1 ? '' : 's'}
+              {' · '}{p.units} pcs
+              {/* More than once is usually a reprint, and sometimes a
+                  mistake worth noticing. */}
+              {p.timesSent > 1 ? ` · sent ${p.timesSent} times` : ''}
+            </p>
+
+            {p.closedBy ? (
+              <p className="muted">
+                {p.status} by <strong>{p.closedBy}</strong>
+                {p.closedAt ? ` · ${sheetDate(p.closedAt)}` : ''}
+              </p>
+            ) : null}
+
+            {sent || reported ? (
+              <div className="noterow">
+                <input className="input" maxLength={500}
+                       value={note[p.patch] ?? ''}
+                       placeholder="Something wrong? Write it here — comments can never be deleted"
+                       onChange={(e) =>
+                         setNote((n) => ({ ...n, [p.patch]: e.target.value }))} />
+
+                {sent ? (
+                  <>
+                    <button type="button" className="btn btn--ghost btn--sm"
+                            disabled={act.isPending || !(note[p.patch] ?? '').trim()}
+                            title={(note[p.patch] ?? '').trim() ? undefined
+                              : 'Say what is wrong first'}
+                            onClick={() => act.mutate({
+                              patch: p.patch, status: 'Issue reported',
+                              comment: note[p.patch],
+                            })}>
+                      Report a problem
+                    </button>
+                    <button type="button" className="btn btn--primary btn--sm"
+                            disabled={act.isPending}
+                            onClick={() => act.mutate({
+                              patch: p.patch, status: 'Complete',
+                              comment: note[p.patch],
+                            })}>
+                      Complete — all correct
+                    </button>
+                  </>
+                ) : null}
+
+                {/* A manager's answer to a reported problem, which is why it
+                    is their permission and not the warehouse's. */}
+                {reported && can('warehouse.tx.manage') ? (
+                  <button type="button" className="btn btn--primary btn--sm"
+                          disabled={act.isPending}
+                          onClick={() => act.mutate({
+                            patch: p.patch, status: 'Resolved',
+                            comment: note[p.patch],
+                          })}>
+                    Resolve
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+
+            <div className="formrow--actions">
+              <button type="button" className="linkbtn"
+                      onClick={() => setOpen(open === p.patch ? null : p.patch)}>
+                {open === p.patch ? 'Hide the conversation'
+                  : `Conversation${p.comments ? ` (${p.comments})` : ''}`}
+              </button>
+              {/* Straight to the sheet itself, with the number already in
+                  the box — the next thing anybody does with a patch. */}
+              {onOpenTemplate ? (
+                <button type="button" className="linkbtn"
+                        onClick={() => onOpenTemplate(p.patch)}>
+                  Open template
+                </button>
+              ) : null}
+            </div>
+
+            {open === p.patch ? (
+              <PatchDetail patch={p.patch} onChanged={refresh} />
+            ) : null}
+          </Card>
+        );
+      })}
+    </>
   );
 }
+
 
 function PatchDetail({ patch, onChanged }: { patch: string; onChanged: () => void }) {
   const [text, setText] = useState('');

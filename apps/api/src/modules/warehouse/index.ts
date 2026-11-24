@@ -12,7 +12,8 @@
  * query that filled it failed into one.
  */
 import {
-  BadRequestException, Body, Controller, Get, Module, Param, ParseUUIDPipe,
+  BadRequestException, Body, Controller, ForbiddenException, Get, Module, Param,
+  ParseUUIDPipe,
   Delete, Post, Query,
 } from '@nestjs/common';
 import { CurrentUser, Permissions, Principal, can } from '../../common/auth';
@@ -444,8 +445,18 @@ export class WarehouseController {
 
   @Post('patches/status')
   @Permissions(WAREHOUSE_PERMISSIONS.TX_WRITE)
-  patchStatus(@CurrentUser() p: Principal,
-              @Body() dto: { patch: string; status: 'Open' | 'Closed' }) {
+  patchStatus(
+    @CurrentUser() p: Principal,
+    @Body() dto: {
+      patch: string;
+      status: 'Complete' | 'Issue reported' | 'Resolved';
+    },
+  ) {
+    /* Resolving is a manager's answer to a reported problem, not part of
+       checking a patch — the Apps Script asks for Manager or Admin. */
+    if (dto?.status === 'Resolved' && !can(p, WAREHOUSE_PERMISSIONS.TX_MANAGE)) {
+      throw new ForbiddenException('Only a manager can resolve a reported problem.');
+    }
     return this.returns.setPatchStatus(p, dto?.patch, dto?.status);
   }
 
@@ -532,6 +543,17 @@ export class WarehouseController {
     return this.stages.overview(decodeURIComponent(oo));
   }
 
+  /**
+   * The whole workshop, sorted into the five benches it works at.
+   *
+   * One call rather than five: each stage is worked out from the same two
+   * tabs, and five requests would read them five times to answer one
+   * screen.
+   */
+  @Get('stages/workshop')
+  @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_VIEW)
+  workshopStages() { return this.stages.workshop(); }
+
   @Post('stages/cut/start')
   @Permissions(WAREHOUSE_PERMISSIONS.STAGE_CUT)
   startCutting(@CurrentUser() p: Principal, @Body() dto: { operationOrder: string }) {
@@ -604,10 +626,25 @@ export class WarehouseController {
     return this.rolls.plan(p, dto);
   }
 
+  /** The warehouse hands rolls over on one paper. No job order yet. */
   @Post('rolls/issue')
   @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_RECEIVE)
   issueRolls(@CurrentUser() p: Principal, @Body() dto: any) {
     return this.rolls.issue(p, dto);
+  }
+
+  /**
+   * The workshop picks a roll up and opens a job order on it.
+   *
+   * Theirs, not the warehouse's: the number and the expected pieces are
+   * worked out here, and the roll stops being the warehouse's problem the
+   * moment somebody starts it.
+   */
+  @Post('rolls/start')
+  @Permissions(WAREHOUSE_PERMISSIONS.STAGE_CUT)
+  startJobOrder(@CurrentUser() p: Principal,
+                @Body() dto: { rollId: string; note?: string }) {
+    return this.rolls.startJobOrder(p, dto);
   }
 
   /** The workshop's own step. */

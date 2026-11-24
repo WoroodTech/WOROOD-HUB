@@ -454,10 +454,41 @@ export class WarehouseQcService {
     }));
 
     r.status = 'Confirmed';
+    /*
+     * A changed quantity needs a reason before it is booked.
+     *
+     * Quality said it was handing back fifty and the warehouse counted
+     * forty-eight: those two pieces are either a miscount, a loss, or
+     * something still in a box — and which of those it is cannot be worked
+     * out afterwards from the numbers alone. The Apps Script's own wording
+     * is "change a quantity to what you really received and write why. Only
+     * then it is booked in the sheet."
+     *
+     * Counting the same as quality said needs no note: agreeing is not an
+     * exception and asking for one would teach people to type a full stop.
+     */
+    const changed = counted.filter((c) => {
+      /* The same comparison the loop above makes, so a line counted as
+         matching there cannot read as unmatched here. */
+      const said = (r.lines ?? []).find(
+        (l: any) => l.item.toLowerCase() === c.item.toLowerCase()
+          && l.warehouse === c.warehouse
+          && (l.location ?? '') === (c.location ?? ''));
+      return Number(said?.quantity ?? 0) !== c.quantity;
+    });
+
+    const note = String(dto.note ?? '').trim();
+    if (changed.length && note.length < 3) {
+      const which = changed.slice(0, 3).map((c) => c.item).join(', ');
+      throw new BadRequestException(
+        `Say why the count differs on ${which}`
+        + `${changed.length > 3 ? ` and ${changed.length - 3} more` : ''}.`);
+    }
+
     r.confirmedAt = date;
     r.confirmedBy = who(p);
     r.confirmedLines = counted;
-    r.confirmNote = String(dto.note ?? '').trim();
+    r.confirmNote = note;
 
     await this.save(b.rowNumber, lines, b.state);
     await this.reader.invalidate();

@@ -123,7 +123,14 @@ export function WarehouseTemplates() {
         ))}
       </div>
 
-      {tab === 'log' ? <WarehousePatchLog /> : null}
+      {/* "Open template" jumps to the sheet itself with the number already
+          in the box — the next thing anybody does with a patch, and it was
+          two screens and a retyped number away. */}
+      {tab === 'log' ? (
+        <WarehousePatchLog onOpenTemplate={(n) => {
+          setTyped(n); setPatch(n); setSerial(null); setTab('tpl');
+        }} />
+      ) : null}
       {/* One page, two questions: what quality still holds, and what it has
           handed back for the warehouse to count. The tab chooses which. */}
       {tab === 'qc' ? <WarehouseQc side="holding" /> : null}

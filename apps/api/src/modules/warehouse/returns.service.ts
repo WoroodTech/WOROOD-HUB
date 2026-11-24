@@ -321,16 +321,47 @@ export class WarehouseReturnsService {
   }
 
   /** Close a patch, or reopen it. */
-  async setPatchStatus(p: Principal, patch: string, status: 'Open' | 'Closed') {
+  /**
+   * Move a patch along its cycle.
+   *
+   * `Sent` → `Complete` when the warehouse has checked it and everything
+   * was right; `Sent` → `Issue reported` when it was not; `Issue reported` →
+   * `Resolved` once a manager has dealt with it. Those are the four words
+   * the sheet holds, and the Apps Script moves between them in that order.
+   *
+   * The portal wrote `Open` and `Closed` instead — values the column has
+   * never contained — so a patch marked here read as neither sent nor
+   * complete to the Apps Script, to the sheet's own filters, and to anybody
+   * looking at the tab.
+   */
+  async setPatchStatus(
+    p: Principal, patch: string,
+    status: 'Complete' | 'Issue reported' | 'Resolved',
+  ) {
     const entry = (await this.patches()).find(
       (x) => x.patch.toLowerCase() === String(patch ?? '').trim().toLowerCase());
-    if (!entry) throw new NotFoundException('No such patch.');
+    if (!entry) throw new NotFoundException('This patch was never sent.');
 
+    /* The order matters: completing a patch that already has a problem
+       reported on it would bury the problem rather than answer it. */
+    const from = String(entry.status ?? '').trim();
+    if (status === 'Complete' && from !== 'Sent') {
+      throw new BadRequestException(`That patch is ${from || 'not sent'}.`);
+    }
+    if (status === 'Issue reported' && from !== 'Sent') {
+      throw new BadRequestException(`That patch is ${from || 'not sent'}.`);
+    }
+    if (status === 'Resolved' && from !== 'Issue reported') {
+      throw new BadRequestException('Nothing was reported on that patch.');
+    }
+
+    /* Who settled it and when, for the two states that settle something. */
+    const settles = status === 'Complete' || status === 'Resolved';
     const at = entry.rowNumber;
     await this.sheet.write(PATCH_LOG_TAB, `I${at}:K${at}`, [[
       status,
-      status === 'Closed' ? WarehouseSheetClient.safe(p.fullName ?? p.email ?? '') : '',
-      status === 'Closed' ? sheetDate(DateTime.now().setZone(TZ)) : '',
+      settles ? WarehouseSheetClient.safe(p.fullName ?? p.email ?? '') : '',
+      settles ? sheetDate(DateTime.now().setZone(TZ)) : '',
     ]]);
 
     await this.audit.write({

@@ -21,6 +21,7 @@ import { Principal } from '../../common/auth';
 import { AuditService } from '../../core/core.module';
 import { WarehouseSheetClient } from './sheets/warehouse-sheet.client';
 import { sheetDate } from './sheets/parse-date';
+import { ROLLS_WORKSHOP, ROLLS_WORKSHOP_TAB } from './sheets/tabs';
 
 const TZ = 'Africa/Cairo';
 
@@ -103,6 +104,120 @@ export class WarehouseStagesService {
     }
 
     return out.sort((a, b) => a.lot - b.lot);
+  }
+
+  /**
+   * The whole workshop, sorted into the five stages it works in.
+   *
+   * `overview` answers for one job order, which is right once somebody has
+   * picked one. The workshop screen asks the opposite question — what is in
+   * front of each bench today — and five separate calls would be five
+   * reads of the same two tabs.
+   *
+   * The stages are not a status column: a job order is "open" because the
+   * warehouse handed it over and cutting has not touched it, "cutting"
+   * because cutting started and has metres left, and so on. Each is worked
+   * out from what has actually been recorded, so a stage cannot disagree
+   * with the record it is drawn from.
+   */
+  async workshop() {
+    /* The job-order tab read directly rather than through the rolls
+       service: that service already depends on this one for a job order's
+       stages, and pointing them at each other would be a cycle for one
+       list. The columns are shared, so there is one definition either way. */
+    const [jobRows, lots, stages] = await Promise.all([
+      this.sheet.read(ROLLS_WORKSHOP_TAB),
+      this.lots(),
+      this.readStages(),
+    ]);
+
+    const jobs: any[] = [];
+    for (let i = 1; i < jobRows.length; i++) {
+      const r = jobRows[i] ?? [];
+      const oo = String(r[ROLLS_WORKSHOP.operationOrder] ?? '').trim();
+      if (!oo) continue;
+      jobs.push({
+        operationOrder: oo,
+        issued: String(r[ROLLS_WORKSHOP.issued] ?? '').trim(),
+        rolls: String(r[ROLLS_WORKSHOP.rolls] ?? '').trim(),
+        meters: Number(r[ROLLS_WORKSHOP.meters]) || 0,
+        expectedUnits: Number(r[ROLLS_WORKSHOP.expectedUnits]) || 0,
+        status: String(r[ROLLS_WORKSHOP.status] ?? '').trim(),
+      });
+    }
+
+    /* The cutting record per job order, by its key. */
+    const cutting = new Map<string, { cutMeters: number; endedAt: string }>();
+    for (let i = 1; i < stages.length; i++) {
+      const r = stages[i] ?? [];
+      const oo = String(r[STAGES.operationOrder] ?? '').trim();
+      if (!oo) continue;
+      cutting.set(oo.toLowerCase(), {
+        cutMeters: Number(r[STAGES.cutMeters]) || 0,
+        endedAt: String(r[STAGES.cutEndAt] ?? '').trim(),
+      });
+    }
+
+    const byOrder = new Map<string, any[]>();
+    for (const l of lots) {
+      const k = l.operationOrder.toLowerCase();
+      byOrder.set(k, [...(byOrder.get(k) ?? []), l]);
+    }
+
+    const open: any[] = [];
+    const inCutting: any[] = [];
+
+    for (const j of jobs) {
+      /* Closed and delivered orders are the workshop's past, and the fifth
+         tab is where they live. */
+      if (j.status === 'Closed' || j.status === 'Delivered') continue;
+
+      const cut = cutting.get(j.operationOrder.toLowerCase());
+      const mine = byOrder.get(j.operationOrder.toLowerCase()) ?? [];
+      const metres = Number(j.meters) || 0;
+      const done = cut?.cutMeters ?? 0;
+
+      if (!cut) {
+        /* Handed over, nobody has touched it. */
+        open.push({ ...j, metres, waitingSince: j.issued });
+      } else if (!cut.endedAt) {
+        /* Started, and there is fabric left on it. */
+        inCutting.push({
+          ...j, metres, cut: done,
+          left: Math.round((metres - done) * 100) / 100,
+          lots: mine.length,
+        });
+      }
+      /* Fully cut: it is now its lots, and they appear in the stages below
+         rather than as a job order of their own. */
+    }
+
+    /* A lot's stage is its own, because one job order can have a lot in
+       production and another already counted. */
+    const production = lots.filter((l) => l.status === 'Production');
+    const quality = lots.filter((l) => l.status === 'Quality');
+    const counted = lots.filter(
+      (l) => l.status === 'Counted' || l.status === 'Difference');
+
+    const finished = jobs.filter(
+      (j) => j.status === 'Closed' || j.status === 'Delivered');
+
+    return {
+      open,
+      cutting: inCutting,
+      production,
+      /* Quality's bench holds what it has been sent and what it has counted
+         but not yet passed on — both are still with quality. */
+      quality: [...quality, ...counted],
+      finished,
+      counts: {
+        open: open.length,
+        cutting: inCutting.length,
+        production: production.length,
+        quality: quality.length + counted.length,
+        finished: finished.length,
+      },
+    };
   }
 
   /** The cutting record for one job order, if it has started. */
@@ -352,14 +467,6 @@ export class WarehouseStagesService {
     await this.audit.write({
       actorId: p.id, moduleKey: 'warehouse', action: 'warehouse.stages.qSend',
       entityType: 'warehouse_job_order', entityId: lot.operationOrder,
-      /*
-       * The real caller, never a fixed role.
-       *
-       * `Stages.gs` passes a hardcoded 'Admin' into the ledger posting here,
-       * so every handover is recorded as an administrator's whatever the
-       * workshop account actually was. The audit trail is worth less than
-       * nothing when it names the wrong person.
-       */
       payload: { lot: lot.lot, counted: lot.qualityCount },
     });
 

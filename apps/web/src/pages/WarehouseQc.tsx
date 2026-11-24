@@ -51,6 +51,8 @@ export function WarehouseQc({ side }: {
   const qc = useQueryClient();
   const { can } = useAuth();
   const [cycle, setCycle] = useState<'A' | 'Q' | 'W'>('A');
+  const [state, setState] = useState<'open' | 'complete' | 'all'>('open');
+  const [newest, setNewest] = useState(true);
   const [open, setOpen] = useState<string | null>(null);
 
   const batches = useQuery({
@@ -77,7 +79,38 @@ export function WarehouseQc({ side }: {
     return <ErrorState error={batches.error} onRetry={() => void batches.refetch()} />;
   }
 
-  const rows = shown;
+  /*
+   * Open or complete, and newest first by default.
+   *
+   * A batch that is done is history: it is worth being able to find, and it
+   * is not worth scrolling past to reach the ones that still need somebody.
+   * The Apps Script defaults to Open for exactly that reason.
+   */
+  const settled = (b: WarehouseQcBatch) =>
+    b.status === 'Complete' || b.status === 'Cancelled';
+
+  const rows = shown
+    .filter((b) => (state === 'all' ? true
+      : state === 'open' ? !settled(b) : settled(b)))
+    .sort((a, b) => {
+      const at = String(a.updated ?? a.created ?? '');
+      const bt = String(b.updated ?? b.created ?? '');
+      return newest ? bt.localeCompare(at) : at.localeCompare(bt);
+    });
+
+  /*
+   * What is outstanding, in three numbers.
+   *
+   * Quality holding forty templates is a different problem from quality
+   * holding four thousand pieces, and a shortage is a third thing again —
+   * so they are counted apart rather than summed into one tile.
+   */
+  const outstanding = shown.filter((b) => !settled(b));
+  const withQuality = outstanding.reduce((n, b) => n
+    + b.lines.reduce((m, l) => m + (Number(l.sent) || 0), 0), 0);
+  const shortage = shown.reduce((n, b) => n
+    + (b.state?.shortages?.length ?? 0), 0);
+
   const counts = rows.reduce((m, b) => {
     m[b.status] = (m[b.status] ?? 0) + 1;
     return m;
@@ -94,6 +127,44 @@ export function WarehouseQc({ side }: {
         </div>
       </header>
 
+      {/*
+        * What is outstanding, in three numbers.
+        *
+        * Quality holding forty templates is a different problem from quality
+        * holding four thousand pieces, and a shortage is a third thing
+        * again — so they are counted apart rather than summed into one.
+        */}
+      <section className="totalsgrid" aria-label="With quality">
+        <div className="tile">
+          <button type="button" className="kpi kpi--pick"
+                  onClick={() => { setState('open'); setCycle('A'); }}>
+            <div className="kpi__top"><p className="kpi__label">Open templates</p></div>
+            <p className="kpi__value">{outstanding.length}</p>
+            <p className="kpi__sub">
+              {outstanding.length ? 'still open' : 'nothing open'}
+            </p>
+          </button>
+        </div>
+        <div className="tile">
+          <div className="kpi">
+            <div className="kpi__top">
+              <p className="kpi__label">Item and quantity with quality</p>
+            </div>
+            <p className="kpi__value">{withQuality.toLocaleString()}</p>
+            <p className="kpi__sub">pieces on open templates</p>
+          </div>
+        </div>
+        <div className="tile">
+          <div className="kpi">
+            <div className="kpi__top"><p className="kpi__label">Shortage</p></div>
+            <p className="kpi__value">{shortage}</p>
+            <p className="kpi__sub">
+              {shortage ? 'lines short' : 'no shortage'}
+            </p>
+          </div>
+        </div>
+      </section>
+
       {/* Two cycles share this: Q.C for Worood Quality, W.Q for Workshop
           Quality. Somebody in one team sees only theirs; a manager sees both
           and can filter. */}
@@ -107,6 +178,38 @@ export function WarehouseQc({ side }: {
             </button>
           ))}
       </div>
+
+      <div className="formrow">
+        <div className="tabs" role="tablist">
+          {([['open', 'Open'], ['complete', 'Complete'], ['all', 'All']] as const)
+            .map(([k, label]) => (
+              <button key={k} type="button" role="tab"
+                      aria-selected={state === k}
+                      className={`tabs__tab${state === k ? ' is-active' : ''}`}
+                      onClick={() => { setState(k); setOpen(null); }}>
+                {label}
+              </button>
+            ))}
+        </div>
+        <label className="field">
+          <span className="field__label">Order</span>
+          <select className="input input--sm" value={newest ? 'new' : 'old'}
+                  onChange={(e) => setNewest(e.target.value === 'new')}>
+            <option value="new">Newest first</option>
+            <option value="old">Oldest first</option>
+          </select>
+        </label>
+      </div>
+
+      {/*
+        * Confirmed hand-backs, ready for signatures.
+        *
+        * The paper is what the warehouse and quality both sign, so it is
+        * printed after the count rather than before it — and it belongs on
+        * the receiving side of the screen, where the person who just
+        * counted is standing.
+        */}
+      {side === 'returning' ? <ReceivedToPrint batches={shown} /> : null}
 
       <p className="muted qcsummary">
         {(['New', 'With quality', 'Waiting for warehouse', 'Complete'] as const)
@@ -493,4 +596,63 @@ function QcPill({ status }: { status: string }) {
     : status === 'Cancelled' ? 'is-s5'
     : status === 'New' ? 'is-s0' : 'is-s1';
   return <span className={`rollpill ${tone}`}>{status}</span>;
+}
+
+/* ------------------------------------------- confirmed, ready to print -- */
+
+/**
+ * What has been counted and is waiting to be signed.
+ *
+ * A difference is marked, because the paper with a difference on it is the
+ * one somebody will be asked about — and finding it afterwards in a list
+ * that does not say which is a search through every sheet.
+ */
+function ReceivedToPrint({ batches }: { batches: WarehouseQcBatch[] }) {
+  const rows = batches.flatMap((b) =>
+    (b.state?.rounds ?? [])
+      .filter((r: any) => r.status === 'Confirmed')
+      .map((r: any) => {
+        const counted = (r.confirmedLines ?? [])
+          .reduce((n: number, l: any) => n + (Number(l.quantity) || 0), 0);
+        const said = (r.lines ?? [])
+          .reduce((n: number, l: any) => n + (Number(l.quantity) || 0), 0);
+        return {
+          key: `${b.serial}-${r.n}`,
+          serial: b.serial,
+          round: r.n,
+          counted,
+          by: r.confirmedBy ?? '',
+          at: String(r.confirmedAt ?? ''),
+          different: counted !== said,
+        };
+      }));
+
+  if (!rows.length) return null;
+
+  return (
+    <Card title="Received — print the template for signatures">
+      <ul className="attlist">
+        {rows.map((r) => (
+          <li key={r.key}>
+            <span className="attrow">
+              <span className="attrow__name">
+                <span className="mono">{r.serial}</span>
+                <span className="muted">
+                  {' '}{r.counted} pcs · {r.by}{r.at ? ` · ${r.at}` : ''}
+                  {r.different ? ' · ' : ''}
+                </span>
+                {r.different ? (
+                  <span className="is-bad">difference</span>
+                ) : null}
+              </span>
+              <button type="button" className="btn btn--ghost btn--sm"
+                      onClick={() => window.print()}>
+                Print
+              </button>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
 }
