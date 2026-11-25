@@ -210,6 +210,9 @@ function IssueCard({ issue, onChanged }: {
   );
 }
 
+/** Where a return may go. The server enforces the same two. */
+const RETURN_WAREHOUSES = ['WH-02', 'WH-05'];
+
 function LogIssue({ onDone }: { onDone: () => void }) {
   const [f, setF] = useState({
     order: '', orderType: '', shippedPatch: '',
@@ -318,7 +321,14 @@ function LogIssue({ onDone }: { onDone: () => void }) {
           <SearchSelect value={f.warehouse}
                         onChange={(v: string) => setF((s) => ({ ...s, warehouse: v, location: '' }))}
                         placeholder="Choose…"
-                        options={(places.data ?? []).map((p) => ({ value: p.code, label: p.code }))} />
+                        /* WH-02 or WH-05 only, as the Apps Script has it:
+                           "A return goes to WH-02 or WH-05 only". The
+                           server refuses the rest anyway, and offering a
+                           choice that will be refused wastes somebody's
+                           form. */
+                        options={(places.data ?? [])
+                          .filter((p) => RETURN_WAREHOUSES.includes(p.code))
+                          .map((p) => ({ value: p.code, label: p.code }))} />
         </label>
         {locations.length ? (
           <label className="field">
@@ -660,14 +670,33 @@ function ItemPicker({ label, hint, value, onChange }: {
       }).filter((l) => l.item)
     : [];
 
-  const write = (next: PickedLine[]) =>
-    onChange(next
-      .filter((l) => l.item)
+  /*
+   * The rows on screen, which are not quite the rows that are stored.
+   *
+   * What is stored is the sheet's one text column, and a row with no item
+   * chosen yet has nothing to put in it — so "+ Add an item" wrote a blank
+   * row, the blank was filtered out on the way to the column, and the row
+   * came back from the column as though it had never been added. The button
+   * worked; there was simply nowhere for its row to live.
+   *
+   * So empty rows live here until they are filled in, and the column keeps
+   * holding only real ones.
+   */
+  const [extra, setExtra] = useState(0);
+  const rows = [...lines,
+    ...Array.from({ length: extra }, () => ({ item: '', quantity: '1' }))];
+
+  const write = (next: PickedLine[]) => {
+    const real = next.filter((l) => l.item);
+    /* However many of the blanks are still blank. */
+    setExtra(next.length - real.length);
+    onChange(real
       .map((l) => `${Number(l.quantity) || 1} ${l.item}`)
       .join(', '));
+  };
 
   const set = (i: number, patch: Partial<PickedLine>) =>
-    write(lines.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+    write(rows.map((l, j) => (j === i ? { ...l, ...patch } : l)));
 
   return (
     <div className="field">
@@ -675,7 +704,7 @@ function ItemPicker({ label, hint, value, onChange }: {
         {label}{hint ? <span className="field__opt"> {hint}</span> : null}
       </span>
 
-      {lines.map((l, i) => (
+      {rows.map((l, i) => (
         <div key={i} className="polines__row">
           <SearchSelect
             value={l.item}
@@ -689,14 +718,14 @@ function ItemPicker({ label, hint, value, onChange }: {
                  value={l.quantity}
                  onChange={(e) => set(i, { quantity: e.target.value })} />
           <button type="button" className="btn btn--ghost btn--sm"
-                  onClick={() => write(lines.filter((_, j) => j !== i))}>
+                  onClick={() => write(rows.filter((_, j) => j !== i))}>
             Remove
           </button>
         </div>
       ))}
 
       <button type="button" className="btn btn--ghost btn--sm"
-              onClick={() => write([...lines, { item: '', quantity: '1' }])}>
+              onClick={() => setExtra((n) => n + 1)}>
         + Add an item
       </button>
     </div>

@@ -21,6 +21,8 @@ import { Card } from '../components/Card';
 import { Icon } from '../components/Icon';
 import { SearchSelect } from '../components/Searchselect';
 import { ErrorState, EmptyState, LoadingState } from '../components/States';
+import { WarehousePatchLog } from './WarehouseReturns';
+import { WarehouseApprovals } from './WarehouseApprovals';
 
 /* ===================================================== item card ======== */
 
@@ -165,6 +167,8 @@ export function WarehouseItemCard() {
 /* ===================================================== find / edit ====== */
 
 export function WarehouseFind() {
+  const [mode, setMode] = useState<
+    'orders' | 'patch' | 'approvals' | 'edits' | 'deletes'>('orders');
   const [filters, setFilters] = useState({ item: '', warehouse: '', order: '', patch: '' });
   const [asked, setAsked] = useState('');
 
@@ -193,13 +197,41 @@ export function WarehouseFind() {
     <div className="page">
       <header className="pagehead">
         <div>
-          <h1 className="pagehead__title">Find a movement</h1>
+          <h1 className="pagehead__title">Find an order</h1>
           <p className="pagehead__sub">
-            Look one up by item, order or patch. Changing or removing one is a
-            request a manager decides.
+            What was logged through the app — edit or delete it.
           </p>
         </div>
       </header>
+
+      {/*
+        * Five screens, as the Apps Script has them on this page.
+        *
+        * Finding a movement, finding a patch, and the three screens about
+        * changing one: the queue of requests, what was edited, what was
+        * deleted. They were a page and a sidebar link apart, so deciding a
+        * request meant leaving the row that prompted it.
+        */}
+      <div className="tabs" role="tablist">
+        {([['orders', 'Orders'], ['patch', 'Patch'],
+           ['approvals', 'Approvals'], ['edits', 'Edit log'],
+           ['deletes', 'Delete log']] as const).map(([k, label]) => (
+          <button key={k} type="button" role="tab"
+                  aria-selected={mode === k}
+                  className={`tabs__tab${mode === k ? ' is-active' : ''}`}
+                  onClick={() => setMode(k)}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {mode === 'patch' ? <WarehousePatchLog /> : null}
+      {mode === 'approvals' || mode === 'edits' || mode === 'deletes' ? (
+        <WarehouseApprovals view={mode} />
+      ) : null}
+
+      {mode !== 'orders' ? null : (
+      <>
 
       <Card title="Search">
         <div className="formrow">
@@ -241,6 +273,8 @@ export function WarehouseFind() {
            <MovementTable rows={movements.data} withRow />
          </Card>
        )}
+      </>
+      )}
     </div>
   );
 }

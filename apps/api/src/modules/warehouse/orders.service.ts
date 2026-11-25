@@ -22,7 +22,7 @@ import { AuditService } from '../../core/core.module';
 import { WarehouseSheetClient } from './sheets/warehouse-sheet.client';
 import { WarehouseReaderService } from './sheets/warehouse-reader.service';
 import { WarehouseQueueService } from './sheets/warehouse-queue.service';
-import { TX, TX_TAB } from './sheets/tabs';
+import { TX, TX_TAB, orderNumber } from './sheets/tabs';
 import { sheetDate } from './sheets/parse-date';
 
 const TZ = 'Africa/Cairo';
@@ -349,9 +349,9 @@ export class WarehouseOrdersService {
         row[TX.itemName] = WarehouseSheetClient.safe(l.item);
         /* Local and global order numbers live in different columns. */
         if (o.scope === 'global') {
-          row[TX.globalOrder] = WarehouseSheetClient.safe(o.reference);
+          row[TX.globalOrder] = WarehouseSheetClient.safe(orderNumber(o.reference));
         } else {
-          row[TX.nationalOrder] = WarehouseSheetClient.safe(o.reference);
+          row[TX.nationalOrder] = WarehouseSheetClient.safe(orderNumber(o.reference));
         }
         row[TX.patch] = patch;
         row[TX.stockOut] = l.quantity;

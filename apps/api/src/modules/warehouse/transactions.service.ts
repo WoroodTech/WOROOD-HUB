@@ -21,6 +21,7 @@ import { sheetDate } from './sheets/parse-date';
 import {
   RECEIVING_WAREHOUSE, RETURN_LOCATION, RETURN_WAREHOUSES,
   TX, TX_TYPES, TxType, WAREHOUSE_LOCATIONS,
+  orderNumber,
 } from './sheets/tabs';
 
 /** Cairo, because a movement is dated by the day it happened there. */
@@ -466,8 +467,12 @@ export class WarehouseTransactionsService {
       const row = new Array(15).fill('');
       row[TX.date] = date;
       row[TX.itemName] = WarehouseSheetClient.safe(item);
-      row[TX.nationalOrder] = WarehouseSheetClient.safe(dto.nationalOrder ?? '');
-      row[TX.globalOrder] = WarehouseSheetClient.safe(dto.globalOrder ?? '');
+      /* With the hash, as Shopify names them and as the ledger holds
+         them — typed either way, stored one way. */
+      row[TX.nationalOrder] =
+        WarehouseSheetClient.safe(orderNumber(dto.nationalOrder));
+      row[TX.globalOrder] =
+        WarehouseSheetClient.safe(orderNumber(dto.globalOrder));
       row[TX.patch] = WarehouseSheetClient.safe(dto.patch ?? '');
       /* Numbers, not strings: a quantity written as text does not add up in
          the sheet's own totals, and nothing says so. */
