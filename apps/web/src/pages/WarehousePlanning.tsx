@@ -50,9 +50,21 @@ export function WarehousePlanning() {
 
   const canManage = can('warehouse.tx.manage');
 
+  /*
+   * Two numbers the planner decides, not constants.
+   *
+   * How long production takes is a fact about the workshop. How much stock
+   * to hold behind it, and what a season will add to demand, are
+   * judgements — and the plan was built on neither, so it ordered the same
+   * amount for a quiet February and for the week before Eid.
+   */
+  const [safetyDays, setSafetyDays] = useState(30);
+  const [boostPct, setBoostPct] = useState(0);
+
   const demand = useQuery({
-    queryKey: ['wh', 'demand'],
-    queryFn: () => api<DemandPlan>('/warehouse/demand'),
+    queryKey: ['wh', 'demand', safetyDays, boostPct],
+    queryFn: () => api<DemandPlan>(
+      `/warehouse/demand?safetyDays=${safetyDays}&boostPct=${boostPct}`),
     enabled: tab === 'demand',
     staleTime: 5 * 60_000,
   });
@@ -98,6 +110,38 @@ export function WarehousePlanning() {
       </div>
 
       {/* ------------------------------------------------- demand -- */}
+
+      {/* The two judgements the plan rests on, where the plan is. Behind a
+          settings page they would be set once and forgotten, and the
+          season changes four times a year. */}
+      {tab === 'demand' ? (
+        <div className="formrow no-print">
+          <label className="field">
+            <span className="field__label">
+              Safety stock <span className="field__opt">days</span>
+            </span>
+            <input className="input" type="number" min="0" max="180" step="1"
+                   value={safetyDays}
+                   onChange={(e) => setSafetyDays(
+                     Math.max(0, Number(e.target.value) || 0))} />
+            <span className="field__hint">
+              Left on the shelf once a run arrives.
+            </span>
+          </label>
+          <label className="field">
+            <span className="field__label">
+              Season boost <span className="field__opt">%</span>
+            </span>
+            <input className="input" type="number" min="0" max="300" step="5"
+                   value={boostPct}
+                   onChange={(e) => setBoostPct(
+                     Math.max(0, Number(e.target.value) || 0))} />
+            <span className="field__hint">
+              Added to the pace. Ramadan and Eid are most of the year.
+            </span>
+          </label>
+        </div>
+      ) : null}
 
       {tab === 'demand' ? (
         demand.isLoading ? <LoadingState label="Reading 26 weeks of sales" />

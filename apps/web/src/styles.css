@@ -4465,3 +4465,66 @@ body.printing-a4 { page: a4; }
   color: var(--danger-ink, var(--danger));
   margin-inline-start: 6px;
 }
+
+/* ------------------------------------------------- the receiving note -- */
+
+/* A paper people sign, so it is laid out as one: white, boxed, and the
+   same whether it is on screen or on A4. */
+.docpaper {
+  background: #fff;
+  color: #1a1a1a;
+  padding: 18px 20px;
+  border-radius: var(--radius);
+}
+
+.docpaper .table th,
+.docpaper .table td { border-color: #ddd; }
+
+.docpaper__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  padding-block-end: 10px;
+  border-block-end: 2px solid #1a1a1a;
+}
+
+/* An empty box, ticked by hand against the pieces being counted. */
+.docpaper__tick {
+  display: inline-block;
+  inline-size: 14px;
+  block-size: 14px;
+  border: 1px solid #555;
+}
+
+/* Three lines to sign on: the workshop that made it, the agent who
+   brought it, the keeper who put it away. */
+.docpaper__signs {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  margin-block-start: 44px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.docpaper__signs span {
+  flex: 1;
+  padding-block-start: 6px;
+  border-block-start: 1px solid #555;
+}
+
+.docpaper__foot { margin-block-start: 14px; font-size: 11px; }
+
+@media print {
+  /* The paper and nothing else: the dialogue's own chrome is for choosing
+     it, not for signing. */
+  .modal__scrim, .modal .confirm__actions { display: none !important; }
+  .modal, .modal__panel {
+    position: static;
+    max-block-size: none;
+    box-shadow: none;
+    background: #fff;
+  }
+  .docpaper { padding: 0; }
+}

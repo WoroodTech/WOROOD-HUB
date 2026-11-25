@@ -225,6 +225,30 @@ function LogIssue({ onDone }: { onDone: () => void }) {
    * issue is the thing that matters; a photograph can follow.
    */
   const [loggedId, setLoggedId] = useState<string | null>(null);
+  const [lookingUp, setLookingUp] = useState(false);
+
+  /*
+   * The patch follows the order number.
+   *
+   * Looked up when the box loses focus rather than on every keystroke: an
+   * order number is typed digit by digit and none of the partial ones are
+   * worth a request.
+   */
+  const findPatch = async (order: string) => {
+    if (!order.trim()) return;
+    setLookingUp(true);
+    try {
+      const r = await api<{ patch: string | null }>(
+        `/warehouse/returns/patch-for-order?order=${encodeURIComponent(order)}`);
+      /* Only when nobody has typed one: a patch somebody chose themselves
+         is a decision, and overwriting it would undo that silently. */
+      if (r.patch) setF((x) => (x.shippedPatch ? x : { ...x, shippedPatch: r.patch! }));
+    } catch {
+      /* The form still works without it. */
+    } finally {
+      setLookingUp(false);
+    }
+  };
 
   const places = useQuery({
     queryKey: qk.whWarehouses,
@@ -247,13 +271,19 @@ function LogIssue({ onDone }: { onDone: () => void }) {
         <label className="field">
           <span className="field__label">Order number</span>
           <input className="input mono" value={f.order} maxLength={60}
+                 onBlur={(e) => void findPatch(e.target.value)}
                  onChange={(e) => set('order')(e.target.value)} />
         </label>
         <label className="field">
           <span className="field__label">
             Patch it was shipped on <span className="field__opt">optional</span>
           </span>
+          {/* Filled from the order, and still editable: the ledger knows
+              which patch an order went out on, so typing it was a field
+              that could be wrong about the one thing tying this issue to
+              what was actually shipped. */}
           <input className="input mono" value={f.shippedPatch} maxLength={60}
+                 placeholder={lookingUp ? 'looking it up…' : 'from the order'}
                  onChange={(e) => set('shippedPatch')(e.target.value)} />
         </label>
       </div>
