@@ -14,6 +14,8 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { Card } from '../components/Card';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
+import { WarehousePatchLog } from './WarehouseReturns';
+import { WarehouseQc } from './WarehouseQc';
 
 interface TemplateLine { item: string; order: string; quantity: number; kind: string }
 interface TemplateGroup { group: string; total: number; lines: TemplateLine[] }
@@ -37,7 +39,28 @@ function sheetDate(v: string | number | undefined): string {
   return String(v ?? '') || '—';
 }
 
+/**
+ * The four things a patch sheet is about, as the Apps Script groups them.
+ *
+ * They were four places in the portal — a page for the template, another
+ * for the patch log, a third for quality — so following one patch from
+ * printed sheet to quality and back meant leaving the screen each time and
+ * carrying its number in your head. These are one subject at four moments.
+ *
+ * "Upload Shopify orders" is deliberately not here: it is the Apps Script's
+ * way round having no connection to Shopify, and the portal has one.
+ */
+const TEMPLATE_TABS = [
+  ['tpl', 'Order Template'],
+  ['log', 'Patch Log'],
+  ['qc', 'In Quality'],
+  ['qcin', 'Receiving From Quality'],
+] as const;
+
+type TemplateTab = typeof TEMPLATE_TABS[number][0];
+
 export function WarehouseTemplates() {
+  const [tab, setTab] = useState<TemplateTab>('tpl');
   const [typed, setTyped] = useState('');
   const [patch, setPatch] = useState('');
   const [serial, setSerial] = useState<string | null>(null);
@@ -82,14 +105,39 @@ export function WarehouseTemplates() {
     <div className="page">
       <header className="pagehead no-print">
         <div>
-          <h1 className="pagehead__title">Order template</h1>
+          <h1 className="pagehead__title">Templates</h1>
           <p className="pagehead__sub">
-            The paper that goes with a patch — its orders, grouped for
-            picking.
+            A patch from printed sheet to quality and back.
           </p>
         </div>
       </header>
 
+      <div className="tabs no-print" role="tablist">
+        {TEMPLATE_TABS.map(([key, label]) => (
+          <button key={key} type="button" role="tab"
+                  aria-selected={tab === key}
+                  className={`tabs__tab${tab === key ? ' is-active' : ''}`}
+                  onClick={() => setTab(key)}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* "Open template" jumps to the sheet itself with the number already
+          in the box — the next thing anybody does with a patch, and it was
+          two screens and a retyped number away. */}
+      {tab === 'log' ? (
+        <WarehousePatchLog onOpenTemplate={(n) => {
+          setTyped(n); setPatch(n); setSerial(null); setTab('tpl');
+        }} />
+      ) : null}
+      {/* One page, two questions: what quality still holds, and what it has
+          handed back for the warehouse to count. The tab chooses which. */}
+      {tab === 'qc' ? <WarehouseQc side="holding" /> : null}
+      {tab === 'qcin' ? <WarehouseQc side="returning" /> : null}
+
+      {tab !== 'tpl' ? null : (
+      <>
       <div className="no-print">
         <Card title="Which patch">
           <div className="formrow">
@@ -239,6 +287,8 @@ export function WarehouseTemplates() {
            </footer>
          </article>
        )}
+      </>
+      )}
     </div>
   );
 }

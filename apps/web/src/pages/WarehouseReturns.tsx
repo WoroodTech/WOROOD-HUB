@@ -9,6 +9,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
+  WarehouseItem,
   WarehousePatch, WarehousePatchComment, WarehousePlace, WarehouseReturnIssue,
 } from '../contract';
 import { api } from '../lib/api';
@@ -18,6 +19,7 @@ import { Icon } from '../components/Icon';
 import { SearchSelect } from '../components/Searchselect';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import { WarehouseFiles } from '../components/WarehouseFiles';
+import { useAuth } from '../lib/auth';
 
 function sheetDate(v: string | number | undefined): string {
   if (typeof v === 'number' && Number.isFinite(v)) {
@@ -256,27 +258,29 @@ function LogIssue({ onDone }: { onDone: () => void }) {
         </label>
       </div>
 
-      <div className="formrow">
-        <label className="field">
-          <span className="field__label">What was shipped</span>
-          <input className="input" value={f.shippedItems} maxLength={300}
-                 placeholder="3 Azalea Printed Cotton"
-                 onChange={(e) => set('shippedItems')(e.target.value)} />
-        </label>
-        <label className="field">
-          <span className="field__label">What came back</span>
-          <input className="input" value={f.returnedItems} maxLength={300}
-                 placeholder="2 Azalea Printed Cotton"
-                 onChange={(e) => set('returnedItems')(e.target.value)} />
-        </label>
-        <label className="field">
-          <span className="field__label">
-            Unexpected <span className="field__opt">things nobody sent</span>
-          </span>
-          <input className="input" value={f.unexpectedItems} maxLength={300}
-                 onChange={(e) => set('unexpectedItems')(e.target.value)} />
-        </label>
-      </div>
+      {/*
+        * Picked from the catalogue, not typed.
+        *
+        * These three were free text, so "3 Azalea Printed Cotton", "3 azalea
+        * printed", "Azalea x3" and a misspelling were four different things
+        * to anybody reading the issue later and to every count made from it.
+        * The catalogue is the list of items that exist; choosing from it
+        * means the name on an issue is a name the ledger also uses.
+        *
+        * What is stored is unchanged — "3 Azalea Printed Cotton, 1 Pink
+        * Plain Cotton" — because the sheet's column is read by the Apps
+        * Script and by people, and neither wants a different shape.
+        */}
+      <ItemPicker label="What was shipped"
+                  value={f.shippedItems}
+                  onChange={set('shippedItems')} />
+      <ItemPicker label="What came back"
+                  value={f.returnedItems}
+                  onChange={set('returnedItems')} />
+      <ItemPicker label="Unexpected"
+                  hint="things nobody sent"
+                  value={f.unexpectedItems}
+                  onChange={set('unexpectedItems')} />
 
       <div className="formrow">
         <label className="field">
@@ -340,99 +344,197 @@ function LogIssue({ onDone }: { onDone: () => void }) {
 
 /* ====================================================== patch log ====== */
 
-export function WarehousePatchLog() {
+export function WarehousePatchLog({ onOpenTemplate }: {
+  /** Opens the Order Template tab on this patch, when shown as a tab. */
+  onOpenTemplate?: (patch: string) => void;
+} = {}) {
   const qc = useQueryClient();
   const [status, setStatus] = useState('');
+  const [q, setQ] = useState('');
   const [open, setOpen] = useState<string | null>(null);
+  const [note, setNote] = useState<Record<string, string>>({});
+  const { can } = useAuth();
 
   const patches = useQuery({
     queryKey: qk.whPatches(status),
     queryFn: () => api<WarehousePatch[]>(
-      `/warehouse/patches${status ? `?status=${status}` : ''}`),
+      `/warehouse/patches${status ? `?status=${encodeURIComponent(status)}` : ''}`),
   });
 
   const refresh = () => void qc.invalidateQueries({ queryKey: ['wh'] });
+
+  /*
+   * A note and a decision are one act.
+   *
+   * Reporting a problem with nothing written is a patch nobody can act on,
+   * so the comment goes with the status rather than being a separate step
+   * somebody may not take.
+   */
+  const act = useMutation({
+    mutationFn: async (v: {
+      patch: string;
+      status: 'Complete' | 'Issue reported' | 'Resolved';
+      comment?: string;
+    }) => {
+      if (v.comment?.trim()) {
+        await api('/warehouse/patches/comment', {
+          method: 'POST', body: { patch: v.patch, body: v.comment.trim() },
+        });
+      }
+      return api('/warehouse/patches/status', {
+        method: 'POST', body: { patch: v.patch, status: v.status },
+      });
+    },
+    onSuccess: (_r, v) => {
+      setNote((n) => ({ ...n, [v.patch]: '' }));
+      refresh();
+    },
+  });
 
   if (patches.isLoading) return <LoadingState label="Reading the patch log" />;
   if (patches.isError) {
     return <ErrorState error={patches.error} onRetry={() => void patches.refetch()} />;
   }
 
+  const needle = q.trim().toLowerCase();
+  const rows = (patches.data ?? []).filter(
+    (p) => !needle
+      || p.patch.toLowerCase().includes(needle)
+      || (p.sentBy ?? '').toLowerCase().includes(needle));
+
   return (
-    <div className="page">
-      <header className="pagehead">
-        <div>
-          <h1 className="pagehead__title">Patch log</h1>
-          <p className="pagehead__sub">
-            Batch sheets that have been sent, and the conversation on each.
-          </p>
+    <>
+      <Card title="Which patches">
+        <div className="tabs" role="tablist">
+          {/* The four words the sheet actually holds. "Open" and "Closed"
+              were the portal's own, and matched nothing in the column. */}
+          {([['', 'All'], ['Sent', 'Waiting'], ['Issue reported', 'Issue reported'],
+             ['Complete', 'Complete'], ['Resolved', 'Resolved']] as const)
+            .map(([k, label]) => (
+              <button key={label} type="button" role="tab"
+                      aria-selected={status === k}
+                      className={`tabs__tab${status === k ? ' is-active' : ''}`}
+                      onClick={() => setStatus(k)}>
+                {label}
+              </button>
+            ))}
         </div>
-      </header>
 
-      <div className="tabs" role="tablist">
-        {([['', 'All'], ['Open', 'Open'], ['Closed', 'Closed']] as const).map(([k, label]) => (
-          <button key={label} type="button" role="tab" aria-selected={status === k}
-                  className={`tabs__tab${status === k ? ' is-active' : ''}`}
-                  onClick={() => setStatus(k)}>
-            {label}
-          </button>
-        ))}
-      </div>
+        <label className="field">
+          <span className="field__label">Patch number or person</span>
+          <input className="input" value={q} placeholder="e.g. 6267"
+                 onChange={(e) => setQ(e.target.value)} />
+        </label>
+      </Card>
 
-      {!patches.data?.length ? (
-        <EmptyState title="Nothing sent" hint="No batch sheets have gone out." />
-      ) : (
-        <Card title={`${patches.data.length} patch${patches.data.length === 1 ? '' : 'es'}`}>
-          <div className="tablewrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th scope="col">Patch</th>
-                  <th scope="col">Last sent</th>
-                  <th scope="col">By</th>
-                  <th scope="col" className="is-end">Sent</th>
-                  <th scope="col" className="is-end">Orders</th>
-                  <th scope="col" className="is-end">Units</th>
-                  <th scope="col">Status</th>
-                  <th scope="col" className="is-end">Notes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {patches.data.map((p) => (
-                  <tr key={p.patch}>
-                    <td>
-                      <button type="button" className="ordername"
-                              onClick={() => setOpen(open === p.patch ? null : p.patch)}>
-                        {p.patch}
-                      </button>
-                    </td>
-                    <td>{sheetDate(p.lastSent)}</td>
-                    <td>{p.sentBy || '—'}</td>
-                    {/* More than once is usually a reprint, and sometimes a
-                        mistake worth noticing — so it is marked. */}
-                    <td className={`is-end mono${p.timesSent > 1 ? ' whline__have is-bad' : ''}`}>
-                      {p.timesSent || '—'}
-                    </td>
-                    <td className="is-end mono">{p.orders || '—'}</td>
-                    <td className="is-end mono">{p.units || '—'}</td>
-                    <td>
-                      <span className={`rollpill ${p.status === 'Closed' ? 'is-s5' : 'is-s1'}`}>
-                        {p.status}
-                      </span>
-                    </td>
-                    <td className="is-end mono">{p.comments || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
+      {act.isError ? <ErrorState error={act.error} compact /> : null}
 
-      {open ? <PatchDetail patch={open} onChanged={refresh} /> : null}
-    </div>
+      {!rows.length ? (
+        <EmptyState icon="list" title="Nothing here"
+                    hint={needle ? 'Nothing matches that.'
+                      : 'No batch sheets have gone out.'} />
+      ) : rows.map((p) => {
+        const sent = p.status === 'Sent';
+        const reported = p.status === 'Issue reported';
+        return (
+          <Card key={p.patch}
+                title={`Patch #${p.patch}`}
+                actions={
+                  <span className={`rollpill ${
+                    p.status === 'Complete' || p.status === 'Resolved' ? 'is-s5'
+                    : reported ? 'is-s2' : 'is-s1'}`}>
+                    {p.status}
+                  </span>
+                }>
+            <p className="muted">
+              Sent by <strong>{p.sentBy || 'somebody'}</strong>
+              {' · '}{sheetDate(p.lastSent)}
+              {' · '}{p.orders} order{p.orders === 1 ? '' : 's'}
+              {' · '}{p.units} pcs
+              {/* More than once is usually a reprint, and sometimes a
+                  mistake worth noticing. */}
+              {p.timesSent > 1 ? ` · sent ${p.timesSent} times` : ''}
+            </p>
+
+            {p.closedBy ? (
+              <p className="muted">
+                {p.status} by <strong>{p.closedBy}</strong>
+                {p.closedAt ? ` · ${sheetDate(p.closedAt)}` : ''}
+              </p>
+            ) : null}
+
+            {sent || reported ? (
+              <div className="noterow">
+                <input className="input" maxLength={500}
+                       value={note[p.patch] ?? ''}
+                       placeholder="Something wrong? Write it here — comments can never be deleted"
+                       onChange={(e) =>
+                         setNote((n) => ({ ...n, [p.patch]: e.target.value }))} />
+
+                {sent ? (
+                  <>
+                    <button type="button" className="btn btn--ghost btn--sm"
+                            disabled={act.isPending || !(note[p.patch] ?? '').trim()}
+                            title={(note[p.patch] ?? '').trim() ? undefined
+                              : 'Say what is wrong first'}
+                            onClick={() => act.mutate({
+                              patch: p.patch, status: 'Issue reported',
+                              comment: note[p.patch],
+                            })}>
+                      Report a problem
+                    </button>
+                    <button type="button" className="btn btn--primary btn--sm"
+                            disabled={act.isPending}
+                            onClick={() => act.mutate({
+                              patch: p.patch, status: 'Complete',
+                              comment: note[p.patch],
+                            })}>
+                      Complete — all correct
+                    </button>
+                  </>
+                ) : null}
+
+                {/* A manager's answer to a reported problem, which is why it
+                    is their permission and not the warehouse's. */}
+                {reported && can('warehouse.tx.manage') ? (
+                  <button type="button" className="btn btn--primary btn--sm"
+                          disabled={act.isPending}
+                          onClick={() => act.mutate({
+                            patch: p.patch, status: 'Resolved',
+                            comment: note[p.patch],
+                          })}>
+                    Resolve
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+
+            <div className="formrow--actions">
+              <button type="button" className="linkbtn"
+                      onClick={() => setOpen(open === p.patch ? null : p.patch)}>
+                {open === p.patch ? 'Hide the conversation'
+                  : `Conversation${p.comments ? ` (${p.comments})` : ''}`}
+              </button>
+              {/* Straight to the sheet itself, with the number already in
+                  the box — the next thing anybody does with a patch. */}
+              {onOpenTemplate ? (
+                <button type="button" className="linkbtn"
+                        onClick={() => onOpenTemplate(p.patch)}>
+                  Open template
+                </button>
+              ) : null}
+            </div>
+
+            {open === p.patch ? (
+              <PatchDetail patch={p.patch} onChanged={refresh} />
+            ) : null}
+          </Card>
+        );
+      })}
+    </>
   );
 }
+
 
 function PatchDetail({ patch, onChanged }: { patch: string; onChanged: () => void }) {
   const [text, setText] = useState('');
@@ -486,5 +588,87 @@ function PatchDetail({ patch, onChanged }: { patch: string; onChanged: () => voi
         </div>
       </div>
     </Card>
+  );
+}
+
+/* ------------------------------------------------------- item picker -- */
+
+/** One line of a picked list: the item as the ledger names it, and how many. */
+interface PickedLine { item: string; quantity: string }
+
+/**
+ * Items chosen from the catalogue, kept as the text the sheet expects.
+ *
+ * The column holds "3 Azalea Printed Cotton, 1 Pink Plain Cotton" and is
+ * read by the Apps Script and by people, so that is still what is stored.
+ * What changes is how it is produced: the names come from the catalogue
+ * rather than from typing, so an issue cannot name an item that does not
+ * exist or spell one three different ways.
+ *
+ * Text typed before this existed is parsed back into lines where it can be,
+ * and left alone where it cannot — an old issue is not worth losing.
+ */
+function ItemPicker({ label, hint, value, onChange }: {
+  label: string;
+  hint?: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const items = useQuery({
+    queryKey: qk.whItems,
+    queryFn: () => api<WarehouseItem[]>('/warehouse/items'),
+    staleTime: 30 * 60_000,
+  });
+
+  /* "3 Azalea Printed Cotton" → { quantity: 3, item: 'Azalea Printed Cotton' } */
+  const lines: PickedLine[] = value.trim()
+    ? value.split(',').map((part) => {
+        const m = part.trim().match(/^(\d+)\s+(.*)$/);
+        return m
+          ? { quantity: m[1], item: m[2].trim() }
+          : { quantity: '1', item: part.trim() };
+      }).filter((l) => l.item)
+    : [];
+
+  const write = (next: PickedLine[]) =>
+    onChange(next
+      .filter((l) => l.item)
+      .map((l) => `${Number(l.quantity) || 1} ${l.item}`)
+      .join(', '));
+
+  const set = (i: number, patch: Partial<PickedLine>) =>
+    write(lines.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+
+  return (
+    <div className="field">
+      <span className="field__label">
+        {label}{hint ? <span className="field__opt"> {hint}</span> : null}
+      </span>
+
+      {lines.map((l, i) => (
+        <div key={i} className="polines__row">
+          <SearchSelect
+            value={l.item}
+            onChange={(v: string) => set(i, { item: v })}
+            placeholder="Search the catalogue…"
+            options={(items.data ?? []).map((it) => ({
+              value: it.name, label: it.name,
+            }))} />
+          <input className="input" type="number" min="1" step="1"
+                 aria-label="Quantity"
+                 value={l.quantity}
+                 onChange={(e) => set(i, { quantity: e.target.value })} />
+          <button type="button" className="btn btn--ghost btn--sm"
+                  onClick={() => write(lines.filter((_, j) => j !== i))}>
+            Remove
+          </button>
+        </div>
+      ))}
+
+      <button type="button" className="btn btn--ghost btn--sm"
+              onClick={() => write([...lines, { item: '', quantity: '1' }])}>
+        + Add an item
+      </button>
+    </div>
   );
 }

@@ -163,6 +163,60 @@ export class WarehouseQcService {
   }
 
   /**
+   * The manager has seen the quantity difference.
+   *
+   * A shortfall at the door is recorded when the batch is received, and then
+   * nothing happens to it: the numbers disagree, the batch carries on, and
+   * whether anybody with authority ever looked is not written down. The Apps
+   * Script has `qcAck_` for exactly this — "the manager saw the quantity
+   * difference" — and it was the one step of that tab the portal had no
+   * equivalent for.
+   *
+   * It changes no quantity and settles nothing. It records that the
+   * difference was seen, by whom and when, so an unexplained gap can be told
+   * apart from one somebody has already taken on.
+   */
+  async acknowledge(p: Principal, serial: string, note?: string) {
+    const b = await this.mustFind(serial);
+
+    if (b.status === 'Cancelled') {
+      throw new BadRequestException('That batch was cancelled.');
+    }
+    if (!b.lines.some((l: any) => l.got !== l.sent)) {
+      throw new BadRequestException('Nothing on that batch disagrees.');
+    }
+    /* Said once. A second person pressing it would overwrite the first, and
+       who looked first is the part worth keeping. */
+    if (b.state.ack) {
+      throw new BadRequestException(
+        `Already seen by ${b.state.ack.by} on ${b.state.ack.at}.`);
+    }
+
+    const state = {
+      ...b.state,
+      ack: {
+        by: who(p),
+        at: sheetDate(DateTime.now().setZone(TZ)),
+        note: String(note ?? '').trim(),
+      },
+    };
+
+    await this.save(b.rowNumber, b.lines, state);
+
+    await this.audit.write({
+      actorId: p.id, moduleKey: 'warehouse', action: 'warehouse.qc.acknowledge',
+      entityType: 'warehouse_qc_batch', entityId: b.serial,
+      payload: {
+        shortfall: b.lines
+          .filter((l: any) => l.got !== l.sent)
+          .map((l: any) => ({ item: l.item, sent: l.sent, got: l.got })),
+      },
+    });
+
+    return { ok: true, ack: state.ack };
+  }
+
+  /**
    * Quality hands pieces back, saying where each goes.
    *
    * Nothing is written to the ledger here. This records an intention; the
@@ -400,10 +454,41 @@ export class WarehouseQcService {
     }));
 
     r.status = 'Confirmed';
+    /*
+     * A changed quantity needs a reason before it is booked.
+     *
+     * Quality said it was handing back fifty and the warehouse counted
+     * forty-eight: those two pieces are either a miscount, a loss, or
+     * something still in a box — and which of those it is cannot be worked
+     * out afterwards from the numbers alone. The Apps Script's own wording
+     * is "change a quantity to what you really received and write why. Only
+     * then it is booked in the sheet."
+     *
+     * Counting the same as quality said needs no note: agreeing is not an
+     * exception and asking for one would teach people to type a full stop.
+     */
+    const changed = counted.filter((c) => {
+      /* The same comparison the loop above makes, so a line counted as
+         matching there cannot read as unmatched here. */
+      const said = (r.lines ?? []).find(
+        (l: any) => l.item.toLowerCase() === c.item.toLowerCase()
+          && l.warehouse === c.warehouse
+          && (l.location ?? '') === (c.location ?? ''));
+      return Number(said?.quantity ?? 0) !== c.quantity;
+    });
+
+    const note = String(dto.note ?? '').trim();
+    if (changed.length && note.length < 3) {
+      const which = changed.slice(0, 3).map((c) => c.item).join(', ');
+      throw new BadRequestException(
+        `Say why the count differs on ${which}`
+        + `${changed.length > 3 ? ` and ${changed.length - 3} more` : ''}.`);
+    }
+
     r.confirmedAt = date;
     r.confirmedBy = who(p);
     r.confirmedLines = counted;
-    r.confirmNote = String(dto.note ?? '').trim();
+    r.confirmNote = note;
 
     await this.save(b.rowNumber, lines, b.state);
     await this.reader.invalidate();

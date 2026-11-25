@@ -25,6 +25,7 @@ import { STATUS_SHORT, NewTicketButton } from './Tasks';
 import { localNow } from './TaskDetail';
 import { useAuth } from '../lib/auth';
 import { MyTicketBoard } from './MyTicketBoard';
+import { localizedName, AR_DEPARTMENTS } from '../lib/i18n';
 import type { TaskPerson } from '../contract';
 
 /** What a drop needs before it can be completed. The API is the authority and
@@ -212,7 +213,11 @@ function ManagerBoard() {
           >
             <option value="">{oversees ? 'Every department' : 'All my departments'}</option>
             {data.departments.map((d) => (
-              <option key={d.id} value={d.id}>{oversees ? `In ${d.name}` : d.name}</option>
+              <option key={d.id} value={d.id}>
+                {oversees
+                  ? `In ${localizedName(d.name, d.nameAr, AR_DEPARTMENTS)}`
+                  : localizedName(d.name, d.nameAr, AR_DEPARTMENTS)}
+              </option>
             ))}
           </select>
         ) : null}
@@ -227,7 +232,9 @@ function ManagerBoard() {
                   title="Narrow to what one department asked of this one">
             <option value="">Asked by anyone</option>
             {data.requesters.map((d) => (
-              <option key={d.id} value={d.id}>Asked by {d.name}</option>
+              <option key={d.id} value={d.id}>
+                Asked by {localizedName(d.name, d.nameAr, AR_DEPARTMENTS)}
+              </option>
             ))}
           </select>
         ) : null}

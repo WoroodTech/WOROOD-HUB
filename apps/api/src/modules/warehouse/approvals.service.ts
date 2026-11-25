@@ -17,7 +17,7 @@ import { Principal } from '../../common/auth';
 import { AuditService } from '../../core/core.module';
 import { WarehouseReaderService } from './sheets/warehouse-reader.service';
 import { WarehouseSheetClient } from './sheets/warehouse-sheet.client';
-import { TX, TX_TAB } from './sheets/tabs';
+import { CHANGE, CHANGE_TAB, TX, TX_TAB } from './sheets/tabs';
 
 @Injectable()
 export class WarehouseApprovalsService {
@@ -75,6 +75,47 @@ export class WarehouseApprovalsService {
     });
 
     return { ok: true, id: row.id as string };
+  }
+
+  /**
+   * What was edited, or what was deleted — the two logs beside Approvals.
+   *
+   * An approval that leaves no record of what it actually changed is not
+   * much of a control, which is why the Apps Script keeps `App Change Log`
+   * append-only and shows it next to the queue. The portal named the tab
+   * and read it nowhere.
+   *
+   * Newest first, because the question is almost always what happened
+   * lately rather than what happened once.
+   */
+  async changes(action: 'Edit' | 'Delete', limit = 200) {
+    const rows = await this.sheet.read(CHANGE_TAB);
+    const out: any[] = [];
+
+    for (let i = rows.length - 1; i >= 1 && out.length < limit; i--) {
+      const r = rows[i] ?? [];
+      const what = String(r[CHANGE.action] ?? '').trim();
+      if (!what) continue;
+      /* The column holds "Edit", "Delete" and "Create"; the two logs each
+         show one of them, so a create does not fill both. */
+      if (what.toLowerCase() !== action.toLowerCase()) continue;
+
+      out.push({
+        at: String(r[CHANGE.at] ?? '').trim(),
+        action: what,
+        by: String(r[CHANGE.enteredBy] ?? '').trim()
+          || String(r[CHANGE.byEmail] ?? '').trim(),
+        kind: String(r[CHANGE.kind] ?? '').trim(),
+        reference: String(r[CHANGE.reference] ?? '').trim(),
+        before: String(r[CHANGE.before] ?? '').trim(),
+        after: String(r[CHANGE.after] ?? '').trim(),
+        requestedBy: String(r[CHANGE.requestedBy] ?? '').trim(),
+        approvedBy: String(r[CHANGE.approvedBy] ?? '').trim(),
+        approvedAt: String(r[CHANGE.approvedAt] ?? '').trim(),
+      });
+    }
+
+    return out;
   }
 
   /** What is waiting. */

@@ -1322,6 +1322,8 @@ export type RollStatus =
   'Received' | 'Planned' | 'Issued' | 'Reported' | 'Delivered' | 'Closed';
 
 export interface WarehouseRoll {
+  /** The purchase order it arrived against — the sheet's P.O of Q.D. */
+  poNumber: string;
   rowNumber: number;
   rollId: string;
   rollCode: string;

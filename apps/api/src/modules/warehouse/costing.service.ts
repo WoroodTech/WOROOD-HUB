@@ -18,13 +18,16 @@ import { AuditService } from '../../core/core.module';
 import { WarehouseSheetClient } from './sheets/warehouse-sheet.client';
 import { WarehouseReaderService } from './sheets/warehouse-reader.service';
 import { WarehouseRollsService } from './rolls.service';
-import { counts } from './sheets/tabs';
+import { SETTINGS_TAB, counts } from './sheets/tabs';
 import { parseSheetDate } from './sheets/parse-date';
 
 const TZ = 'Africa/Cairo';
 
 /** The key/value tab both costing and planning read from. */
-export const SETTINGS_TAB = 'Rolls Settings';
+/* Re-exported for anything that already imports it from here; the
+   definition lives in `sheets/tabs` so no service has to import another
+   service for a tab name. */
+export { SETTINGS_TAB };
 
 /**
  * Monthly overheads and the fabric rate, in EGP.

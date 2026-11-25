@@ -9,6 +9,8 @@ import { Skeleton } from './States';
 import { formatDate } from '../lib/format';
 import { LocaleToggle, ThemeToggle } from './Preferences';
 import { useAppearanceVersion } from '../lib/theme';
+import { useAppearance } from '../lib/theme';
+import { localizedName, AR_ROLES } from '../lib/i18n';
 
 function initials(name: string): string {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? '').join('');
@@ -40,6 +42,7 @@ export function Shell() {
   const location = useLocation();
   const [navOpen, setNavOpen] = useState(false);
   const appearanceVersion = useAppearanceVersion();
+  const { locale } = useAppearance();
 
   useEffect(() => { setNavOpen(false); }, [location.pathname]);
 
@@ -68,7 +71,7 @@ export function Shell() {
             module.navigation.length ? (
               <div className="navgroup" key={module.key}>
                 <p className="navgroup__label">
-                  {module.name}
+                  {locale === 'ar' ? (module.nameAr ?? module.name) : module.name}
                   {module.comingSoon ? <span className="navgroup__soon">soon</span> : null}
                 </p>
                 {module.navigation.map((item) => {
@@ -96,7 +99,8 @@ export function Shell() {
                     end={exact}
                     className={({ isActive }) => `navitem${isActive ? ' navitem--active' : ''}`}
                   >
-                    <Icon name={item.icon} size={17} /> <span>{item.label}</span>
+                    <Icon name={item.icon} size={17} />
+                    <span>{locale === 'ar' ? (item.labelAr ?? item.label) : item.label}</span>
                   </NavLink>
                   );
                 })}
@@ -139,7 +143,9 @@ export function Shell() {
               <span className="who__name">{principal?.fullName}</span>
               <span className="who__roles">
                 {(principal?.roles ?? []).map((role) => (
-                  <span className="rolechip" key={role}>{role.replace(/-/g, ' ')}</span>
+                  <span className="rolechip" key={role}>
+                    {localizedName(role.replace(/-/g, ' '), null, AR_ROLES)}
+                  </span>
                 ))}
               </span>
             </span>

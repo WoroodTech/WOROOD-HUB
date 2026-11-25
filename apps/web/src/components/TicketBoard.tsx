@@ -16,6 +16,7 @@ import { Link } from 'react-router-dom';
 import type { BoardCard, BoardColumnData } from '../contract';
 import { Badge } from './Card';
 import { Icon } from './Icon';
+import { localizedName, AR_DEPARTMENTS } from '../lib/i18n';
 import { formatDate } from '../lib/format';
 import { STATUS_LABEL, STATUS_SHORT, STATUS_TONE } from '../pages/Tasks';
 
@@ -64,8 +65,8 @@ export function TicketCard({ card }: { card: BoardCard }) {
         <span
           className={`tcard__signal${card.internal ? '' : ' tcard__signal--ext'}`}
           title={card.internal
-            ? `Raised and done inside ${card.departmentName}`
-            : `${card.requesterDepartmentName ?? 'Another department'} asked ${card.departmentName}`}
+            ? `Raised and done inside ${localizedName(card.departmentName, null, AR_DEPARTMENTS)}`
+            : `${localizedName(card.requesterDepartmentName, null, AR_DEPARTMENTS)} asked ${localizedName(card.departmentName, null, AR_DEPARTMENTS)}`}
         >
           <Icon name={card.internal ? 'home' : 'globe'} size={12} />
           {card.internal ? 'internal' : 'external'}

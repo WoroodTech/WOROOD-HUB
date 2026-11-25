@@ -20,12 +20,13 @@ import { Principal } from '../../common/auth';
 import { AuditService } from '../../core/core.module';
 import { WarehouseSheetClient } from './sheets/warehouse-sheet.client';
 import { WarehouseReaderService } from './sheets/warehouse-reader.service';
-import { sheetDate } from './sheets/parse-date';
+import { parseSheetDate, sheetDate } from './sheets/parse-date';
 import {
   ROLL_NEXT, ROLL_STATUS, RollStatus,
   ROLLS_BATCHES, ROLLS_BATCHES_TAB,
   ROLLS_REGISTER, ROLLS_REGISTER_TAB,
   ROLLS_WORKSHOP, ROLLS_WORKSHOP_TAB,
+  SETTINGS_TAB,
 } from './sheets/tabs';
 
 const TZ = 'Africa/Cairo';
@@ -36,6 +37,8 @@ export interface Roll {
   rollCode: string;
   rollName: string;
   ctn: string;
+  /** The purchase order it arrived against — the sheet's P.O of Q.D. */
+  poNumber: string;
   meters: number;
   received: string | number;
   receivedBy: string;
@@ -97,6 +100,7 @@ export class WarehouseRollsService {
         rollCode: String(r[ROLLS_REGISTER.rollCode] ?? '').trim(),
         rollName: String(r[ROLLS_REGISTER.rollName] ?? '').trim(),
         ctn: String(r[ROLLS_REGISTER.ctn] ?? '').trim(),
+        poNumber: String(r[ROLLS_REGISTER.poNumber] ?? '').trim(),
         meters: num(r[ROLLS_REGISTER.meters]),
         received: r[ROLLS_REGISTER.received] ?? '',
         receivedBy: String(r[ROLLS_REGISTER.receivedBy] ?? '').trim(),
@@ -211,6 +215,8 @@ export class WarehouseRollsService {
   async receive(p: Principal, dto: {
     rollId: string; rollCode?: string; rollName?: string;
     ctn?: string; meters: number; note?: string;
+    /** The purchase order the roll arrived against — the sheet's P.O of Q.D. */
+    poNumber?: string;
   }) {
     const rollId = String(dto.rollId ?? '').trim();
     if (!rollId) throw new BadRequestException('Enter the roll id.');
@@ -238,6 +244,10 @@ export class WarehouseRollsService {
     row[ROLLS_REGISTER.receivedBy] = WarehouseSheetClient.safe(who(p));
     row[ROLLS_REGISTER.status] = 'Received';
     row[ROLLS_REGISTER.note] = WarehouseSheetClient.safe(dto.note ?? '');
+    /* The column the row already reached and nothing ever filled: a roll
+       received with no purchase order on it cannot be matched to what was
+       ordered or to what the supplier invoiced. */
+    row[ROLLS_REGISTER.poNumber] = WarehouseSheetClient.safe(dto.poNumber ?? '');
 
     await this.sheet.append(ROLLS_REGISTER_TAB, row);
     await this.audit.write({
@@ -284,23 +294,21 @@ export class WarehouseRollsService {
    * order is what everything afterwards is reported against.
    */
   async issue(p: Principal, dto: {
-    operationOrder: string; rollIds: string[]; expectedUnits: number; note?: string;
+    rollIds: string[]; note?: string;
   }) {
-    const oo = String(dto.operationOrder ?? '').trim();
-    if (!oo) throw new BadRequestException('Enter the operation order number.');
-
+    /*
+     * The warehouse hands rolls over; it does not open a job order.
+     *
+     * One paper, one serial (W.R 002), several rolls — and no operation
+     * number on it, because the workshop assigns J.O 001 when it picks a
+     * roll up. That is the Apps Script's own note on `rlIssue_`, and the
+     * portal had the warehouse typing a job order for work it does not do.
+     */
     const ids = (dto.rollIds ?? []).map((s) => String(s).trim()).filter(Boolean);
     if (!ids.length) throw new BadRequestException('Choose at least one roll.');
-
-    const expected = Number(dto.expectedUnits);
-    if (!Number.isFinite(expected) || expected <= 0) {
-      throw new BadRequestException('Enter how many pieces are expected.');
-    }
-
-    const already = (await this.jobOrders()).find(
-      (j) => j.operationOrder.toLowerCase() === oo.toLowerCase());
-    if (already) {
-      throw new BadRequestException(`${oo} already exists, issued ${already.issuedBy}.`);
+    /* One lorry, one paper. Thirty is the Apps Script's own ceiling. */
+    if (ids.length > 30) {
+      throw new BadRequestException('Thirty rolls at most on one paper.');
     }
 
     const all = await this.rolls();
@@ -308,40 +316,87 @@ export class WarehouseRollsService {
     for (const id of ids) {
       const roll = all.find((r) => r.rollId.toLowerCase() === id.toLowerCase());
       if (!roll) throw new NotFoundException(`${id} is not in the register.`);
-      this.assertCanMoveTo(roll, 'Issued');
+      this.assertCanMoveTo(roll, 'Handed over');
       chosen.push(roll);
     }
+
+    for (const roll of chosen) await this.setStatus(roll, 'Handed over');
+
+    await this.audit.write({
+      actorId: p.id, moduleKey: 'warehouse', action: 'warehouse.rolls.issue',
+      entityType: 'warehouse_roll', entityId: chosen.map((r) => r.rollId).join(', '),
+      payload: { rolls: chosen.length, note: dto.note ?? '' },
+    });
+
+    return { ok: true, rolls: chosen.length };
+  }
+
+  /**
+   * The workshop picks up one roll and opens a job order on it.
+   *
+   * The number and the expected pieces are both worked out rather than
+   * typed: `J.O 001` is the next in the series, and the pieces are the
+   * roll's metres times what a metre yields. Asking the workshop for either
+   * invites a guess, and both are checked against later.
+   */
+  async startJobOrder(p: Principal, dto: { rollId: string; note?: string }) {
+    const roll = await this.mustFind(dto.rollId);
+    this.assertCanMoveTo(roll, 'Issued');
+
+    /*
+     * `unitsPerMeter` read from the settings tab, not from the costing
+     * service.
+     *
+     * Costing already injects this service to price a job order, so taking
+     * it as a dependency here would be a cycle Nest refuses at boot. The
+     * constant is one cell, and both read it from the same place.
+     */
+    const [jobs, settings] = await Promise.all([
+      this.jobOrders(), this.planSettings(),
+    ]);
+
+    /* The next in the series, by the highest number already used. */
+    let highest = 0;
+    for (const j of jobs) {
+      const m = /^J\.O\s*(\d+)$/i.exec(j.operationOrder.trim());
+      if (m) highest = Math.max(highest, Number(m[1]));
+    }
+    const next = String(highest + 1);
+    const oo = `J.O ${next.padStart(Math.max(3, next.length), '0')}`;
+
+    const metres = Number(roll.meters) || 0;
+    const expected = Math.round(metres * (settings.unitsPerMeter || 0));
 
     const row = new Array(ROLLS_WORKSHOP.flag + 1).fill('');
     row[ROLLS_WORKSHOP.operationOrder] = WarehouseSheetClient.safe(oo);
     row[ROLLS_WORKSHOP.issued] = sheetDate(DateTime.now().setZone(TZ));
     row[ROLLS_WORKSHOP.issuedBy] = WarehouseSheetClient.safe(who(p));
-    row[ROLLS_WORKSHOP.rolls] = chosen.length;
-    row[ROLLS_WORKSHOP.meters] = chosen.reduce((n, r) => n + r.meters, 0);
+    row[ROLLS_WORKSHOP.rolls] = 1;
+    row[ROLLS_WORKSHOP.meters] = Math.round(metres * 100) / 100;
     row[ROLLS_WORKSHOP.expectedUnits] = expected;
     row[ROLLS_WORKSHOP.status] = 'At workshop';
     row[ROLLS_WORKSHOP.note] = WarehouseSheetClient.safe(dto.note ?? '');
-    row[ROLLS_WORKSHOP.rollIds] = chosen.map((r) => r.rollId).join(', ');
+    row[ROLLS_WORKSHOP.rollIds] = WarehouseSheetClient.safe(roll.rollId);
 
     await this.sheet.append(ROLLS_WORKSHOP_TAB, row);
 
-    /* Each roll now belongs to the order, and says so. Done after the order
-       exists, so a failure half-way leaves rolls that are still issuable
-       rather than rolls pointing at an order that was never created. */
-    for (const roll of chosen) {
-      await this.sheet.write(
-        ROLLS_REGISTER_TAB, `L${roll.rowNumber}:N${roll.rowNumber}`,
-        [[WarehouseSheetClient.safe(oo), sheetDate(DateTime.now().setZone(TZ)), expected]]);
-      await this.setStatus(roll, 'Issued');
-    }
+    /* The roll carries its job order and what is expected off it, so the
+       register alone answers "where is this roll and what for". */
+    const at = roll.rowNumber;
+    await this.sheet.write(ROLLS_REGISTER_TAB, `L${at}:N${at}`, [[
+      WarehouseSheetClient.safe(oo),
+      sheetDate(DateTime.now().setZone(TZ)),
+      expected,
+    ]]);
+    await this.setStatus(roll, 'Issued');
 
     await this.audit.write({
-      actorId: p.id, moduleKey: 'warehouse', action: 'warehouse.rolls.issue',
+      actorId: p.id, moduleKey: 'warehouse', action: 'warehouse.rolls.start',
       entityType: 'warehouse_job_order', entityId: oo,
-      payload: { rolls: chosen.length, expected },
+      payload: { rollId: roll.rollId, metres, expected },
     });
 
-    return { ok: true, operationOrder: oo, rolls: chosen.length };
+    return { ok: true, operationOrder: oo, expectedUnits: expected };
   }
 
   /**
@@ -352,6 +407,112 @@ export class WarehouseRollsService {
    * whose grades do not add up to its total cannot be reconciled against the
    * fabric that went in, and nobody will notice until the fabric is gone.
    */
+  /**
+   * How the rolls cycle has been performing over a period.
+   *
+   * Counted from the job orders rather than kept as running totals: a
+   * stored figure drifts from the rows it came from, and the rows are the
+   * thing anybody will check it against.
+   *
+   * The period filters on when a job order was issued, not when it closed —
+   * "the last ninety days" means fabric that went out in them, and a job
+   * order opened in August and finished in November belongs to August.
+   */
+  async performance(from: string, to: string) {
+    const [jobs, rolls, settings] = await Promise.all([
+      this.jobOrders(), this.rolls(), this.planSettings(),
+    ]);
+
+    const start = Date.parse(from);
+    const end = Date.parse(to) + 86_400_000;
+    /* The one date reader the module shares, so a shape it understands
+       here is a shape it understands on every other screen. */
+    const at = (when: unknown) => parseSheetDate(when)?.toMillis() ?? null;
+    const within = (when: unknown) => {
+      const t = at(when);
+      return t !== null && t >= start && t < end;
+    };
+
+    const n = (v: unknown) => Number(v) || 0;
+    const period = jobs.filter((j) => within(j.issued));
+    const completed = period.filter(
+      (j) => j.status === 'Closed' || j.status === 'Delivered');
+    const live = period.filter(
+      (j) => j.status === 'Issued' || j.status === 'Reported');
+
+    const expected = period.reduce((t, j) => t + n(j.expectedUnits), 0);
+    const good = period.reduce((t, j) => t + n(j.gradeA), 0);
+    const seconds = period.reduce((t, j) => t + n(j.gradeB), 0);
+    const waste = period.reduce(
+      (t, j) => t + n(j.fabricationWaste) + n(j.materialWaste), 0);
+    const received = good + seconds;
+    const metres = period.reduce((t, j) => t + n(j.meters), 0);
+
+    /* How long fabric took from entering the warehouse to a finished job
+       order — the number that says whether the floor is moving. */
+    const cycles: number[] = [];
+    for (const j of completed) {
+      const a = at(j.issued);
+      const b = at(j.delivered);
+      if (a !== null && b !== null && b >= a) {
+        cycles.push(Math.round((b - a) / 86_400_000));
+      }
+    }
+    const cycleDays = cycles.length
+      ? Math.round((cycles.reduce((t, d) => t + d, 0) / cycles.length) * 10) / 10
+      : 0;
+
+    /* Out past the agreed days with nothing back. */
+    const overdueAfter = 14;
+    const now = Date.now();
+    const overdue = live.filter((j) => {
+      const t = at(j.issued);
+      return t !== null && (now - t) / 86_400_000 > overdueAfter;
+    });
+
+    /* Fabric that has been sitting in the register a month or more. */
+    const oldRolls = rolls.filter((r) => {
+      if (r.status !== 'Received' && r.status !== 'Planned') return false;
+      const t = at(r.received);
+      return t !== null && (now - t) / 86_400_000 > 30;
+    });
+
+    const inStockMetres = rolls
+      .filter((r) => r.status === 'Received' || r.status === 'Planned')
+      .reduce((t, r) => t + n(r.meters), 0);
+
+    const pct = (part: number, whole: number) =>
+      whole ? Math.round((part / whole) * 1000) / 10 : 0;
+
+    return {
+      from, to,
+      jobOrders: { total: period.length, completed: completed.length, live: live.length },
+      rollsReceived: {
+        count: rolls.filter((r) => within(r.received)).length,
+        metres: Math.round(
+          rolls.filter((r) => within(r.received))
+            .reduce((t, r) => t + n(r.meters), 0) * 10) / 10,
+      },
+      pieces: { expected, good, seconds, received, waste },
+      /* Good against everything that came back — the headline figure. */
+      goodPct: pct(good, received),
+      wastePct: pct(waste, received + waste),
+      variance: received - expected,
+      variancePct: pct(received - expected, expected),
+      /* Pieces a metre actually produced, against what the constant says
+         it should. A yield below standard is fabric being wasted in the
+         cutting rather than in the sewing. */
+      yieldPerMetre: metres ? Math.round((received / metres) * 100) / 100 : 0,
+      standardYield: settings.unitsPerMeter,
+      cycleDays,
+      overdue: overdue.length,
+      stockAge: oldRolls.length,
+      fabricInStock: { metres: Math.round(inStockMetres * 10) / 10,
+                       rolls: rolls.filter(
+                         (r) => r.status === 'Received' || r.status === 'Planned').length },
+    };
+  }
+
   async report(p: Principal, dto: {
     operationOrder: string;
     total: number; gradeA: number; gradeB: number; gradeC: number;
@@ -549,6 +710,26 @@ export class WarehouseRollsService {
    * lookup, and a new step added later cannot quietly skip a check somebody
    * forgot to copy.
    */
+  /**
+   * What a metre yields, from the settings tab.
+   *
+   * One cell, read directly: the costing service owns the whole of that
+   * tab but already depends on this one, and pointing them at each other
+   * would be a cycle for a single number.
+   */
+  private async planSettings(): Promise<{ unitsPerMeter: number }> {
+    const rows = await this.sheet.read(SETTINGS_TAB).catch(() => []);
+    for (let i = 1; i < rows.length; i++) {
+      const key = String(rows[i]?.[0] ?? '').trim().toLowerCase();
+      if (key === 'unitspermeter' || key === 'units per meter') {
+        const n = Number(rows[i]?.[1]);
+        if (Number.isFinite(n) && n > 0) return { unitsPerMeter: n };
+      }
+    }
+    /* The Apps Script's own default: 1.43 pieces out of a metre. */
+    return { unitsPerMeter: 1.43 };
+  }
+
   private assertCanMoveTo(roll: Roll, next: RollStatus) {
     const now = roll.status as RollStatus;
 

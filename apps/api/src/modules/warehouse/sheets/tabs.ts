@@ -141,7 +141,8 @@ export const ROLLS_REGISTER_SHAPE: Record<string, number> = {
 
 /** The six states a roll can be in. Nothing else is a status. */
 export const ROLL_STATUS = [
-  'Received', 'Planned', 'Issued', 'Reported', 'Delivered', 'Closed',
+  'Received', 'Planned', 'Handed over', 'Issued',
+  'Reported', 'Delivered', 'Closed',
 ] as const;
 export type RollStatus = (typeof ROLL_STATUS)[number];
 
@@ -153,8 +154,19 @@ export type RollStatus = (typeof ROLL_STATUS)[number];
  * somebody has to remember to add when a new step appears.
  */
 export const ROLL_NEXT: Record<RollStatus, RollStatus[]> = {
-  Received: ['Planned', 'Issued'],
-  Planned: ['Issued'],
+  Received: ['Planned', 'Handed over'],
+  Planned: ['Handed over'],
+  /*
+   * Handed over, and not yet started.
+   *
+   * The warehouse gives rolls to the workshop on one paper (W.R 002) with
+   * no job order on it — the workshop assigns J.O 001 when it picks a roll
+   * up, which is the Apps Script's own comment on `rlIssue_`. Without this
+   * state the portal demanded a job order from the warehouse at handover,
+   * so the warehouse was inventing numbers for work it does not do and the
+   * workshop had no step of its own to take.
+   */
+  'Handed over': ['Issued'],
   Issued: ['Reported'],
   /* A job order can be reported in several batches, so Reported stays
      reachable from itself. */
@@ -162,6 +174,18 @@ export const ROLL_NEXT: Record<RollStatus, RollStatus[]> = {
   Delivered: ['Closed'],
   Closed: [],
 };
+
+/**
+ * `Rolls Settings` — the planning constants, one per row.
+ *
+ * Here rather than beside the service that owns it: the rolls service needs
+ * `unitsPerMeter` to work out what a roll should yield, and importing the
+ * costing service for the tab's name made a cycle between the two files.
+ * Nest cannot see through that, so it handed costing an undefined
+ * dependency and refused to start — after a clean build, which is the part
+ * that makes it hard to spot.
+ */
+export const SETTINGS_TAB = 'Rolls Settings';
 
 export const ROLLS_WORKSHOP_TAB = 'Rolls Workshop';
 export const ROLLS_WORKSHOP = {
@@ -210,6 +234,33 @@ export const QC = {
 
 export const AUDIT_TAB = 'App Audit Log';
 export const CHANGE_TAB = 'App Change Log';
+
+/**
+ * `App Change Log` — append-only: who created, edited or deleted what, who
+ * asked for it, who approved it, and when.
+ *
+ * The tab was named here and read by nothing, so the two logs the Apps
+ * Script shows beside Approvals — what was edited, what was deleted — had no
+ * source in the portal at all. An approval that leaves no record of what it
+ * changed is not much of a control.
+ */
+export const CHANGE = {
+  at: 0, action: 1, byEmail: 2, enteredBy: 3,
+  kind: 4, reference: 5,
+  before: 6, after: 7,
+  txId: 8,
+  createdAt: 9, createdBy: 10,
+  requestedBy: 11, approvedBy: 12, approvedAt: 13,
+  requestId: 14,
+} as const;
+
+export const CHANGE_SHAPE: Record<string, number> = {
+  'Time (GMT)': CHANGE.at,
+  'Action': CHANGE.action,
+  'Done By (email)': CHANGE.byEmail,
+  'Tr. Kind': CHANGE.kind,
+  'Order # / Patch': CHANGE.reference,
+};
 /**
  * `Return Issues` — a return that did not match its order.
  *
@@ -274,7 +325,11 @@ export const PRINT_DOCS = {
 export const DOC_TYPES: Record<string, { label: string; prefix: string }> = {
   QC_NOTE: { label: 'Quality note', prefix: 'Q.C' },
   WQ_NOTE: { label: 'Workshop quality note', prefix: 'W.Q' },
-  HANDOVER: { label: 'Handover paper', prefix: 'Q.D' },
+  /* `W.R`, as the Apps Script writes it — "internal warehouse handover
+     serial: W.R001, W.R002 ...". `Q.D` appears nowhere in the source, so a
+     handover raised here would have been numbered in a series the sheet has
+     never seen and nobody could match to a paper. */
+  HANDOVER: { label: 'Handover paper', prefix: 'W.R' },
   PATCH: { label: 'Patch sheet', prefix: 'R.O' },
 };
 

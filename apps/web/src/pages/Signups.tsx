@@ -12,6 +12,7 @@ import { api } from '../lib/api';
 import { formatDateTime } from '../lib/format';
 import { Icon } from '../components/Icon';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
+import { localizedName, AR_DEPARTMENTS } from '../lib/i18n';
 
 export function Signups() {
   const qc = useQueryClient();
@@ -122,7 +123,7 @@ export function Signups() {
                     <tr key={r.id}>
                       <td>{r.fullName}</td>
                       <td>{r.email}</td>
-                      <td>{r.departmentName}</td>
+                      <td>{localizedName(r.departmentName, null, AR_DEPARTMENTS)}</td>
                       <td>{formatDateTime(r.requestedAt)}</td>
                       <td>
                         <div className="rowtools">

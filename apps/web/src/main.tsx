@@ -7,6 +7,7 @@ import { AuthProvider } from './lib/auth';
 import { RealtimeProvider } from './lib/realtime';
 import { AppearanceProvider } from './lib/theme';
 import { ToastProvider } from './lib/toast';
+import { I18nRuntime } from './lib/i18n';
 import { ApiError } from './lib/api';
 import './styles.css';
 
@@ -29,13 +30,15 @@ createRoot(document.getElementById('root')!).render(
     <QueryClientProvider client={queryClient}>
       <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <AppearanceProvider>
-          <ToastProvider>
-            <AuthProvider>
-              <RealtimeProvider>
-                <App />
-              </RealtimeProvider>
-            </AuthProvider>
-          </ToastProvider>
+          <I18nRuntime>
+            <ToastProvider>
+              <AuthProvider>
+                <RealtimeProvider>
+                  <App />
+                </RealtimeProvider>
+              </AuthProvider>
+            </ToastProvider>
+          </I18nRuntime>
         </AppearanceProvider>
       </BrowserRouter>
     </QueryClientProvider>

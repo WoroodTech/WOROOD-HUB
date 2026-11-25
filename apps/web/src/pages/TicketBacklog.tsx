@@ -23,10 +23,11 @@ import { Icon } from '../components/Icon';
 import { formatDate } from '../lib/format';
 import { PRIORITY_TONE, NewTicketButton } from './Tasks';
 import { localNow } from './TaskDetail';
+import { localizedName, AR_DEPARTMENTS } from '../lib/i18n';
 
 interface BacklogResponse {
   empty: 'notAManager' | null;
-  departments: Array<{ id: string; name: string }>;
+  departments: Array<{ id: string; name: string; nameAr?: string | null }>;
   groups: Array<{ key: 'NEW' | 'PLANNING' | 'ON_HOLD' | 'CANCELLED'; cards: BoardCard[] }>;
 }
 
@@ -191,7 +192,11 @@ export function TicketBacklog() {
                     ? 'Everything the chosen department asked for, wherever it went'
                     : 'What the chosen department asked of yours'}>
             <option value="">{oversees ? 'Every department' : 'Everything we are doing'}</option>
-            {data.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            {data.departments.map((d) => (
+              <option key={d.id} value={d.id}>
+                {localizedName(d.name, d.nameAr, AR_DEPARTMENTS)}
+              </option>
+            ))}
           </select>
         ) : null}
       </header>

@@ -22,19 +22,23 @@ import { ProfileBanner } from '../portlets/ProfileBanner';
 import { LoadingState, ErrorState } from '../components/States';
 import { Icon } from '../components/Icon';
 import { formatDate } from '../lib/format';
+import { useAppearance } from '../lib/theme';
+import { localizedName, AR_DEPARTMENTS } from '../lib/i18n';
 
 function greeting(): string {
   const hour = Number(new Intl.DateTimeFormat('en-GB', {
     timeZone: 'Africa/Cairo', hour: '2-digit', hour12: false,
   }).format(new Date()));
-  if (hour < 12) return 'Good morning';
-  if (hour < 17) return 'Good afternoon';
-  return 'Good evening';
+  const arabic = typeof document !== 'undefined' && document.documentElement.lang === 'ar';
+  if (hour < 12) return arabic ? 'صباح الخير' : 'Good morning';
+  if (hour < 17) return arabic ? 'مساء الخير' : 'Good afternoon';
+  return arabic ? 'مساء الخير' : 'Good evening';
 }
 
 export function Home() {
   const { principal } = useAuth();
   const { data, isPending, error, refetch } = useHubModules();
+  const { locale } = useAppearance();
   const toast = useToast();
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
@@ -50,14 +54,19 @@ export function Home() {
     }));
     const local = LOCAL_PORTLETS.map((p, i) => ({ key: p.key, width: p.width, order: 900 + i }));
     return [...fromServer, ...local];
-  }, [data]);
+  }, [data, locale]);
 
   const layout = useHomeLayout(principal?.id ?? '', seeds);
   const { customising, setCustomising, visible, hidden } = layout;
 
   const metaOf = useMemo(() => {
     const map = new Map<string, { moduleKey: string; title: string }>();
-    for (const p of data?.dashboard ?? []) map.set(p.key, { moduleKey: p.moduleKey, title: p.title });
+    for (const p of data?.dashboard ?? []) {
+      map.set(p.key, {
+        moduleKey: p.moduleKey,
+        title: locale === 'ar' ? (p.titleAr ?? p.title) : p.title,
+      });
+    }
     for (const p of LOCAL_PORTLETS) map.set(p.key, { moduleKey: 'hub', title: p.title });
     return map;
   }, [data]);
@@ -69,7 +78,9 @@ export function Home() {
           <h1 className="pagehead__title">{greeting()}, {firstName}</h1>
           <p className="pagehead__sub">
             {principal?.jobTitle ? `${principal.jobTitle} · ` : ''}
-            {principal?.department ? `${principal.department} · ` : ''}
+            {principal?.department
+              ? `${localizedName(principal.department, null, AR_DEPARTMENTS)} · `
+              : ''}
             {formatDate(new Date().toISOString())} in Cairo
           </p>
         </div>

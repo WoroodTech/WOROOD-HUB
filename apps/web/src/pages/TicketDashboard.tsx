@@ -20,6 +20,7 @@ import { NewTicketButton } from './Tasks';
 import { Card } from '../components/Card';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import { Icon } from '../components/Icon';
+import { localizedName, AR_DEPARTMENTS } from '../lib/i18n';
 
 /** One number, in the portal's own card. */
 function Figure({ span, label, value, note, bad }: {
@@ -122,7 +123,11 @@ export function TicketDashboard() {
                     ? 'Everything the chosen department asked for, wherever it went'
                     : 'What the chosen department asked of yours'}>
             <option value="">{oversees ? 'Every department' : 'Everything we are doing'}</option>
-            {data.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            {data.departments.map((d) => (
+              <option key={d.id} value={d.id}>
+                {localizedName(d.name, d.nameAr, AR_DEPARTMENTS)}
+              </option>
+            ))}
           </select>
         ) : null}
       </div>

@@ -12,7 +12,8 @@
  * query that filled it failed into one.
  */
 import {
-  BadRequestException, Body, Controller, Get, Module, Param, ParseUUIDPipe,
+  BadRequestException, Body, Controller, ForbiddenException, Get, Module, Param,
+  ParseUUIDPipe,
   Delete, Post, Query,
 } from '@nestjs/common';
 import { CurrentUser, Permissions, Principal, can } from '../../common/auth';
@@ -52,6 +53,18 @@ export const WAREHOUSE_PERMISSIONS = {
   ROLLS_RECEIVE: 'warehouse.rolls.receive',
   ROLLS_PLAN: 'warehouse.rolls.plan',
   ROLLS_REPORT: 'warehouse.rolls.report',
+  /*
+   * The workshop's three desks, kept apart as the Apps Script keeps them.
+   *
+   * It has ST_CUT, ST_PROD and ST_Q — cutting, production and quality — and
+   * they are different people. One permission for all three let whoever
+   * cuts the fabric also record what production made and sign off what
+   * quality counted, which is the whole of the control gone: the numbers
+   * are only worth anything because three desks produced them separately.
+   */
+  STAGE_CUT: 'warehouse.stage.cut',
+  STAGE_PRODUCTION: 'warehouse.stage.production',
+  STAGE_QUALITY: 'warehouse.stage.quality',
   QC_HANDLE: 'warehouse.qc.handle',
   RETURNS_HANDLE: 'warehouse.returns.handle',
   REPORT_VIEW: 'warehouse.report.view',
@@ -103,8 +116,11 @@ registerHubModule({
       icon: 'list', requiresAnyPermission: [WAREHOUSE_PERMISSIONS.STOCK_VIEW] },
     { label: 'Reports', labelAr: 'التقارير', path: '/warehouse/reports',
       icon: 'chart', requiresAnyPermission: [WAREHOUSE_PERMISSIONS.REPORT_VIEW] },
-    { label: 'Planning', labelAr: 'التخطيط', path: '/warehouse/planning',
-      icon: 'chart', requiresAnyPermission: [WAREHOUSE_PERMISSIONS.ROLLS_PLAN] },
+    /* Planning is not in this bar: it is the Plan screen inside Rolls, as
+       it is in the Apps Script. Fabric is planned against the rolls it will
+       be cut from, and a link here led to the same work in a second place
+       with no rolls beside it. The route still answers, for anything that
+       bookmarked it. */
     { label: 'QR Label', labelAr: 'ملصق QR', path: '/warehouse/labels',
       icon: 'layout-grid', requiresAnyPermission: [WAREHOUSE_PERMISSIONS.STOCK_VIEW] },
     { label: 'Documents', labelAr: 'المستندات', path: '/warehouse/documents',
@@ -429,8 +445,18 @@ export class WarehouseController {
 
   @Post('patches/status')
   @Permissions(WAREHOUSE_PERMISSIONS.TX_WRITE)
-  patchStatus(@CurrentUser() p: Principal,
-              @Body() dto: { patch: string; status: 'Open' | 'Closed' }) {
+  patchStatus(
+    @CurrentUser() p: Principal,
+    @Body() dto: {
+      patch: string;
+      status: 'Complete' | 'Issue reported' | 'Resolved';
+    },
+  ) {
+    /* Resolving is a manager's answer to a reported problem, not part of
+       checking a patch — the Apps Script asks for Manager or Admin. */
+    if (dto?.status === 'Resolved' && !can(p, WAREHOUSE_PERMISSIONS.TX_MANAGE)) {
+      throw new ForbiddenException('Only a manager can resolve a reported problem.');
+    }
     return this.returns.setPatchStatus(p, dto?.patch, dto?.status);
   }
 
@@ -486,6 +512,22 @@ export class WarehouseController {
     return this.qc.confirm(p, dto);
   }
 
+  /**
+   * The manager has seen a quantity difference.
+   *
+   * Needs the manage permission rather than quality's own: the point of the
+   * step is that somebody with authority looked, and letting the desk that
+   * reported the difference also sign it off would record nothing.
+   */
+  @Post('qc/acknowledge')
+  @Permissions(WAREHOUSE_PERMISSIONS.TX_MANAGE)
+  qcAcknowledge(
+    @CurrentUser() p: Principal,
+    @Body() dto: { serial: string; note?: string },
+  ) {
+    return this.qc.acknowledge(p, dto.serial, dto.note);
+  }
+
   @Post('qc/short')
   @Permissions(WAREHOUSE_PERMISSIONS.QC_HANDLE)
   qcShort(@CurrentUser() p: Principal, @Body() dto: any) {
@@ -501,39 +543,50 @@ export class WarehouseController {
     return this.stages.overview(decodeURIComponent(oo));
   }
 
+  /**
+   * The whole workshop, sorted into the five benches it works at.
+   *
+   * One call rather than five: each stage is worked out from the same two
+   * tabs, and five requests would read them five times to answer one
+   * screen.
+   */
+  @Get('stages/workshop')
+  @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_VIEW)
+  workshopStages() { return this.stages.workshop(); }
+
   @Post('stages/cut/start')
-  @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_REPORT)
+  @Permissions(WAREHOUSE_PERMISSIONS.STAGE_CUT)
   startCutting(@CurrentUser() p: Principal, @Body() dto: { operationOrder: string }) {
     return this.stages.startCutting(p, dto?.operationOrder);
   }
 
   @Post('stages/cut/lot')
-  @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_REPORT)
+  @Permissions(WAREHOUSE_PERMISSIONS.STAGE_CUT)
   releaseLot(@CurrentUser() p: Principal, @Body() dto: any) {
     return this.stages.releaseLot(p, dto);
   }
 
   @Post('stages/cut/end')
-  @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_REPORT)
+  @Permissions(WAREHOUSE_PERMISSIONS.STAGE_CUT)
   endCutting(@CurrentUser() p: Principal, @Body() dto: { operationOrder: string }) {
     return this.stages.endCutting(p, dto?.operationOrder);
   }
 
   @Post('stages/production/send')
-  @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_REPORT)
+  @Permissions(WAREHOUSE_PERMISSIONS.STAGE_PRODUCTION)
   sendToQuality(@CurrentUser() p: Principal, @Body() dto: any) {
     return this.stages.sendToQuality(p, dto);
   }
 
   /** Workshop quality's count, and the difference it produces. */
   @Post('stages/quality/count')
-  @Permissions(WAREHOUSE_PERMISSIONS.QC_HANDLE)
+  @Permissions(WAREHOUSE_PERMISSIONS.STAGE_QUALITY)
   countLot(@CurrentUser() p: Principal, @Body() dto: any) {
     return this.stages.count(p, dto);
   }
 
   @Post('stages/quality/handover')
-  @Permissions(WAREHOUSE_PERMISSIONS.QC_HANDLE)
+  @Permissions(WAREHOUSE_PERMISSIONS.STAGE_QUALITY)
   handOver(@CurrentUser() p: Principal, @Body() dto: any) {
     return this.stages.handOver(p, dto);
   }
@@ -544,6 +597,22 @@ export class WarehouseController {
   @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_VIEW)
   rollsList(@Query() q: { status?: string; operationOrder?: string }) {
     return this.rolls.rolls(q);
+  }
+
+  /**
+   * How the rolls cycle has been performing over a period.
+   *
+   * The dates filter on when a job order was issued rather than when it
+   * closed: "the last ninety days" means fabric that went out in them, and
+   * one opened in August and finished in November belongs to August.
+   */
+  @Get('rolls/performance')
+  @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_REPORT)
+  rollsPerformance(@Query() q: { from?: string; to?: string }) {
+    const to = q.to || new Date().toISOString().slice(0, 10);
+    const from = q.from
+      || new Date(Date.now() - 89 * 86_400_000).toISOString().slice(0, 10);
+    return this.rolls.performance(from, to);
   }
 
   @Get('rolls/jobs')
@@ -573,10 +642,25 @@ export class WarehouseController {
     return this.rolls.plan(p, dto);
   }
 
+  /** The warehouse hands rolls over on one paper. No job order yet. */
   @Post('rolls/issue')
   @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_RECEIVE)
   issueRolls(@CurrentUser() p: Principal, @Body() dto: any) {
     return this.rolls.issue(p, dto);
+  }
+
+  /**
+   * The workshop picks a roll up and opens a job order on it.
+   *
+   * Theirs, not the warehouse's: the number and the expected pieces are
+   * worked out here, and the roll stops being the warehouse's problem the
+   * moment somebody starts it.
+   */
+  @Post('rolls/start')
+  @Permissions(WAREHOUSE_PERMISSIONS.STAGE_CUT)
+  startJobOrder(@CurrentUser() p: Principal,
+                @Body() dto: { rollId: string; note?: string }) {
+    return this.rolls.startJobOrder(p, dto);
   }
 
   /** The workshop's own step. */
@@ -777,6 +861,22 @@ export class WarehouseController {
   @Get('approvals')
   @Permissions(WAREHOUSE_PERMISSIONS.APPROVAL_DECIDE)
   pendingApprovals() { return this.approvals.pending(); }
+
+  /**
+   * What was edited, and what was deleted — the two logs beside the queue.
+   *
+   * Same permission as deciding: the people who approve changes are the
+   * people who need to see what the approvals did. A log nobody reads is
+   * the same as no log, and these were kept and shown nowhere.
+   */
+  @Get('approvals/log/:action')
+  @Permissions(WAREHOUSE_PERMISSIONS.APPROVAL_DECIDE)
+  approvalLog(@Param('action') action: string) {
+    if (action !== 'edits' && action !== 'deletes') {
+      throw new BadRequestException(`"${action}" is not one of the logs.`);
+    }
+    return this.approvals.changes(action === 'edits' ? 'Edit' : 'Delete');
+  }
 
   @Post('approvals/:id/decide')
   @Permissions(WAREHOUSE_PERMISSIONS.APPROVAL_DECIDE)

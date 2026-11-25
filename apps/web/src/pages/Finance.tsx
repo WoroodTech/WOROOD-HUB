@@ -26,6 +26,7 @@ import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import { Icon } from '../components/Icon';
 import { formatDate } from '../lib/format';
 import { useAuth } from '../lib/auth';
+import { localizedName, AR_DEPARTMENTS } from '../lib/i18n';
 
 const isArabic = () => (document.documentElement.lang || 'en').startsWith('ar');
 
@@ -146,7 +147,9 @@ export function FinanceAll() {
                     onChange={(e) => setDepartmentId(e.target.value)}>
               <option value="">Every department</option>
               {departments.map((d) => (
-                <option key={d.departmentId} value={d.departmentId}>{d.name}</option>
+                <option key={d.departmentId} value={d.departmentId}>
+                  {localizedName(d.name, d.nameAr, AR_DEPARTMENTS)}
+                </option>
               ))}
             </select>
           ) : null}
@@ -2032,7 +2035,7 @@ export function FinanceToPay() {
                   <td className="col--desc" title={r.description}>
                     <span className="clip">{r.description}</span>
                   </td>
-                  <td>{r.departmentName}</td>
+                  <td>{localizedName(r.departmentName, null, AR_DEPARTMENTS)}</td>
                   <td>{formatDate(r.dueDate)}</td>
                   <td className="col--desc" title={r.paymentDetails ?? ''}>
                     <span className="clip">{r.paymentMethod ?? '—'}</span>

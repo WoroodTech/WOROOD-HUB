@@ -29,6 +29,7 @@ const FIELD_LABEL: Record<string, string> = {
 export function WarehouseApprovals() {
   const qc = useQueryClient();
   const [note, setNote] = useState<Record<string, string>>({});
+  const [tab, setTab] = useState<'queue' | 'edits' | 'deletes'>('queue');
 
   const pending = useQuery({
     queryKey: qk.whApprovals,
@@ -65,6 +66,25 @@ export function WarehouseApprovals() {
         </div>
       </header>
 
+      <div className="tabs" role="tablist">
+        {([['queue', 'Waiting'], ['edits', 'Edit log'], ['deletes', 'Delete log']] as const)
+          .map(([key, label]) => (
+            <button key={key} type="button" role="tab"
+                    aria-selected={tab === key}
+                    className={`tabs__tab${tab === key ? ' is-active' : ''}`}
+                    onClick={() => setTab(key)}>
+              {label}
+            </button>
+          ))}
+      </div>
+
+      {/* What the approvals actually did. Kept append-only in the sheet and
+          shown nowhere until now — an approval that leaves no record of
+          what it changed is not much of a control. */}
+      {tab !== 'queue' ? <ChangeLog which={tab} /> : null}
+
+      {tab !== 'queue' ? null : (
+      <>
       {decide.isError ? (
         <p className="notice notice--warn" role="alert">
           {(decide.error as Error)?.message ?? 'That could not be decided.'}
@@ -161,6 +181,85 @@ export function WarehouseApprovals() {
           </div>
         </Card>
       ))}
+      </>
+      )}
     </div>
+  );
+}
+
+/* --------------------------------------------------------- change log -- */
+
+interface Change {
+  at: string; action: string; by: string;
+  kind: string; reference: string;
+  before: string; after: string;
+  requestedBy: string; approvedBy: string; approvedAt: string;
+}
+
+/**
+ * What was edited, or what was deleted.
+ *
+ * Before and after side by side, because the useful question about a change
+ * is what it changed — not that one happened. Newest first: the thing being
+ * looked for is almost always recent.
+ */
+function ChangeLog({ which }: { which: 'edits' | 'deletes' }) {
+  const log = useQuery({
+    queryKey: ['wh', 'approval-log', which],
+    queryFn: () => api<Change[]>(`/warehouse/approvals/log/${which}`),
+  });
+
+  if (log.isLoading) return <LoadingState label="Reading the log" />;
+  if (log.isError) {
+    return <ErrorState error={log.error} onRetry={() => void log.refetch()} />;
+  }
+
+  const rows = log.data ?? [];
+  const title = which === 'edits' ? 'Edit log' : 'Delete log';
+
+  if (!rows.length) {
+    return (
+      <Card title={title}>
+        <EmptyState icon="list" title="Nothing yet"
+                    hint={which === 'edits'
+                      ? 'No approved edit has been applied.'
+                      : 'Nothing has been deleted.'} />
+      </Card>
+    );
+  }
+
+  return (
+    <Card title={title} subtitle={`${rows.length} most recent, newest first.`}>
+      <div className="tablewrap tablewrap--scroll">
+        <table className="table">
+          <thead>
+            <tr>
+              <th scope="col">When</th>
+              <th scope="col">Kind</th>
+              <th scope="col">Reference</th>
+              <th scope="col">Before</th>
+              <th scope="col">After</th>
+              <th scope="col">Asked by</th>
+              <th scope="col">Approved by</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((c, i) => (
+              <tr key={i}>
+                <td className="mono">{c.at}</td>
+                <td>{c.kind || '—'}</td>
+                <td className="mono">{c.reference || '—'}</td>
+                <td className="muted">{c.before || '—'}</td>
+                {/* A delete has no after, and showing an empty cell says
+                    that more plainly than repeating the before would. */}
+                <td className="muted">{c.after || '—'}</td>
+                <td>{c.requestedBy || c.by || '—'}</td>
+                <td>{c.approvedBy || '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
   );
 }

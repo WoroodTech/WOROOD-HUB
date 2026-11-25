@@ -28,6 +28,7 @@ import { useToast } from '../lib/toast';
 import { Badge, Card } from '../components/Card';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import { Icon } from '../components/Icon';
+import { localizedName } from '../lib/i18n';
 
 const STATUS_TONE: Record<string, 'good' | 'warning' | 'neutral'> = {
   ACTIVE: 'good', MAINTENANCE: 'warning', INACTIVE: 'neutral',
@@ -127,7 +128,7 @@ export function ManageRooms() {
                 {rooms.data.rooms.map((r) => (
                   <tr key={r.id}>
                     <td>
-                      <strong>{r.name}</strong>
+                      <strong>{localizedName(r.name, r.nameAr)}</strong>
                       <span className="cell__sub mono">{r.code}</span>
                     </td>
                     <td>
@@ -148,13 +149,13 @@ export function ManageRooms() {
                     <td><Badge tone={STATUS_TONE[r.status] ?? 'neutral'}>{r.status.toLowerCase()}</Badge></td>
                     <td className="rowactions">
                       <button
-                        type="button" className="iconbtn" title={`Edit ${r.name}`}
+                        type="button" className="iconbtn" title={`Edit ${localizedName(r.name, r.nameAr)}`}
                         onClick={() => setEditing({ ...r, equipmentKeys: r.equipment.map((e) => e.key) })}
                       >
                         <Icon name="sliders" size={14} />
                       </button>
                       <button
-                        type="button" className="iconbtn iconbtn--danger" title={`Retire ${r.name}`}
+                        type="button" className="iconbtn iconbtn--danger" title={`Retire ${localizedName(r.name, r.nameAr)}`}
                         disabled={retire.isPending}
                         onClick={() => retire.mutate(r.id)}
                       >
