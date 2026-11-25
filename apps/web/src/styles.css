@@ -3157,7 +3157,15 @@ button, input, select, textarea { font: inherit; color: inherit; }
  /* Department totals: four to a row, wrapping onto the next row. */
 .totalsgrid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  /*
+   * As many as fit, sharing the row evenly.
+   *
+   * Four fixed columns left a gap at the end of a row of three and wrapped
+   * a row of five onto two lines with one tile alone underneath — and a
+   * tile on its own reads as more important than the four above it, which
+   * is exactly backwards for a summary.
+   */
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: var(--gap);
   margin-block-end: 20px;
 }
@@ -4102,7 +4110,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
      label across the fold. */
   .labelsheet--a4 .qrlabel { break-inside: avoid; }
 
-  @page { margin: 0; }
+  /* The margin is set by the one `@page` below, from the variable the
+     body class carries — A4 wants a margin and a label does not, and a
+     blanket zero here took that choice away. */
 }
 
 /*
@@ -4118,18 +4128,31 @@ button, input, select, textarea { font: inherit; color: inherit; }
  * which stock is loaded, because a label printer and an A4 printer cannot
  * both be right.
  */
-@page label {
-  size: 50mm 30mm;
-  margin: 0;
+/*
+ * One `@page`, sized by a variable.
+ *
+ * Named pages (`@page label { … }` with `page: label` on an element) are in
+ * the spec and in almost no browser — Chrome ignores the name and keeps A4,
+ * so a 50 x 30 mm label printed in the corner of a full sheet and the label
+ * printer fed one page per label.
+ *
+ * `size` in the plain `@page` is supported, and it reads a custom property,
+ * so the body class sets the variable and the one rule follows it.
+ */
+@page {
+  size: var(--print-size, A4);
+  margin: var(--print-margin, 8mm);
 }
 
-@page a4 {
-  size: A4;
-  margin: 8mm;
+body.printing-label {
+  --print-size: 50mm 30mm;
+  --print-margin: 0;
 }
 
-body.printing-label { page: label; }
-body.printing-a4 { page: a4; }
+body.printing-a4 {
+  --print-size: A4;
+  --print-margin: 8mm;
+}
 
 /* A value the server decides, shown where its input would have been. */
 .field__fixed {

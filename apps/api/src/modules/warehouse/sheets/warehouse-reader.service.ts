@@ -345,8 +345,20 @@ export class WarehouseReaderService {
       if (filter.item && loose(row.item) !== loose(filter.item)) continue;
       if (filter.warehouse && row.warehouse !== filter.warehouse) continue;
       if (filter.kind && row.kind !== filter.kind) continue;
-      if (filter.order && row.nationalOrder !== filter.order
-          && row.globalOrder !== filter.order) continue;
+      /*
+       * Matched without the hash on either side.
+       *
+       * The ledger holds `#10168`, as Shopify names orders, and somebody
+       * looking for it types `10168` — so an exact comparison found
+       * nothing and the movement looked as though it had never been
+       * logged.
+       */
+      if (filter.order) {
+        const want = filter.order.trim().replace(/^#/, '').toLowerCase();
+        const a = String(row.nationalOrder ?? '').trim().replace(/^#/, '').toLowerCase();
+        const b = String(row.globalOrder ?? '').trim().replace(/^#/, '').toLowerCase();
+        if (a !== want && b !== want) continue;
+      }
       if (filter.patch && row.patch !== filter.patch) continue;
 
       out.push(row);

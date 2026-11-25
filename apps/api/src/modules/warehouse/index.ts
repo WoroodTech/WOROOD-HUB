@@ -108,12 +108,8 @@ registerHubModule({
       requiresAnyPermission: [WAREHOUSE_PERMISSIONS.ITEM_MANAGE] },
     { label: 'Rolls', labelAr: 'الرولات', path: '/warehouse/rolls', icon: 'list',
       requiresAnyPermission: [WAREHOUSE_PERMISSIONS.ROLLS_VIEW] },
-    { label: 'Quality Check', labelAr: 'فحص الجودة', path: '/warehouse/qc', icon: 'check',
-      requiresAnyPermission: [WAREHOUSE_PERMISSIONS.QC_HANDLE] },
     { label: 'Return Issues', labelAr: 'مشاكل المرتجعات', path: '/warehouse/issues',
       icon: 'list', requiresAnyPermission: [WAREHOUSE_PERMISSIONS.RETURNS_HANDLE] },
-    { label: 'Patch Log', labelAr: 'سجل الباتشات', path: '/warehouse/patches',
-      icon: 'list', requiresAnyPermission: [WAREHOUSE_PERMISSIONS.STOCK_VIEW] },
     { label: 'Reports', labelAr: 'التقارير', path: '/warehouse/reports',
       icon: 'chart', requiresAnyPermission: [WAREHOUSE_PERMISSIONS.REPORT_VIEW] },
     /* Planning is not in this bar: it is the Plan screen inside Rolls, as
@@ -123,10 +119,20 @@ registerHubModule({
        bookmarked it. */
     { label: 'QR Label', labelAr: 'ملصق QR', path: '/warehouse/labels',
       icon: 'layout-grid', requiresAnyPermission: [WAREHOUSE_PERMISSIONS.STOCK_VIEW] },
-    { label: 'Documents', labelAr: 'المستندات', path: '/warehouse/documents',
-      icon: 'list', requiresAnyPermission: [WAREHOUSE_PERMISSIONS.STOCK_VIEW] },
-    { label: 'Approvals', labelAr: 'الموافقات', path: '/warehouse/approvals', icon: 'check',
-      requiresAnyPermission: [WAREHOUSE_PERMISSIONS.APPROVAL_DECIDE] },
+    /*
+     * Three screens are not in this bar because they are tabs elsewhere,
+     * and a second door to the same room is how two people end up looking
+     * at the same work in different places:
+     *
+     *   Quality Check → Templates · In Quality
+     *   Patch Log     → Templates · Patch Log
+     *   Documents     → the print register, reached from QR Label
+     *   Approvals     → Find an order · Approvals, where the Apps Script
+     *                   keeps it: deciding a request about a movement
+     *                   belongs beside the movement it is about
+     *
+     * Their routes still answer, for anything that bookmarked them.
+     */
   ],
 
   /* Nothing on anybody's home screen yet. The dashboard tiles come with

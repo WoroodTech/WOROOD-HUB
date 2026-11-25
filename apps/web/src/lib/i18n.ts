@@ -46,6 +46,14 @@ export function localizedName(
 }
 
 export const AR_TEXT: TextTranslation = {
+  'Conversation': 'المحادثة',
+  'Open template': 'فتح النموذج',
+  'Report a problem': 'الإبلاغ عن مشكلة',
+  'Complete — all correct': 'مكتمل — كله سليم',
+  'Which patches': 'أي باتشات',
+  'Complete': 'مكتمل',
+  'Add an item': 'إضافة صنف',
+  'Nothing ticked yet': 'لم يتم تحديد شيء بعد',
   'Warehouse (Approval / Receiving)': 'المخزن (الاعتماد والاستلام)',
   'Hand rolls over to the workshop': 'تسليم الألفات للورشة',
   'Record receiving': 'تسجيل الاستلام',

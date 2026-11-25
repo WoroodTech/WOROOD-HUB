@@ -97,7 +97,18 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
    * asking for either would be asking for something that gets discarded.
    */
   const fixedWarehouse = (chosen as any)?.fixedWarehouse as string | null;
-  const serialIssued = !!(chosen as any)?.serialIssued;
+  /*
+   * Whether this kind of movement takes a serial.
+   *
+   * `chosen` comes from the types query, so on a cold load it is undefined
+   * for a moment and every kind looks like one that takes no serial — which
+   * is why the patch number appeared only on a second visit, once the types
+   * were cached. Receiving always takes one, so it is assumed while the
+   * answer is still arriving rather than assumed away.
+   */
+  const serialIssued = chosen
+    ? !!(chosen as any).serialIssued
+    : type === 'RECEIVING';
   const isTransfer = chosen?.mode === 'transfer';
   const takesStock = chosen?.mode === 'out' || isTransfer
     || (chosen?.mode === 'sel' && direction === 'out');
@@ -169,6 +180,15 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
      */
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: ['wh'] });
+      /*
+       * And fetch the serial again now, not when something next asks.
+       *
+       * `invalidateQueries` marks a query stale; with a 30-second
+       * staleTime the screen then kept showing the old number until
+       * somebody reloaded, so the next receiving offered a serial that had
+       * just been used. `refetchQueries` goes and gets it.
+       */
+      void qc.refetchQueries({ queryKey: ['wh', 'next-serial'] });
     },
   });
 

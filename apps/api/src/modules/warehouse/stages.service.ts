@@ -21,7 +21,10 @@ import { Principal } from '../../common/auth';
 import { AuditService } from '../../core/core.module';
 import { WarehouseSheetClient } from './sheets/warehouse-sheet.client';
 import { sheetDate } from './sheets/parse-date';
-import { ROLLS_WORKSHOP, ROLLS_WORKSHOP_TAB } from './sheets/tabs';
+import {
+  ROLLS_REGISTER, ROLLS_REGISTER_TAB,
+  ROLLS_WORKSHOP, ROLLS_WORKSHOP_TAB,
+} from './sheets/tabs';
 
 const TZ = 'Africa/Cairo';
 
@@ -125,11 +128,30 @@ export class WarehouseStagesService {
        service: that service already depends on this one for a job order's
        stages, and pointing them at each other would be a cycle for one
        list. The columns are shared, so there is one definition either way. */
-    const [jobRows, lots, stages] = await Promise.all([
+    const [jobRows, rollRows, lots, stages] = await Promise.all([
       this.sheet.read(ROLLS_WORKSHOP_TAB),
+      this.sheet.read(ROLLS_REGISTER_TAB),
       this.lots(),
       this.readStages(),
     ]);
+
+    const rolls: any[] = [];
+    for (let i = 1; i < rollRows.length; i++) {
+      const r = rollRows[i] ?? [];
+      const id = String(r[ROLLS_REGISTER.rollId] ?? '').trim();
+      if (!id) continue;
+      rolls.push({
+        rollId: id,
+        rollName: String(r[ROLLS_REGISTER.rollName] ?? '').trim(),
+        ctn: String(r[ROLLS_REGISTER.ctn] ?? '').trim(),
+        meters: r[ROLLS_REGISTER.meters],
+        status: String(r[ROLLS_REGISTER.status] ?? '').trim(),
+        operationOrder: String(r[ROLLS_REGISTER.operationOrder] ?? '').trim(),
+        expectedUnits: r[ROLLS_REGISTER.expectedUnits],
+        issued: r[ROLLS_REGISTER.issued],
+        received: r[ROLLS_REGISTER.received],
+      });
+    }
 
     const jobs: any[] = [];
     for (let i = 1; i < jobRows.length; i++) {
@@ -164,7 +186,27 @@ export class WarehouseStagesService {
       byOrder.set(k, [...(byOrder.get(k) ?? []), l]);
     }
 
-    const open: any[] = [];
+    /*
+     * Open is rolls the warehouse handed over that nobody has started.
+     *
+     * Not job orders with no cutting on them: a job order only exists once
+     * the workshop has picked a roll up, so counting those as "open" counts
+     * work that has already been claimed and misses the fabric actually
+     * sitting there waiting. The Apps Script keeps the two apart —
+     * `handed` is `status === 'Handed over' && no job order` — and this is
+     * that list.
+     */
+    const open = rolls
+      .filter((r) => r.status === 'Handed over' && !r.operationOrder)
+      .map((r) => ({
+        rollId: r.rollId,
+        rollName: r.rollName,
+        ctn: r.ctn,
+        metres: Number(r.meters) || 0,
+        expectedUnits: Number(r.expectedUnits) || 0,
+        waitingSince: r.issued || r.received,
+      }));
+
     const inCutting: any[] = [];
 
     for (const j of jobs) {
@@ -178,8 +220,10 @@ export class WarehouseStagesService {
       const done = cut?.cutMeters ?? 0;
 
       if (!cut) {
-        /* Handed over, nobody has touched it. */
-        open.push({ ...j, metres, waitingSince: j.issued });
+        /* Started but not cut: the workshop has claimed the roll and
+           opened a job order, which is cutting's queue rather than the
+           warehouse's handover pile. */
+        inCutting.push({ ...j, metres, cut: 0, left: metres, lots: 0 });
       } else if (!cut.endedAt) {
         /* Started, and there is fabric left on it. */
         inCutting.push({

@@ -26,10 +26,20 @@ const FIELD_LABEL: Record<string, string> = {
   location: 'Location',
 };
 
-export function WarehouseApprovals() {
+export function WarehouseApprovals({ view }: {
+  view?: 'approvals' | 'edits' | 'deletes';
+} = {}) {
   const qc = useQueryClient();
   const [note, setNote] = useState<Record<string, string>>({});
-  const [tab, setTab] = useState<'queue' | 'edits' | 'deletes'>('queue');
+  /*
+   * Which of the three it shows.
+   *
+   * Given one, the tab bar goes: the page is a tab inside Find an order and
+   * two rows of tabs for the same choice is one row too many. Without it
+   * the page keeps its own bar, for anything that still links here.
+   */
+  const [own, setTab] = useState<'queue' | 'edits' | 'deletes'>('queue');
+  const tab = view ? (view === 'approvals' ? 'queue' : view) : own;
 
   const pending = useQuery({
     queryKey: qk.whApprovals,
@@ -66,6 +76,7 @@ export function WarehouseApprovals() {
         </div>
       </header>
 
+      {view ? null : (
       <div className="tabs" role="tablist">
         {([['queue', 'Waiting'], ['edits', 'Edit log'], ['deletes', 'Delete log']] as const)
           .map(([key, label]) => (
@@ -77,6 +88,7 @@ export function WarehouseApprovals() {
             </button>
           ))}
       </div>
+      )}
 
       {/* What the approvals actually did. Kept append-only in the sheet and
           shown nowhere until now — an approval that leaves no record of

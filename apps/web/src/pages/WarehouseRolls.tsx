@@ -849,8 +849,15 @@ function RollsWorkshop() {
   });
 
   const act = useMutation({
-    mutationFn: (v: { path: string; body: Record<string, unknown> }) =>
-      api(`/warehouse/stages/${v.path}`, { method: 'POST', body: v.body }),
+    mutationFn: (v: {
+      path: string; body?: Record<string, unknown>; rollId?: string;
+    }) =>
+      /* Starting a job order belongs to the rolls register, not to the
+         stage tabs — it is the step that creates the thing the stages are
+         about. */
+      (v.rollId
+        ? api('/warehouse/rolls/start', { method: 'POST', body: { rollId: v.rollId } })
+        : api(`/warehouse/stages/${v.path}`, { method: 'POST', body: v.body })),
     onSuccess: () => {
       setError(null);
       void qc.invalidateQueries({ queryKey: ['wh'] });
@@ -900,24 +907,27 @@ function RollsWorkshop() {
         !w.open.length ? (
           <EmptyState icon="check" title="Nothing waiting"
                       hint="Everything handed over has been started." />
-        ) : w.open.map((j) => (
-          <Card key={j.operationOrder}
-                title={`${j.operationOrder} · ${j.rolls}`}
-                actions={<span className="rollpill is-s1">{j.metres} m</span>}>
+        ) : w.open.map((r) => (
+          /* A roll, not a job order: nothing has been opened on it yet,
+             which is what makes it open. */
+          <Card key={r.rollId}
+                title={`${r.rollName}${r.ctn ? ` · CTN ${r.ctn}` : ''}`}
+                actions={<span className="rollpill is-s1">{r.metres} m</span>}>
             <p className="muted">
               Handed over by the warehouse
-              {j.waitingSince ? ` · ${sheetDate(j.waitingSince)}` : ''}
-              {j.expectedUnits ? ` · expected ${j.expectedUnits} pcs` : ''}
+              {r.waitingSince ? ` · ${sheetDate(r.waitingSince)}` : ''}
+              {' · '}{r.rollId}
             </p>
             {can('warehouse.stage.cut') ? (
               <div className="formrow--actions">
+                {/* Picking it up opens the job order: the number and the
+                    pieces expected are both worked out, not typed. */}
                 <button type="button" className="btn btn--primary btn--sm"
                         disabled={act.isPending}
                         onClick={() => act.mutate({
-                          path: 'cut/start',
-                          body: { operationOrder: j.operationOrder },
+                          path: '', rollId: r.rollId,
                         })}>
-                  Add to cutting
+                  Start a job order
                 </button>
               </div>
             ) : null}

@@ -116,6 +116,22 @@ export class WarehouseQueueService {
                   error=NULL, lease_owner=NULL, lease_expires_at=NULL
             WHERE id=$1`, [ev.id, where.tab, where.rowNumber]);
 
+        /*
+         * The balances are now wrong until the cache lets go of them.
+         *
+         * They are cached for five minutes, and nothing was clearing that
+         * — so a transfer landed in the sheet and the warehouse cards kept
+         * the old totals for minutes afterwards. The person who just moved
+         * the stock is the one most likely to look, and they looked at the
+         * figure from before they moved it.
+         *
+         * Cleared here rather than in each service that posts: this is the
+         * one place every movement passes through on its way to the sheet.
+         */
+        if (target.tab === TX_TAB) {
+          await query(`DELETE FROM wh_cache WHERE key = 'balances'`);
+        }
+
         written++;
       } catch (e: any) {
         failed++;

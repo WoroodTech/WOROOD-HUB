@@ -185,6 +185,22 @@ export const ROLL_NEXT: Record<RollStatus, RollStatus[]> = {
  * dependency and refused to start — after a clean build, which is the part
  * that makes it hard to spot.
  */
+/**
+ * An order number as the sheet writes it: with the hash.
+ *
+ * Shopify names orders `#10168` and that is what the ledger holds, but a
+ * number typed by hand arrives either way — so `10168` and `#10168` ended
+ * up in the same column as two different orders, and nothing that matched
+ * on the text could find both.
+ *
+ * Blank stays blank: a movement with no order is not order `#`.
+ */
+export function orderNumber(value: unknown): string {
+  const t = String(value ?? '').trim();
+  if (!t) return '';
+  return t.startsWith('#') ? t : `#${t}`;
+}
+
 export const SETTINGS_TAB = 'Rolls Settings';
 
 export const ROLLS_WORKSHOP_TAB = 'Rolls Workshop';
