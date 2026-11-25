@@ -11,13 +11,15 @@ export const CAIRO = 'Africa/Cairo';
 
 const moneyFmt = new Map<string, Intl.NumberFormat>();
 function money0(currency: string): Intl.NumberFormat {
-  let f = moneyFmt.get(currency);
+  const locale = typeof document !== 'undefined' && document.documentElement.lang === 'ar' ? 'ar-EG' : 'en-US';
+  const key = `${locale}:${currency}`;
+  let f = moneyFmt.get(key);
   if (!f) {
-    f = new Intl.NumberFormat('en-US', {
+    f = new Intl.NumberFormat(locale, {
       style: 'currency', currency, currencyDisplay: 'code',
       minimumFractionDigits: 0, maximumFractionDigits: 0,
     });
-    moneyFmt.set(currency, f);
+    moneyFmt.set(key, f);
   }
   return f;
 }
@@ -47,12 +49,16 @@ const trim = (n: number) => {
 };
 
 export const formatInteger = (value: number): string =>
-  Number.isFinite(value) ? new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value) : '--';
+  Number.isFinite(value) ? new Intl.NumberFormat(
+    typeof document !== 'undefined' && document.documentElement.lang === 'ar' ? 'ar-EG' : 'en-US',
+    { maximumFractionDigits: 0 },
+  ).format(value) : '--';
 
 /** The API sends 2.04 for 2.04% -- format it, never multiply it again. */
 export function formatPercent(value: number, digits = 2): string {
   if (!Number.isFinite(value)) return '--';
-  return `${new Intl.NumberFormat('en-US', {
+  const locale = typeof document !== 'undefined' && document.documentElement.lang === 'ar' ? 'ar-EG' : 'en-US';
+  return `${new Intl.NumberFormat(locale, {
     minimumFractionDigits: 0, maximumFractionDigits: digits,
   }).format(value)}%`;
 }
@@ -86,15 +92,10 @@ export function formatValueShort(
 
 /* ------------------------------------------------------------------ dates -- */
 
-const dt = (opts: Intl.DateTimeFormatOptions) =>
-  new Intl.DateTimeFormat('en-GB', { timeZone: CAIRO, ...opts });
-
-const fDateTime = dt({ day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
-const fDate = dt({ day: '2-digit', month: 'short', year: 'numeric' });
-const fDayMonth = dt({ day: '2-digit', month: 'short' });
-const fMonth = dt({ month: 'short', year: '2-digit' });
-const fTime = dt({ hour: '2-digit', minute: '2-digit', hour12: false });
-const fWeekday = dt({ weekday: 'short', day: '2-digit', month: 'short' });
+const dt = (opts: Intl.DateTimeFormatOptions) => {
+  const locale = typeof document !== 'undefined' && document.documentElement.lang === 'ar' ? 'ar-EG' : 'en-GB';
+  return new Intl.DateTimeFormat(locale, { timeZone: CAIRO, ...opts });
+};
 
 const safe = (iso: string | null | undefined): Date | null => {
   if (!iso) return null;
@@ -102,34 +103,61 @@ const safe = (iso: string | null | undefined): Date | null => {
   return Number.isNaN(d.getTime()) ? null : d;
 };
 
-export const formatDateTime = (iso?: string | null) => { const d = safe(iso); return d ? fDateTime.format(d) : '--'; };
-export const formatDate = (iso?: string | null) => { const d = safe(iso); return d ? fDate.format(d) : '--'; };
-export const formatDayMonth = (iso?: string | null) => { const d = safe(iso); return d ? fDayMonth.format(d) : '--'; };
-export const formatMonth = (iso?: string | null) => { const d = safe(iso); return d ? fMonth.format(d) : '--'; };
-export const formatTime = (iso?: string | null) => { const d = safe(iso); return d ? fTime.format(d) : '--'; };
-export const formatWeekday = (iso?: string | null) => { const d = safe(iso); return d ? fWeekday.format(d) : '--'; };
+export const formatDateTime = (iso?: string | null) => {
+  const d = safe(iso);
+  return d ? dt({ day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(d) : '--';
+};
+export const formatDate = (iso?: string | null) => {
+  const d = safe(iso);
+  return d ? dt({ day: '2-digit', month: 'short', year: 'numeric' }).format(d) : '--';
+};
+export const formatDayMonth = (iso?: string | null) => {
+  const d = safe(iso);
+  return d ? dt({ day: '2-digit', month: 'short' }).format(d) : '--';
+};
+export const formatMonth = (iso?: string | null) => {
+  const d = safe(iso);
+  return d ? dt({ month: 'short', year: '2-digit' }).format(d) : '--';
+};
+export const formatTime = (iso?: string | null) => {
+  const d = safe(iso);
+  return d ? dt({ hour: '2-digit', minute: '2-digit', hour12: false }).format(d) : '--';
+};
+export const formatWeekday = (iso?: string | null) => {
+  const d = safe(iso);
+  return d ? dt({ weekday: 'short', day: '2-digit', month: 'short' }).format(d) : '--';
+};
 
 /** "4 minutes ago" -- how old the figures on screen are. */
 export function formatAge(seconds: number | null | undefined): string {
   // The API reports no age for figures it computes on the spot from the mirror,
   // rather than reading them from a snapshot -- say that, do not invent one.
-  if (seconds === null || seconds === undefined) return 'read live from the mirror';
-  if (seconds < 45) return 'just now';
+  const arabic = typeof document !== 'undefined' && document.documentElement.lang === 'ar';
+  if (seconds === null || seconds === undefined) {
+    return arabic ? 'يُقرأ مباشرة من النسخة المحلية' : 'read live from the mirror';
+  }
+  if (seconds < 45) return arabic ? 'الآن' : 'just now';
   const m = Math.round(seconds / 60);
-  if (m < 60) return `${m} minute${m === 1 ? '' : 's'} ago`;
+  if (m < 60) return arabic ? `منذ ${m} دقيقة` : `${m} minute${m === 1 ? '' : 's'} ago`;
   const h = Math.round(m / 60);
-  if (h < 24) return `${h} hour${h === 1 ? '' : 's'} ago`;
+  if (h < 24) return arabic ? `منذ ${h} ساعة` : `${h} hour${h === 1 ? '' : 's'} ago`;
   const d = Math.round(h / 24);
-  return `${d} day${d === 1 ? '' : 's'} ago`;
+  return arabic ? `منذ ${d} يومًا` : `${d} day${d === 1 ? '' : 's'} ago`;
 }
 
 /** "1 h 30 m" -- for room availability. */
 export function formatDuration(minutes: number | null | undefined): string {
   if (minutes === null || minutes === undefined) return '--';
-  if (minutes < 60) return `${Math.round(minutes)} min`;
+  const arabic = typeof document !== 'undefined' && document.documentElement.lang === 'ar';
+  if (minutes < 60) return arabic ? `${Math.round(minutes)} د` : `${Math.round(minutes)} min`;
   const h = Math.floor(minutes / 60), m = Math.round(minutes % 60);
-  if (h >= 24) { const d = Math.floor(h / 24); return `${d} day${d === 1 ? '' : 's'}+`; }
-  return m ? `${h} h ${m} min` : `${h} h`;
+  if (h >= 24) {
+    const d = Math.floor(h / 24);
+    return arabic ? `${d} يوم+` : `${d} day${d === 1 ? '' : 's'}+`;
+  }
+  return m
+    ? arabic ? `${h} س ${m} د` : `${h} h ${m} min`
+    : arabic ? `${h} س` : `${h} h`;
 }
 
 /** Percentage change between two figures, or null when there is no baseline. */

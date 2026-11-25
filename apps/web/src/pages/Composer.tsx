@@ -9,6 +9,7 @@ import { Badge } from '../components/Card';
 import { ErrorState, LoadingState } from '../components/States';
 import { Icon } from '../components/Icon';
 import { Link } from 'react-router-dom';
+import { localizedName, AR_ROLES } from '../lib/i18n';
 
 interface Placement { widgetKey: string; width: number }
 
@@ -461,7 +462,7 @@ function AccessPane({ dashboardId, onSaved }: { dashboardId: string; onSaved: ()
                   />
                   <span className="check__box" aria-hidden="true"><Icon name="check" size={13} /></span>
                   <span className="check__text">
-                    <strong>{role.name}</strong>
+                    <strong>{localizedName(role.name, null, AR_ROLES)}</strong>
                     <span className="mono">{role.key}</span>
                   </span>
                 </label>

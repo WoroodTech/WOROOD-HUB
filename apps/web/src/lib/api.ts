@@ -8,6 +8,7 @@
  */
 
 import type { LoginResponse, Principal } from '../contract';
+import { translateText } from './i18n';
 
 const BASE = '/api/v1';
 const REFRESH_KEY = 'worood.refreshToken';
@@ -50,10 +51,20 @@ async function parse(res: Response): Promise<any> {
   try { return JSON.parse(text); } catch { return text; }
 }
 
+function preferredLocale(): 'ar' | 'en' {
+  try {
+    return localStorage.getItem('worood.appearance.locale') === 'ar' ? 'ar' : 'en';
+  } catch {
+    return 'en';
+  }
+}
+
 function messageOf(body: any, fallback: string): string {
-  if (!body) return fallback;
-  if (typeof body === 'string') return body;
-  return body?.error?.message ?? body?.message ?? fallback;
+  let message: string;
+  if (!body) message = fallback;
+  else if (typeof body === 'string') message = body;
+  else message = body?.error?.message ?? body?.message ?? fallback;
+  return preferredLocale() === 'ar' ? translateText(message, 'ar') : message;
 }
 
 /** All concurrent 401s await the same refresh. */

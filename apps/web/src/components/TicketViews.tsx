@@ -12,6 +12,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { BoardCard, BoardColumnData } from '../contract';
 import { Icon } from './Icon';
 import { formatDate } from '../lib/format';
+import { localizedName, AR_DEPARTMENTS } from '../lib/i18n';
 import { STATUS_SHORT } from '../pages/Tasks';
 
 export type TicketView = 'board' | 'list';
@@ -126,7 +127,7 @@ function ListRow({ card, onOpen }: { card: BoardCard; onOpen: () => void }) {
             doing this" is the thing an icon alone cannot say. */}
         {!card.internal ? (
           <span className="tlist__ext"
-                title={`${card.requesterDepartmentName ?? 'Another department'} asked ${card.departmentName}`}>
+                title={`${localizedName(card.requesterDepartmentName, null, AR_DEPARTMENTS)} asked ${localizedName(card.departmentName, null, AR_DEPARTMENTS)}`}>
             <Icon name="globe" size={11} /> external
           </span>
         ) : null}

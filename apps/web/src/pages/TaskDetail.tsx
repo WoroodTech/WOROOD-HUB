@@ -31,6 +31,7 @@ import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import { Icon } from '../components/Icon';
 import { formatDate, formatDateTime, formatTime } from '../lib/format';
 import { STATUS_LABEL, TaskStatusBadges } from './Tasks';
+import { localizedName, AR_DEPARTMENTS } from '../lib/i18n';
 
 /** `YYYY-MM-DDTHH:mm` in the browser's own zone, which is what a
  *  datetime-local input compares against. Rounded up to the next minute so the
@@ -824,7 +825,11 @@ function TaskDialog({ dialog, task, busy, onClose, onSubmit }: {
                 <option value="">Choose…</option>
                 {(departments.data ?? [])
                   .filter((d) => d.id !== task.departmentId)
-                  .map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                  .map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {localizedName(d.name, d.nameAr, AR_DEPARTMENTS)}
+                    </option>
+                  ))}
               </select>
             </label>
           ) : null}

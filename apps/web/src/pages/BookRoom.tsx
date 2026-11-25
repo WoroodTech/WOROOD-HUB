@@ -37,6 +37,7 @@ import { Icon } from '../components/Icon';
 import { AttendeePicker } from '../components/AttendeePicker';
 import { CAIRO, formatTime, formatWeekday } from '../lib/format';
 import { RoomWeekCalendar, type SlotSelection } from '../components/RoomWeekCalendar';
+import { localizedName } from '../lib/i18n';
 
 /** Mirrors BOOKING_LIMITS on the API. The floor rules out a mis-typed booking
  *  of a minute or two; the ceiling stops a room being held for a whole day.
@@ -262,7 +263,7 @@ export function BookRoom() {
             <select className="select" value={roomId} onChange={(e) => setRoomId(e.target.value)}>
               <option value="">Any room</option>
               {roomsCatalogue.data?.rooms.map((r) => (
-                <option key={r.id} value={r.id}>{r.name}</option>
+                <option key={r.id} value={r.id}>{localizedName(r.name, r.nameAr)}</option>
               ))}
             </select>
           </label>

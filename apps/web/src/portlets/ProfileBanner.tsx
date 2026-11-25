@@ -9,6 +9,7 @@
 
 import { useAuth } from '../lib/auth';
 import { useAppearance } from '../lib/theme';
+import { localizedName, AR_ROLES } from '../lib/i18n';
 import { Icon } from '../components/Icon';
 
 function initials(name: string): string {
@@ -44,7 +45,8 @@ export function ProfileBanner() {
         <li className="idtag"><Icon name="map-pin" size={12} /> {principal.timezone.split('/').pop()?.replace(/_/g, ' ')}</li>
         {principal.roles.map((role) => (
           <li className="idtag idtag--role" key={role}>
-            <Icon name="user" size={12} /> {role.replace(/-/g, ' ')}
+            <Icon name="user" size={12} />
+            {localizedName(role.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()), null, AR_ROLES)}
           </li>
         ))}
       </ul>

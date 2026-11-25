@@ -21,6 +21,7 @@ import { useToast } from '../lib/toast';
 import { Badge, Card } from '../components/Card';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import { Icon } from '../components/Icon';
+import { localizedName, AR_ROLES } from '../lib/i18n';
 
 const MODULE_LABELS: Record<string, string> = {
   core: 'The platform',
@@ -30,6 +31,7 @@ const MODULE_LABELS: Record<string, string> = {
 
 export function Roles() {
   const toast = useToast();
+  const roleLabel = (role: AdminRole) => localizedName(role.name, role.nameAr, AR_ROLES);
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -81,7 +83,7 @@ export function Roles() {
                 >
                   <span className="rolerow__body">
                     <span className="rolerow__name">
-                      {r.name}
+                      {roleLabel(r)}
                       {r.grantsConsole ? <Icon name="lock" size={12} /> : null}
                     </span>
                     <span className="rolerow__key mono">{r.key}</span>
@@ -124,7 +126,7 @@ export function Roles() {
           onCreated={(r) => {
             setCreating(false);
             setSelectedId(r.id);
-            toast.push(`${r.name} created. Nobody holds it yet.`, 'good');
+            toast.push(`${localizedName(r.name, r.nameAr, AR_ROLES)} created. Nobody holds it yet.`, 'good');
             refresh();
           }}
         />
@@ -142,6 +144,7 @@ function RolePanel({ role, catalogue, onChanged, onDeleted }: {
   onDeleted: () => void;
 }) {
   const toast = useToast();
+  const roleName = localizedName(role.name, role.nameAr, AR_ROLES);
   const [keys, setKeys] = useState<string[]>(role.permissions.map((p) => p.key));
   const [meta, setMeta] = useState({ name: role.name, nameAr: role.nameAr ?? '', description: role.description ?? '' });
 
@@ -193,7 +196,7 @@ function RolePanel({ role, catalogue, onChanged, onDeleted }: {
   return (
     <>
       <Card
-        title={role.name}
+        title={roleName}
         subtitle={<span className="mono">{role.key}</span>}
         actions={
           <span className="card__actionrow">

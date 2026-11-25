@@ -16,6 +16,7 @@ import type { SignupDepartment, SignupReply } from '../contract';
 import { api } from '../lib/api';
 import { Icon } from '../components/Icon';
 import { WoroodLogo } from '../components/WoroodLogo';
+import { localizedName, AR_DEPARTMENTS } from '../lib/i18n';
 
 /**
  * What makes a password acceptable here.
@@ -202,7 +203,9 @@ export function Signup() {
                 {departments.isLoading ? 'Loading…' : 'Choose your department'}
               </option>
               {(departments.data ?? []).map((d) => (
-                <option key={d.id} value={d.id}>{d.name}</option>
+                <option key={d.id} value={d.id}>
+                  {localizedName(d.name, null, AR_DEPARTMENTS)}
+                </option>
               ))}
             </select>
           </label>

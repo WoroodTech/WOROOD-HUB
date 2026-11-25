@@ -20,6 +20,7 @@ import { useToast } from '../lib/toast';
 import { Badge, Card } from '../components/Card';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import { Icon } from '../components/Icon';
+import { isArabic, localizedName } from '../lib/i18n';
 
 interface Manager {
   id: string; name: string; jobTitle?: string | null; email: string; active: boolean;
@@ -33,6 +34,7 @@ interface Candidate { id: string; name: string; jobTitle?: string | null; isMana
 
 export function Departments() {
   const toast = useToast();
+  const arabic = isArabic();
   const queryClient = useQueryClient();
   const [picking, setPicking] = useState<Department | null>(null);
   const [creating, setCreating] = useState(false);
@@ -79,7 +81,7 @@ export function Departments() {
           <span>
             <strong>
               {unreachable.length === 1
-                ? `${unreachable[0].name} has no active manager.`
+                ? `${localizedName(unreachable[0].name, unreachable[0].nameAr)} ${arabic ? 'لا يملك مديرًا نشطًا.' : 'has no active manager.'}`
                 : `${unreachable.length} departments have no active manager.`}
             </strong>{' '}
             Nobody can be put on a ticket raised to {unreachable.length === 1 ? 'it' : 'them'},
@@ -96,7 +98,7 @@ export function Departments() {
         {ordered.map((d) => (
           <Card
             key={d.id}
-            title={d.name}
+            title={localizedName(d.name, d.nameAr)}
             subtitle={[
               d.parentName ? `under ${d.parentName}` : null,
               `${d.headCount} ${d.headCount === 1 ? 'person' : 'people'}`,
@@ -151,6 +153,8 @@ function ManagerPicker({ department, onClose }: {
   department: Department;
   onClose: () => void;
 }) {
+  const arabic = isArabic();
+  const departmentName = localizedName(department.name, department.nameAr);
   const toast = useToast();
   const queryClient = useQueryClient();
   const [chosen, setChosen] = useState('');
@@ -176,11 +180,11 @@ function ManagerPicker({ department, onClose }: {
   const available = list.filter((c) => !c.isManager);
 
   return (
-    <div className="modal" role="dialog" aria-modal="true" aria-label={`Add a manager to ${department.name}`}>
+    <div className="modal" role="dialog" aria-modal="true" aria-label={`${arabic ? 'إضافة مدير إلى' : 'Add a manager to'} ${departmentName}`}>
       <button type="button" className="modal__scrim" onClick={onClose} aria-label="Close" />
       <div className="modal__panel">
         <header className="modal__head">
-          <h2 className="modal__title">Who runs {department.name}?</h2>
+          <h2 className="modal__title">{arabic ? `من يدير ${departmentName}؟` : `Who runs ${departmentName}?`}</h2>
           <button type="button" className="iconbtn" onClick={onClose} aria-label="Close">
             <Icon name="minus" size={16} />
           </button>
@@ -192,11 +196,13 @@ function ManagerPicker({ department, onClose }: {
             <EmptyState
               icon="users"
               title="Nobody left to choose"
-              hint={`Only active members of ${department.name} can run it. Move somebody into the department from Administration → People first.`}
+              hint={arabic
+                ? `يمكن للأعضاء النشطين في ${departmentName} فقط إدارة القسم. انقل موظفًا إلى القسم من الإدارة ← الموظفون أولًا.`
+                : `Only active members of ${departmentName} can run it. Move somebody into the department from Administration → People first.`}
             />
           ) : (
             <div className="field field--wide">
-              <span className="field__label">Active members of {department.name}</span>
+              <span className="field__label">{arabic ? `الأعضاء النشطون في ${departmentName}` : `Active members of ${departmentName}`}</span>
               <div className="pickerlist">
                 {available.map((c) => (
                   <button key={c.id} type="button"
@@ -284,7 +290,11 @@ function NewDepartment({ departments, onClose }: {
             <select className="input" value={parentId}
                     onChange={(e) => setParentId(e.target.value)}>
               <option value="">Top level</option>
-              {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+              {departments.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {localizedName(d.name, d.nameAr)}
+                </option>
+              ))}
             </select>
           </div>
 

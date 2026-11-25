@@ -30,6 +30,7 @@ import { Icon } from '../components/Icon';
 import { formatDate } from '../lib/format';
 import { uploadAll } from '../lib/upload';
 import { AttachmentPicker } from '../components/Attachments';
+import { localizedName, AR_DEPARTMENTS } from '../lib/i18n';
 
 type Scope = 'assigned' | 'requested' | 'contributing' | 'queue' | 'department' | 'all';
 
@@ -379,7 +380,7 @@ function NewTicket({ onClose }: { onClose: () => void }) {
                 onChange={(e) => setDepartmentId(e.target.value)}>
                 {(departments.data ?? []).map((d) => (
                   <option key={d.id} value={d.id}>
-                    {d.name}{d.isMine ? ' — yours' : ''}
+                    {localizedName(d.name, d.nameAr, AR_DEPARTMENTS)}{d.isMine ? ' — yours' : ''}
                   </option>
                 ))}
               </select>

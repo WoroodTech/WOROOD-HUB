@@ -755,9 +755,9 @@ export interface BoardColumnData {
 
 export interface BoardResponse {
   side: 'doing' | 'requested';
-  departments: Array<{ id: string; name: string }>;
+  departments: Array<{ id: string; name: string; nameAr?: string | null }>;
   /** Departments that have asked this one for something — the second filter. */
-  requesters: Array<{ id: string; name: string }>;
+  requesters: Array<{ id: string; name: string; nameAr?: string | null }>;
   /** Which department the viewer is looking from, for an administrator. */
   standingIn: string | null;
   columns: BoardColumnData[];
@@ -773,7 +773,7 @@ export interface MyBoardResponse {
 
 export interface TicketDashboardResponse {
   side: 'doing' | 'requested';
-  departments: Array<{ id: string; name: string }>;
+  departments: Array<{ id: string; name: string; nameAr?: string | null }>;
   empty: 'notAManager' | null;
   totals: {
     total: number; unassigned: number; planning: number; onHold: number;

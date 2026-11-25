@@ -30,6 +30,7 @@ import { Badge, Card } from '../components/Card';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import { Icon } from '../components/Icon';
 import { formatDateTime } from '../lib/format';
+import { isArabic, localizedName, AR_ROLES } from '../lib/i18n';
 
 const MIN_PASSWORD = 12;
 
@@ -99,7 +100,7 @@ function RunsDepartment({ user }: { user: AdminUserDetail }) {
           </label>
           {elsewhere.length > 0 ? (
             <p className="hint">
-              Also runs {elsewhere.map((d) => d.name).join(', ')} — change that from
+              Also runs {elsewhere.map((d) => localizedName(d.name, null)).join(', ')} — change that from
               Administration → Departments.
             </p>
           ) : null}
@@ -198,7 +199,7 @@ export function People() {
                   <span className="person__avatar" aria-hidden="true">{initials(u.fullName)}</span>
                   <span className="person__body">
                     <span className="person__name">
-                      {u.fullName}
+                    {isArabic() && u.fullNameAr ? u.fullNameAr : u.fullName}
                       {u.id === principal?.id ? <span className="person__you">you</span> : null}
                     </span>
                     {/* The address, not the job title: this is a screen about
@@ -207,7 +208,7 @@ export function People() {
                     <span className="person__meta">{u.email}</span>
                     <span className="person__roles">
                       {u.roles.length
-                        ? u.roles.map((r) => r.name).join(' · ')
+                        ? u.roles.map((r) => localizedName(r.name, null, AR_ROLES)).join(' · ')
                         : <em>no role</em>}
                     </span>
                   </span>
@@ -389,7 +390,9 @@ function PersonPanel({ userId, roles, departments, onChanged, onDeleted }: {
             <select className="select" value={edited.departmentId ?? ''}
                     onChange={(e) => set({ departmentId: e.target.value || null })}>
               <option value="">None</option>
-              {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+              {departments.map((d) => (
+                <option key={d.id} value={d.id}>{localizedName(d.name, null)}</option>
+              ))}
             </select>
           </label>
           <label className="field">
@@ -427,7 +430,7 @@ function PersonPanel({ userId, roles, departments, onChanged, onDeleted }: {
                 })}
               >
                 {on ? <Icon name="check" size={13} /> : null}
-                {r.name}
+                {localizedName(r.name, r.nameAr, AR_ROLES)}
                 {r.grantsConsole ? <Icon name="lock" size={12} /> : null}
               </button>
             );
@@ -712,7 +715,9 @@ function NewPersonDialog({ roles, departments, onClose, onCreated }: {
               <select className="select" value={form.departmentId}
                       onChange={(e) => set({ departmentId: e.target.value })}>
                 <option value="">None</option>
-                {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                {departments.map((d) => (
+                  <option key={d.id} value={d.id}>{localizedName(d.name, null)}</option>
+                ))}
               </select>
             </label>
             <label className="field">
@@ -752,7 +757,7 @@ function NewPersonDialog({ roles, departments, onClose, onCreated }: {
                   })}
                 >
                   {on ? <Icon name="check" size={13} /> : null}
-                  {r.name}
+                  {localizedName(r.name, r.nameAr, AR_ROLES)}
                   {r.grantsConsole ? <Icon name="lock" size={12} /> : null}
                 </button>
               );
