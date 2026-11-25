@@ -21,12 +21,12 @@ import { AuditService } from '../../core/core.module';
 import { WarehouseSheetClient } from './sheets/warehouse-sheet.client';
 import { WarehouseReaderService } from './sheets/warehouse-reader.service';
 import { parseSheetDate, sheetDate } from './sheets/parse-date';
-import { SETTINGS_TAB } from './costing.service';
 import {
   ROLL_NEXT, ROLL_STATUS, RollStatus,
   ROLLS_BATCHES, ROLLS_BATCHES_TAB,
   ROLLS_REGISTER, ROLLS_REGISTER_TAB,
   ROLLS_WORKSHOP, ROLLS_WORKSHOP_TAB,
+  SETTINGS_TAB,
 } from './sheets/tabs';
 
 const TZ = 'Africa/Cairo';

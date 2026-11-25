@@ -175,6 +175,18 @@ export const ROLL_NEXT: Record<RollStatus, RollStatus[]> = {
   Closed: [],
 };
 
+/**
+ * `Rolls Settings` — the planning constants, one per row.
+ *
+ * Here rather than beside the service that owns it: the rolls service needs
+ * `unitsPerMeter` to work out what a roll should yield, and importing the
+ * costing service for the tab's name made a cycle between the two files.
+ * Nest cannot see through that, so it handed costing an undefined
+ * dependency and refused to start — after a clean build, which is the part
+ * that makes it hard to spot.
+ */
+export const SETTINGS_TAB = 'Rolls Settings';
+
 export const ROLLS_WORKSHOP_TAB = 'Rolls Workshop';
 export const ROLLS_WORKSHOP = {
   operationOrder: 0, issued: 1, issuedBy: 2, rolls: 3, meters: 4,
