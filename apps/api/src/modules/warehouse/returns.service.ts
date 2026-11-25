@@ -26,6 +26,7 @@ import {
   PATCH_LOG, PATCH_LOG_TAB,
   RETURN_ISSUES, RETURN_ISSUES_TAB,
   WAREHOUSE_LOCATIONS,
+  TX, TX_TAB,
 } from './sheets/tabs';
 
 const TZ = 'Africa/Cairo';
@@ -165,6 +166,38 @@ export class WarehouseReturnsService {
     });
 
     return { ok: true, id };
+  }
+
+  /**
+   * Which patch an order went out on.
+   *
+   * The issue form asked somebody to type it, and the number is already in
+   * the ledger beside the order — so it was a field that could be wrong,
+   * about the one thing on the issue that ties it to what was shipped.
+   *
+   * The newest matching row wins: an order sent twice was reshipped, and a
+   * return is almost always against the later patch.
+   */
+  async patchForOrder(order: string) {
+    const want = String(order ?? '').trim().replace(/^#/, '').toLowerCase();
+    if (!want) return { patch: null as string | null };
+
+    const rows = await this.sheet.read(TX_TAB);
+    for (let i = rows.length - 1; i >= 1; i--) {
+      const r = rows[i] ?? [];
+      /* Local and global order numbers live in different columns, and a
+         return knows only the number it was given. */
+      const national = String(r[TX.nationalOrder] ?? '')
+        .trim().replace(/^#/, '').toLowerCase();
+      const global = String(r[TX.globalOrder] ?? '')
+        .trim().replace(/^#/, '').toLowerCase();
+      if (national !== want && global !== want) continue;
+
+      const patch = String(r[TX.patch] ?? '').trim();
+      if (patch) return { patch, kind: String(r[TX.kind] ?? '').trim() };
+    }
+
+    return { patch: null as string | null };
   }
 
   /**

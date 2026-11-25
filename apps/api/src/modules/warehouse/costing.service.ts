@@ -56,6 +56,10 @@ const PLAN_DEFAULTS = {
 };
 
 /** How far back the demand plan looks: 26 weeks, as the Apps Script does. */
+/* How long a run takes from deciding to make it to pieces on the shelf —
+   the wait the safety stock has to cover. */
+const PRODUCTION_WEEKS = 2;
+
 const PLAN_WEEKS = 26;
 
 @Injectable()
@@ -354,7 +358,11 @@ export class WarehouseCostingService {
    * pieces go missing, pieces fail a check, and fabric is wasted, and a plan
    * that ignores all three is short by about a tenth every time.
    */
-  async demandPlan(weeks = PLAN_WEEKS) {
+  /**
+   * @param safetyDays  how many days of stock to hold after a run arrives
+   * @param boostPct    a season's lift on expected demand, as a percentage
+   */
+  async demandPlan(weeks = PLAN_WEEKS, safetyDays = 30, boostPct = 0) {
     const all = await this.readAll();
     const [movements, balances] = await Promise.all([
       this.reader.movements({ limit: 40000 }),
@@ -385,11 +393,27 @@ export class WarehouseCostingService {
 
     const rows = [...sold.entries()]
       .map(([item, qty]) => {
-        const perWeek = qty / weeks;
+        /*
+         * The pace, lifted for the season if somebody has said so.
+         *
+         * Ramadan and Eid are most of the year's selling, and a plan built
+         * on the eight quiet weeks before them orders half of what is
+         * needed. The lift is a number the planner sets rather than
+         * something guessed from history, because the history does not
+         * contain next month.
+         */
+        const perWeek = (qty / weeks) * (1 + boostPct / 100);
         const have = onHand.get(item) ?? 0;
-        /* Eight weeks of cover: long enough to be worth cutting fabric for,
-           short enough not to fill the warehouse. */
-        const target = perWeek * 8;
+
+        /*
+         * Enough to cover the wait, plus the safety stock behind it.
+         *
+         * Cover was a fixed eight weeks. What it has to be is however long
+         * production takes plus however many days the business wants left
+         * on the shelf when the run lands — and that second number is a
+         * decision, not a constant.
+         */
+        const target = perWeek * (PRODUCTION_WEEKS + safetyDays / 7);
         const gap = Math.max(0, target - have);
         const make = Math.ceil(gap * allowance);
 

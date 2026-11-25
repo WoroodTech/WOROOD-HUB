@@ -353,8 +353,18 @@ export class WarehouseController {
   /** What to make next, from 26 weeks of sales. */
   @Get('demand')
   @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_PLAN)
-  demand(@Query('weeks') weeks?: string) {
-    return this.costing.demandPlan(weeks ? Number(weeks) : undefined);
+  demand(@Query() q: { weeks?: string; safetyDays?: string; boostPct?: string }) {
+    /* Both are the planner's decisions rather than constants: how long
+       production takes is a fact, how much cover to hold after it and
+       what a season will add are judgements. */
+    const num = (v: string | undefined, fallback: number) => {
+      const n = Number(v);
+      return Number.isFinite(n) && n >= 0 ? n : fallback;
+    };
+    return this.costing.demandPlan(
+      q.weeks ? Number(q.weeks) : undefined,
+      num(q.safetyDays, 30),
+      num(q.boostPct, 0));
   }
 
   /* ------------------------------------------------------ QR labels -- */
@@ -441,6 +451,13 @@ export class WarehouseController {
   patchComment(@CurrentUser() p: Principal,
                @Body() dto: { patch: string; comment: string }) {
     return this.returns.comment(p, dto?.patch, dto?.comment);
+  }
+
+  /** Which patch an order went out on, for the return issue form. */
+  @Get('returns/patch-for-order')
+  @Permissions(WAREHOUSE_PERMISSIONS.VIEW)
+  patchForOrder(@Query('order') order: string) {
+    return this.returns.patchForOrder(order);
   }
 
   @Post('patches/status')

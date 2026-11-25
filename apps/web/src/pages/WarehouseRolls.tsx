@@ -23,6 +23,7 @@ import { useAuth } from '../lib/auth';
 import { WarehousePlanning } from './WarehousePlanning';
 import { ExportCsv } from '../components/ExportCsv';
 import { Paged } from '../components/Paged';
+import { ReceivingNote } from '../components/ReceivingNote';
 
 /** A sheet date: a serial number, or text for a hand-typed row. */
 function sheetDate(v: string | number): string {
@@ -1541,6 +1542,9 @@ function RollsWarehouse() {
   const [alsoUnplanned, setAlsoUnplanned] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  /* Which receiving note is open, if any. */
+  const [paper, setPaper] = useState<
+    { job: WarehouseJobOrder; batch: number } | null>(null);
 
   const rolls = useQuery({
     queryKey: qk.whRolls(''),
@@ -1740,6 +1744,7 @@ function RollsWarehouse() {
                   <th scope="col" className="is-end">Received</th>
                   <th scope="col">Date</th>
                   <th scope="col">Status</th>
+                  <th scope="col" />
                 </tr>
               </thead>
               <tbody>
@@ -1752,12 +1757,26 @@ function RollsWarehouse() {
                     </td>
                     <td className="muted">{sheetDate(j.delivered)}</td>
                     <td><RollPill status={j.status} /></td>
+                    <td className="is-end">
+                      {/* The paper the workshop and the warehouse both
+                          sign. Opened from the row it belongs to, so the
+                          job order never has to be typed again. */}
+                      <button type="button" className="linkbtn"
+                              onClick={() => setPaper({ job: j, batch: 1 })}>
+                        Open / Print
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         </Card>
+      ) : null}
+
+      {paper ? (
+        <ReceivingNote job={paper.job} batch={paper.batch}
+                       onClose={() => setPaper(null)} />
       ) : null}
     </>
   );
