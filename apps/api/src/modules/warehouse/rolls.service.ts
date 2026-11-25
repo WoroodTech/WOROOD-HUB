@@ -20,7 +20,7 @@ import { Principal } from '../../common/auth';
 import { AuditService } from '../../core/core.module';
 import { WarehouseSheetClient } from './sheets/warehouse-sheet.client';
 import { WarehouseReaderService } from './sheets/warehouse-reader.service';
-import { sheetDate } from './sheets/parse-date';
+import { parseSheetDate, sheetDate } from './sheets/parse-date';
 import { SETTINGS_TAB } from './costing.service';
 import {
   ROLL_NEXT, ROLL_STATUS, RollStatus,
@@ -407,6 +407,112 @@ export class WarehouseRollsService {
    * whose grades do not add up to its total cannot be reconciled against the
    * fabric that went in, and nobody will notice until the fabric is gone.
    */
+  /**
+   * How the rolls cycle has been performing over a period.
+   *
+   * Counted from the job orders rather than kept as running totals: a
+   * stored figure drifts from the rows it came from, and the rows are the
+   * thing anybody will check it against.
+   *
+   * The period filters on when a job order was issued, not when it closed —
+   * "the last ninety days" means fabric that went out in them, and a job
+   * order opened in August and finished in November belongs to August.
+   */
+  async performance(from: string, to: string) {
+    const [jobs, rolls, settings] = await Promise.all([
+      this.jobOrders(), this.rolls(), this.planSettings(),
+    ]);
+
+    const start = Date.parse(from);
+    const end = Date.parse(to) + 86_400_000;
+    /* The one date reader the module shares, so a shape it understands
+       here is a shape it understands on every other screen. */
+    const at = (when: unknown) => parseSheetDate(when)?.toMillis() ?? null;
+    const within = (when: unknown) => {
+      const t = at(when);
+      return t !== null && t >= start && t < end;
+    };
+
+    const n = (v: unknown) => Number(v) || 0;
+    const period = jobs.filter((j) => within(j.issued));
+    const completed = period.filter(
+      (j) => j.status === 'Closed' || j.status === 'Delivered');
+    const live = period.filter(
+      (j) => j.status === 'Issued' || j.status === 'Reported');
+
+    const expected = period.reduce((t, j) => t + n(j.expectedUnits), 0);
+    const good = period.reduce((t, j) => t + n(j.gradeA), 0);
+    const seconds = period.reduce((t, j) => t + n(j.gradeB), 0);
+    const waste = period.reduce(
+      (t, j) => t + n(j.fabricationWaste) + n(j.materialWaste), 0);
+    const received = good + seconds;
+    const metres = period.reduce((t, j) => t + n(j.meters), 0);
+
+    /* How long fabric took from entering the warehouse to a finished job
+       order — the number that says whether the floor is moving. */
+    const cycles: number[] = [];
+    for (const j of completed) {
+      const a = at(j.issued);
+      const b = at(j.delivered);
+      if (a !== null && b !== null && b >= a) {
+        cycles.push(Math.round((b - a) / 86_400_000));
+      }
+    }
+    const cycleDays = cycles.length
+      ? Math.round((cycles.reduce((t, d) => t + d, 0) / cycles.length) * 10) / 10
+      : 0;
+
+    /* Out past the agreed days with nothing back. */
+    const overdueAfter = 14;
+    const now = Date.now();
+    const overdue = live.filter((j) => {
+      const t = at(j.issued);
+      return t !== null && (now - t) / 86_400_000 > overdueAfter;
+    });
+
+    /* Fabric that has been sitting in the register a month or more. */
+    const oldRolls = rolls.filter((r) => {
+      if (r.status !== 'Received' && r.status !== 'Planned') return false;
+      const t = at(r.received);
+      return t !== null && (now - t) / 86_400_000 > 30;
+    });
+
+    const inStockMetres = rolls
+      .filter((r) => r.status === 'Received' || r.status === 'Planned')
+      .reduce((t, r) => t + n(r.meters), 0);
+
+    const pct = (part: number, whole: number) =>
+      whole ? Math.round((part / whole) * 1000) / 10 : 0;
+
+    return {
+      from, to,
+      jobOrders: { total: period.length, completed: completed.length, live: live.length },
+      rollsReceived: {
+        count: rolls.filter((r) => within(r.received)).length,
+        metres: Math.round(
+          rolls.filter((r) => within(r.received))
+            .reduce((t, r) => t + n(r.meters), 0) * 10) / 10,
+      },
+      pieces: { expected, good, seconds, received, waste },
+      /* Good against everything that came back — the headline figure. */
+      goodPct: pct(good, received),
+      wastePct: pct(waste, received + waste),
+      variance: received - expected,
+      variancePct: pct(received - expected, expected),
+      /* Pieces a metre actually produced, against what the constant says
+         it should. A yield below standard is fabric being wasted in the
+         cutting rather than in the sewing. */
+      yieldPerMetre: metres ? Math.round((received / metres) * 100) / 100 : 0,
+      standardYield: settings.unitsPerMeter,
+      cycleDays,
+      overdue: overdue.length,
+      stockAge: oldRolls.length,
+      fabricInStock: { metres: Math.round(inStockMetres * 10) / 10,
+                       rolls: rolls.filter(
+                         (r) => r.status === 'Received' || r.status === 'Planned').length },
+    };
+  }
+
   async report(p: Principal, dto: {
     operationOrder: string;
     total: number; gradeA: number; gradeB: number; gradeC: number;

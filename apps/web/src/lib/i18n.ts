@@ -46,6 +46,21 @@ export function localizedName(
 }
 
 export const AR_TEXT: TextTranslation = {
+  'Warehouse (Approval / Receiving)': 'المخزن (الاعتماد والاستلام)',
+  'Hand rolls over to the workshop': 'تسليم الألفات للورشة',
+  'Record receiving': 'تسجيل الاستلام',
+  'Rolls performance': 'أداء الألفات',
+  'Accuracy': 'الدقة',
+  'Stock age': 'عمر المخزون',
+  'Rolls received': 'الألفات المستلمة',
+  'Roll cycle time': 'زمن دورة اللفة',
+  'Pieces received': 'القطع المستلمة',
+  'Fabric in stock': 'القماش في المخزن',
+  'Good pieces': 'القطع السليمة',
+  'Expected units': 'الوحدات المتوقعة',
+  'Missing %': 'نسبة الناقص',
+  'Export Excel (CSV)': 'تصدير إكسل (CSV)',
+  'Print / PDF': 'طباعة / PDF',
   'Light': 'فاتح',
   'Dark': 'داكن',
   'System': 'النظام',

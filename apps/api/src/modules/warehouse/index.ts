@@ -599,6 +599,22 @@ export class WarehouseController {
     return this.rolls.rolls(q);
   }
 
+  /**
+   * How the rolls cycle has been performing over a period.
+   *
+   * The dates filter on when a job order was issued rather than when it
+   * closed: "the last ninety days" means fabric that went out in them, and
+   * one opened in August and finished in November belongs to August.
+   */
+  @Get('rolls/performance')
+  @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_REPORT)
+  rollsPerformance(@Query() q: { from?: string; to?: string }) {
+    const to = q.to || new Date().toISOString().slice(0, 10);
+    const from = q.from
+      || new Date(Date.now() - 89 * 86_400_000).toISOString().slice(0, 10);
+    return this.rolls.performance(from, to);
+  }
+
   @Get('rolls/jobs')
   @Permissions(WAREHOUSE_PERMISSIONS.ROLLS_VIEW)
   jobOrders(@Query('status') status?: string) {
