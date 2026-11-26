@@ -372,6 +372,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 /* --------------------------------------------------------------- page -- */
 
 .page { max-inline-size: 1440px; margin-inline: auto; display: flex; flex-direction: column; gap: 18px; }
+.page--embedded { inline-size: 100%; min-inline-size: 0; }
 
 .pagehead { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .pagehead--stack { align-items: flex-end; }
@@ -4023,8 +4024,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .labelsheet--label { grid-template-columns: 50mm; }
 
 .labelsheet--a4 {
-  grid-template-columns: repeat(4, 48mm);
-  gap: 3mm;
+  grid-template-columns: repeat(4, 47.5mm);
+  gap: 1mm;
 }
 
 .qrlabel {
@@ -4042,7 +4043,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
   overflow: hidden;
 }
 
-.labelsheet--a4 .qrlabel { inline-size: 48mm; block-size: 28mm; }
+.labelsheet--a4 .qrlabel { inline-size: 47.5mm; block-size: 28mm; }
 
 .qrlabel__qr {
   inline-size: 26mm;
@@ -4109,49 +4110,6 @@ button, input, select, textarea { font: inherit; color: inherit; }
   /* A4 keeps its grid — the sheet is meant to fill up — but never splits a
      label across the fold. */
   .labelsheet--a4 .qrlabel { break-inside: avoid; }
-
-  /* The margin is set by the one `@page` below, from the variable the
-     body class carries — A4 wants a margin and a label does not, and a
-     blanket zero here took that choice away. */
-}
-
-/*
- * The paper, not just its margins.
- *
- * `@page { margin: 0 }` alone leaves the sheet at the browser's default,
- * which is A4 — so a 50 x 30 mm label was laid out correctly and then
- * printed in the corner of a full page, and the label printer fed a whole
- * sheet per label.
- *
- * `size` has to be declared outside the media query: `@page` is not a
- * normal rule and does not take the cascade from one. The body class says
- * which stock is loaded, because a label printer and an A4 printer cannot
- * both be right.
- */
-/*
- * One `@page`, sized by a variable.
- *
- * Named pages (`@page label { … }` with `page: label` on an element) are in
- * the spec and in almost no browser — Chrome ignores the name and keeps A4,
- * so a 50 x 30 mm label printed in the corner of a full sheet and the label
- * printer fed one page per label.
- *
- * `size` in the plain `@page` is supported, and it reads a custom property,
- * so the body class sets the variable and the one rule follows it.
- */
-@page {
-  size: var(--print-size, A4);
-  margin: var(--print-margin, 8mm);
-}
-
-body.printing-label {
-  --print-size: 50mm 30mm;
-  --print-margin: 0;
-}
-
-body.printing-a4 {
-  --print-size: A4;
-  --print-margin: 8mm;
 }
 
 /* A value the server decides, shown where its input would have been. */

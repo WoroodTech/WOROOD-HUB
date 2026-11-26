@@ -172,9 +172,12 @@ export class WarehouseTransactionsService {
     const result = await tx(async (c) => {
       if (opId) {
         const seen = await c.query(
-          `SELECT id FROM wh_sheet_events WHERE payload->>'opId' = $1 LIMIT 1`, [opId]);
+          `SELECT id FROM wh_sheet_events WHERE payload->>'opId' = $1`, [opId]);
         if (seen.rows.length) {
-          return { duplicate: true, events: [] as string[] };
+          return {
+            duplicate: true,
+            events: seen.rows.map((row: { id: string }) => row.id),
+          };
         }
       }
       return { duplicate: false, events: [] as string[] };
@@ -183,7 +186,7 @@ export class WarehouseTransactionsService {
     if (result.duplicate) {
       /* Not an error: the first press worked. Saying so is friendlier than
          a refusal that makes somebody check whether it went in. */
-      return { ok: true, alreadyPosted: true, events: [] };
+      return { ok: true, alreadyPosted: true, events: result.events };
     }
 
     const rows = this.buildRows(p, type, dto, lines, direction);

@@ -110,12 +110,6 @@ export class WarehouseQueueService {
 
         const where = await this.sheet.append(target.tab, ev.payload.row);
 
-        await query(
-          `UPDATE wh_sheet_events
-              SET status='WRITTEN', written_at=now(), written_tab=$2, written_row=$3,
-                  error=NULL, lease_owner=NULL, lease_expires_at=NULL
-            WHERE id=$1`, [ev.id, where.tab, where.rowNumber]);
-
         /*
          * The balances are now wrong until the cache lets go of them.
          *
@@ -131,6 +125,12 @@ export class WarehouseQueueService {
         if (target.tab === TX_TAB) {
           await query(`DELETE FROM wh_cache WHERE key = 'balances'`);
         }
+
+        await query(
+          `UPDATE wh_sheet_events
+              SET status='WRITTEN', written_at=now(), written_tab=$2, written_row=$3,
+                  error=NULL, lease_owner=NULL, lease_expires_at=NULL
+            WHERE id=$1`, [ev.id, where.tab, where.rowNumber]);
 
         written++;
       } catch (e: any) {

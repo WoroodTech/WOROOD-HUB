@@ -65,7 +65,7 @@ export function WarehouseApprovals({ view }: {
   const rows = pending.data ?? [];
 
   return (
-    <div className="page">
+    <div className={`page${view ? ' page--embedded' : ''}`}>
       <header className="pagehead">
         <div>
           <h1 className="pagehead__title">Warehouse approvals</h1>
