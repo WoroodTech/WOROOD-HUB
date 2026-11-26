@@ -337,10 +337,15 @@ export class WarehouseController {
       if (!uuid.test(opId)) {
         throw new BadRequestException('Provide a valid warehouse operation ID.');
       }
-      return query<{ id: string; status: string }>(
+      const events = await query<{ id: string; status: string }>(
         `SELECT id::text AS id, status FROM wh_sheet_events
           WHERE payload->>'opId' = $1 ORDER BY created_at, id`,
         [opId]);
+      if (events.length && events.every((event) =>
+        event.status === 'WRITTEN' || event.status === 'DEAD')) {
+        await this.reader.invalidate('balances');
+      }
+      return events;
     }
 
     const ids = [...new Set((idsValue ?? '').split(',').map((id) => id.trim()).filter(Boolean))];
@@ -354,6 +359,10 @@ export class WarehouseController {
       [ids]);
     if (events.length !== ids.length) {
       throw new BadRequestException('One or more warehouse events could not be found.');
+    }
+    if (events.every((event) =>
+      event.status === 'WRITTEN' || event.status === 'DEAD')) {
+      await this.reader.invalidate('balances');
     }
     return events;
   }
