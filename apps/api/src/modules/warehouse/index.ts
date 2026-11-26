@@ -337,15 +337,14 @@ export class WarehouseController {
       if (!uuid.test(opId)) {
         throw new BadRequestException('Provide a valid warehouse operation ID.');
       }
-      const events = await query<{ id: string; status: string }>(
-        `SELECT id::text AS id, status FROM wh_sheet_events
+      const events = await query<{
+        id: string; status: string; written_at: Date | null;
+      }>(
+        `SELECT id::text AS id, status, written_at FROM wh_sheet_events
           WHERE payload->>'opId' = $1 ORDER BY created_at, id`,
         [opId]);
-      if (events.length && events.every((event) =>
-        event.status === 'WRITTEN' || event.status === 'DEAD')) {
-        await this.reader.invalidate('balances');
-      }
-      return events;
+      await this.invalidateAfterWritten(events);
+      return events.map(({ id, status }) => ({ id, status }));
     }
 
     const ids = [...new Set((idsValue ?? '').split(',').map((id) => id.trim()).filter(Boolean))];
@@ -354,17 +353,28 @@ export class WarehouseController {
       throw new BadRequestException('Provide up to 500 valid warehouse event IDs.');
     }
 
-    const events = await query<{ id: string; status: string }>(
-      `SELECT id::text AS id, status FROM wh_sheet_events WHERE id = ANY($1::uuid[])`,
+    const events = await query<{
+      id: string; status: string; written_at: Date | null;
+    }>(
+      `SELECT id::text AS id, status, written_at
+         FROM wh_sheet_events WHERE id = ANY($1::uuid[])`,
       [ids]);
     if (events.length !== ids.length) {
       throw new BadRequestException('One or more warehouse events could not be found.');
     }
-    if (events.every((event) =>
-      event.status === 'WRITTEN' || event.status === 'DEAD')) {
-      await this.reader.invalidate('balances');
-    }
-    return events;
+    await this.invalidateAfterWritten(events);
+    return events.map(({ id, status }) => ({ id, status }));
+  }
+
+  private async invalidateAfterWritten(
+    events: Array<{ status: string; written_at: Date | null }>,
+  ) {
+    const latest = events.reduce<Date | null>((at, event) =>
+      event.status !== 'WRITTEN' || !event.written_at
+        ? at
+        : !at || event.written_at > at ? event.written_at : at,
+    null);
+    if (latest) await this.reader.invalidateBalancesAfter(latest);
   }
 
   @Get('settings')

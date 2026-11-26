@@ -61,6 +61,16 @@ export class WarehouseQueueService {
     return ev.id as string;
   }
 
+  /** Queue a group of rows as one ledger event. */
+  async enqueueRows(kind: WarehouseEventKind, rows: any[][], sourceId?: string) {
+    if (!rows.length) throw new Error('At least one warehouse sheet row is required.');
+    const ev = await one<any>(
+      `INSERT INTO wh_sheet_events (kind, source_id, payload)
+       VALUES ($1, $2, $3) RETURNING id`,
+      [kind, sourceId ?? null, JSON.stringify({ rows })]);
+    return ev.id as string;
+  }
+
   /** Claim one event, lease it, and return it. */
   private async claim(owner: string) {
     const rows = await query<any>(
@@ -108,7 +118,10 @@ export class WarehouseQueueService {
           this.shapeChecked.add(target.tab);
         }
 
-        const where = await this.sheet.append(target.tab, ev.payload.row);
+        const rows = Array.isArray(ev.payload?.rows)
+          ? ev.payload.rows
+          : [ev.payload.row];
+        const where = await this.sheet.appendRows(target.tab, rows);
 
         /*
          * The balances are now wrong until the cache lets go of them.

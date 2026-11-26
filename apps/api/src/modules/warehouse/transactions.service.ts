@@ -197,11 +197,15 @@ export class WarehouseTransactionsService {
 
     const rows = this.buildRows(p, type, dto, lines, direction);
     const events: string[] = [];
-    for (const row of rows) {
-      events.push(await this.queue.enqueue('LEDGER_ROW', row, undefined));
+    if (type.mode === 'transfer') {
+      events.push(await this.queue.enqueueRows('LEDGER_ROW', rows));
+    } else {
+      for (const row of rows) {
+        events.push(await this.queue.enqueue('LEDGER_ROW', row, undefined));
+      }
     }
 
-    /* Stamp the op id on the first event so a retry finds it. */
+    /* Stamp the op id so a retry finds this posting. */
     if (opId && events.length) {
       await query(
         `UPDATE wh_sheet_events SET payload = payload || jsonb_build_object('opId', $2::text)
