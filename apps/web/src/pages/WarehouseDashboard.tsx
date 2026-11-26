@@ -63,7 +63,6 @@ export function WarehouseDashboard() {
     queryKey: ['wh', 'tiles'],
     queryFn: () => api<Tiles>('/warehouse/dashboard/tiles'),
     staleTime: 60_000,
-    refetchInterval: 10_000,
   });
 
   const charts = useQuery({

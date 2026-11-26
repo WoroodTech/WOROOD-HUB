@@ -817,7 +817,7 @@ export const AR_TEXT: TextTranslation = {
   'Patch number or person': 'رقم الدفعة أو الشخص',
   'Something wrong? Write it here — comments can never be deleted':
     'هل توجد مشكلة؟ اكتبها هنا — لا يمكن حذف التعليقات',
-  'Close conversation': 'إغلاق المحادثة',
+  'Hide the conversation': 'إخفاء المحادثة',
   'Notes on this patch.': 'ملاحظات على هذه الدفعة.',
   'Close the order': 'إغلاق الأمر',
   'That could not be closed.': 'تعذر إغلاق الأمر.',

@@ -168,7 +168,7 @@ export function WarehouseQc({ side }: {
       {/* Two cycles share this: Q.C for Worood Quality, W.Q for Workshop
           Quality. Somebody in one team sees only theirs; a manager sees both
           and can filter. */}
-      <div className="tabs tabs--stretch" role="tablist">
+      <div className="tabs" role="tablist">
         {([['A', 'All'], ['Q', 'Worood Quality'], ['W', 'Workshop Quality']] as const)
           .map(([k, label]) => (
             <button key={k} type="button" role="tab" aria-selected={cycle === k}
@@ -180,7 +180,7 @@ export function WarehouseQc({ side }: {
       </div>
 
       <div className="formrow">
-        <div className="tabs tabs--stretch" role="tablist">
+        <div className="tabs" role="tablist">
           {([['open', 'Open'], ['complete', 'Complete'], ['all', 'All']] as const)
             .map(([k, label]) => (
               <button key={k} type="button" role="tab"
