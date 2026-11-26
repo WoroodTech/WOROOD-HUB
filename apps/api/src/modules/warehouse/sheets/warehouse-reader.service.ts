@@ -48,6 +48,7 @@ const TTL = {
 
 const BALANCES_REVISION_KEY = 'balances:revision';
 const BALANCES_CACHE_LOCK = 'warehouse-balances-cache';
+const BALANCES_CACHE_VERSION = 'warehouse-transfer-batch-v2';
 
 @Injectable()
 export class WarehouseReaderService {
@@ -75,10 +76,11 @@ export class WarehouseReaderService {
      */
     while (true) {
       const revision = await this.balancesRevision();
+      const sourceRev = `${BALANCES_CACHE_VERSION}:${revision}`;
       const hit = await one<any>(
         `SELECT payload FROM wh_cache
           WHERE key = $1 AND source_rev = $2 AND expires_at > now()`,
-        [key, revision]);
+        [key, sourceRev]);
       if (hit) return hit.payload as T;
 
       const value = await read();
@@ -99,7 +101,7 @@ export class WarehouseReaderService {
              SET payload = EXCLUDED.payload, source_rev = EXCLUDED.source_rev,
                  rows = EXCLUDED.rows, read_at = EXCLUDED.read_at,
                  expires_at = EXCLUDED.expires_at`,
-          [key, JSON.stringify(value), revision,
+          [key, JSON.stringify(value), sourceRev,
            Array.isArray(value) ? value.length : 0, String(ttlMs)]);
         return true;
       });
@@ -168,6 +170,15 @@ export class WarehouseReaderService {
         await c.query(`DELETE FROM wh_cache WHERE key = ANY($1)`, [keys]);
       }
     });
+  }
+
+  /** Clear a balance snapshot if it predates a confirmed sheet write. */
+  async invalidateBalancesAfter(writtenAt: Date): Promise<void> {
+    const stale = await one(
+      `SELECT 1 FROM wh_cache
+        WHERE key = 'balances' AND read_at < $1`,
+      [writtenAt]);
+    if (stale) await this.invalidate('balances');
   }
 
   /* ------------------------------------------------------ the catalogue */

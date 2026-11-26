@@ -182,6 +182,13 @@ export class WarehouseSheetClient {
    * value beginning `=` becoming a live formula.
    */
   async append(tab: string, row: any[]): Promise<{ tab: string; rowNumber: number }> {
+    return this.appendRows(tab, [row]);
+  }
+
+  /** Add contiguous rows to a tab in one Sheets write. */
+  async appendRows(tab: string, rows: any[][]): Promise<{ tab: string; rowNumber: number }> {
+    if (!rows.length) throw new Error('At least one warehouse sheet row is required.');
+
     if (this.mode === 'off') {
       throw new WarehouseSheetOffError(
         'The warehouse spreadsheet connection is switched off on this server.');
@@ -195,7 +202,7 @@ export class WarehouseSheetClient {
        * noticed. Throwing leaves the movement queued, and switching the
        * connection on is all it takes to send it.
        */
-      this.log.log(`[dry] append to ${tab}: ${JSON.stringify(row).slice(0, 300)}`);
+      this.log.log(`[dry] append to ${tab}: ${JSON.stringify(rows).slice(0, 300)}`);
       throw new WarehouseSheetOffError(
         'The warehouse sheet is in dry mode, so this was not written. '
         + 'It stays queued and goes out when WAREHOUSE_SHEETS_MODE=live.');
@@ -219,6 +226,7 @@ export class WarehouseSheetClient {
      * probe column per tab.
      */
     const at = (await this.lastDataRow(tab)) + 1;
+    const last = at + rows.length - 1;
 
     /*
      * Room to land on.
@@ -232,24 +240,25 @@ export class WarehouseSheetClient {
      * cost nothing, and one request every thousand movements is better than
      * one before each.
      */
-    await this.ensureRoom(tab, at);
+    await this.ensureRoom(tab, last);
     const from = WarehouseSheetClient.WRITE_FROM[tab] ?? 'A';
 
     /* Trimmed to match where the write starts, so column B's value does not
        land in C. The caller builds the row by its own column indexes, which
        are counted from A. */
     const skip = from.charCodeAt(0) - 65;
-    const values = (skip ? row.slice(skip) : row)
-      /*
-       * `null`, not `''`, for a cell this row does not set.
-       *
-       * The catalogue's E to H are the formulas that compute the item's
-       * code; writing `''` into them would wipe all four and leave the item
-       * with none. The API skips a null and leaves the cell exactly as it
-       * was, so a row can reach past those formulas to column I without
-       * destroying them on the way.
-       */
-      .map((v) => (v === '' || v === undefined ? null : v));
+    const values = rows.map((row) =>
+      (skip ? row.slice(skip) : row)
+        /*
+         * `null`, not `''`, for a cell this row does not set.
+         *
+         * The catalogue's E to H are the formulas that compute the item's
+         * code; writing `''` into them would wipe all four and leave the item
+         * with none. The API skips a null and leaves the cell exactly as it
+         * was, so a row can reach past those formulas to column I without
+         * destroying them on the way.
+         */
+        .map((v) => (v === '' || v === undefined ? null : v)));
 
     await this.client().spreadsheets.values.update({
       spreadsheetId: this.id,
@@ -268,7 +277,7 @@ export class WarehouseSheetClient {
        * formula.
        */
       valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [values] },
+      requestBody: { values },
     });
 
     return { tab, rowNumber: at };
