@@ -10,7 +10,7 @@
  * fact of its own: if the cache is wrong, deleting the row fixes it.
  */
 import { Injectable, Logger } from '@nestjs/common';
-import { one, query } from '../../../common/db';
+import { one, query, tx } from '../../../common/db';
 import { WarehouseSheetClient } from './warehouse-sheet.client';
 import { counts } from './tabs';
 import {
@@ -46,6 +46,9 @@ const TTL = {
   balances: 5 * 60_000,
 };
 
+const BALANCES_REVISION_KEY = 'balances:revision';
+const BALANCES_CACHE_LOCK = 'warehouse-balances-cache';
+
 @Injectable()
 export class WarehouseReaderService {
   private readonly log = new Logger('WarehouseReader');
@@ -55,15 +58,70 @@ export class WarehouseReaderService {
   /* ------------------------------------------------------- the cache -- */
 
   private async cached<T>(key: string, ttlMs: number, read: () => Promise<T>): Promise<T> {
-    const hit = await one<any>(
-      `SELECT payload FROM wh_cache WHERE key = $1 AND expires_at > now()`, [key]);
-    if (hit) return hit.payload as T;
+    if (key !== 'balances') {
+      const hit = await one<any>(
+        `SELECT payload FROM wh_cache WHERE key = $1 AND expires_at > now()`, [key]);
+      if (hit) return hit.payload as T;
 
-    const value = await read();
+      const value = await read();
+      await this.store(key, value, ttlMs);
+      return value;
+    }
 
-    /* `ON CONFLICT` rather than delete-then-insert: two requests arriving
-       together would otherwise race, and the loser would write a row that
-       the winner had already replaced. */
+    /*
+     * A transfer may invalidate balances while a sheet read is in flight.
+     * Without a revision check, that old read can finish after the invalidation
+     * and put stale balances back in the cache for the full TTL.
+     */
+    while (true) {
+      const revision = await this.balancesRevision();
+      const hit = await one<any>(
+        `SELECT payload FROM wh_cache
+          WHERE key = $1 AND source_rev = $2 AND expires_at > now()`,
+        [key, revision]);
+      if (hit) return hit.payload as T;
+
+      const value = await read();
+      const stored = await tx(async (c) => {
+        await c.query(
+          'SELECT pg_advisory_xact_lock(hashtext($1)::bigint)',
+          [BALANCES_CACHE_LOCK]);
+        const current = await c.query(
+          `SELECT payload->>'revision' AS revision FROM wh_cache WHERE key = $1`,
+          [BALANCES_REVISION_KEY]);
+        if (String(current.rows[0]?.revision ?? '') !== revision) return false;
+
+        await c.query(
+          `INSERT INTO wh_cache (key, payload, source_rev, rows, read_at, expires_at)
+           VALUES ($1, $2, $3, $4, now(),
+                   now() + ($5 || ' milliseconds')::interval)
+           ON CONFLICT (key) DO UPDATE
+             SET payload = EXCLUDED.payload, source_rev = EXCLUDED.source_rev,
+                 rows = EXCLUDED.rows, read_at = EXCLUDED.read_at,
+                 expires_at = EXCLUDED.expires_at`,
+          [key, JSON.stringify(value), revision,
+           Array.isArray(value) ? value.length : 0, String(ttlMs)]);
+        return true;
+      });
+      if (stored) return value;
+    }
+  }
+
+  private async balancesRevision(): Promise<string> {
+    await query(
+      `INSERT INTO wh_cache (key, payload, rows, read_at, expires_at)
+       VALUES ($1, '{"revision":0}'::jsonb, 0, now(), 'infinity')
+       ON CONFLICT (key) DO NOTHING`,
+      [BALANCES_REVISION_KEY]);
+    const row = await one<{ revision: string }>(
+      `SELECT payload->>'revision' AS revision FROM wh_cache WHERE key = $1`,
+      [BALANCES_REVISION_KEY]);
+    if (!row) throw new Error('Could not read the warehouse balance cache revision.');
+    return row.revision;
+  }
+
+  private async store<T>(key: string, value: T, ttlMs: number): Promise<void> {
+    /* Concurrent reads may race, but the latest cache fill remains valid. */
     await query(
       `INSERT INTO wh_cache (key, payload, rows, read_at, expires_at)
        VALUES ($1, $2, $3, now(), now() + ($4 || ' milliseconds')::interval)
@@ -71,8 +129,6 @@ export class WarehouseReaderService {
          SET payload = EXCLUDED.payload, rows = EXCLUDED.rows,
              read_at = EXCLUDED.read_at, expires_at = EXCLUDED.expires_at`,
       [key, JSON.stringify(value), Array.isArray(value) ? value.length : 0, String(ttlMs)]);
-
-    return value;
   }
 
   /**
@@ -82,11 +138,36 @@ export class WarehouseReaderService {
    * minutes is worse than a slightly slower page: somebody posts it twice.
    */
   async invalidate(...keys: string[]): Promise<void> {
-    if (!keys.length) {
-      await query(`DELETE FROM wh_cache`);
+    const invalidateAll = keys.length === 0;
+    const invalidatesBalances = invalidateAll || keys.includes('balances');
+    if (!invalidatesBalances) {
+      await query(`DELETE FROM wh_cache WHERE key = ANY($1)`, [keys]);
       return;
     }
-    await query(`DELETE FROM wh_cache WHERE key = ANY($1)`, [keys]);
+
+    await tx(async (c) => {
+      await c.query(
+        'SELECT pg_advisory_xact_lock(hashtext($1)::bigint)',
+        [BALANCES_CACHE_LOCK]);
+      await c.query(
+        `INSERT INTO wh_cache (key, payload, rows, read_at, expires_at)
+         VALUES ($1, '{"revision":0}'::jsonb, 0, now(), 'infinity')
+         ON CONFLICT (key) DO NOTHING`,
+        [BALANCES_REVISION_KEY]);
+      await c.query(
+        `UPDATE wh_cache
+            SET payload = jsonb_build_object(
+                  'revision', COALESCE((payload->>'revision')::bigint, 0) + 1),
+                read_at = now(), expires_at = 'infinity'
+          WHERE key = $1`,
+        [BALANCES_REVISION_KEY]);
+
+      if (invalidateAll) {
+        await c.query(`DELETE FROM wh_cache WHERE key <> $1`, [BALANCES_REVISION_KEY]);
+      } else {
+        await c.query(`DELETE FROM wh_cache WHERE key = ANY($1)`, [keys]);
+      }
+    });
   }
 
   /* ------------------------------------------------------ the catalogue */

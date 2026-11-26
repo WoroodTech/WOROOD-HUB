@@ -123,7 +123,7 @@ export class WarehouseQueueService {
          * one place every movement passes through on its way to the sheet.
          */
         if (target.tab === TX_TAB) {
-          await query(`DELETE FROM wh_cache WHERE key = 'balances'`);
+          await this.reader.invalidate('balances');
         }
 
         await query(
