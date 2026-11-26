@@ -34,6 +34,8 @@ export function WarehouseBreakdown() {
     queryKey: ['wh', 'warehouse-detail'],
     queryFn: () => api<WarehouseDetail[]>('/warehouse/dashboard/warehouses'),
     staleTime: 60_000,
+    refetchOnMount: 'always',
+    refetchInterval: 10_000,
   });
 
   if (detail.isLoading) return <LoadingState label="Reading the warehouses" />;

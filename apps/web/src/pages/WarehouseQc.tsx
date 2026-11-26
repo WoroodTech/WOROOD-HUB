@@ -117,7 +117,7 @@ export function WarehouseQc({ side }: {
   }, {} as Record<string, number>);
 
   return (
-    <div className="page">
+    <div className={`page${side ? ' page--embedded' : ''}`}>
       <header className="pagehead">
         <div>
           <h1 className="pagehead__title">Quality check</h1>

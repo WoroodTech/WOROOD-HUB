@@ -17,7 +17,10 @@ import { Principal } from '../../common/auth';
 import { AuditService } from '../../core/core.module';
 import { WarehouseReaderService } from './sheets/warehouse-reader.service';
 import { WarehouseSheetClient } from './sheets/warehouse-sheet.client';
-import { CHANGE, CHANGE_TAB, TX, TX_TAB } from './sheets/tabs';
+import {
+  CHANGE, CHANGE_TAB, RETURN_LOCATION, RETURN_WAREHOUSES, TX, TX_TAB,
+  WAREHOUSE_LOCATIONS,
+} from './sheets/tabs';
 
 @Injectable()
 export class WarehouseApprovalsService {
@@ -274,7 +277,23 @@ export class WarehouseApprovalsService {
       location: TX.location,
     };
 
-    const changes = req.payload?.changes ?? {};
+    const changes: Record<string, unknown> = { ...(req.payload?.changes ?? {}) };
+    if (live.kind.trim().toUpperCase() === 'RETURN'
+        && (changes.warehouse !== undefined || changes.location !== undefined)) {
+      const warehouse = String(changes.warehouse ?? live.warehouse).trim();
+      const location = String(changes.location ?? live.location).trim();
+      if (!RETURN_WAREHOUSES.includes(warehouse)) {
+        throw new Error(
+          `A return goes to ${RETURN_WAREHOUSES.join(' or ')} only.`);
+      }
+
+      if (warehouse === 'WH-05') {
+        changes.location = RETURN_LOCATION;
+      } else if (!WAREHOUSE_LOCATIONS[warehouse]?.includes(location)) {
+        throw new Error(`Choose a valid location inside ${warehouse} for this return.`);
+      }
+    }
+
     for (const [field, value] of Object.entries(changes)) {
       const col = allowed[field];
       if (col === undefined) continue;

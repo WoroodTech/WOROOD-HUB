@@ -17,7 +17,7 @@ import {
   Delete, Post, Query,
 } from '@nestjs/common';
 import { CurrentUser, Permissions, Principal, can } from '../../common/auth';
-import { one } from '../../common/db';
+import { one, query } from '../../common/db';
 import { config } from '../../common/config';
 import { registerHubModule } from '../../core/hub-registry';
 import { CoreModule } from '../../core/core.module';
@@ -323,6 +323,24 @@ export class WarehouseController {
       failed: Number(waiting?.failed ?? 0),
       oldestPending: waiting?.oldest ?? null,
     };
+  }
+
+  @Get('post-status')
+  @Permissions(WAREHOUSE_PERMISSIONS.TX_WRITE)
+  async postStatus(@Query('ids') idsValue?: string) {
+    const ids = [...new Set((idsValue ?? '').split(',').map((id) => id.trim()).filter(Boolean))];
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!ids.length || ids.length > 500 || ids.some((id) => !uuid.test(id))) {
+      throw new BadRequestException('Provide up to 500 valid warehouse event IDs.');
+    }
+
+    const events = await query<{ id: string; status: string }>(
+      `SELECT id::text AS id, status FROM wh_sheet_events WHERE id = ANY($1::uuid[])`,
+      [ids]);
+    if (events.length !== ids.length) {
+      throw new BadRequestException('One or more warehouse events could not be found.');
+    }
+    return events;
   }
 
   @Get('settings')

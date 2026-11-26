@@ -119,19 +119,13 @@ export function WarehouseLabels() {
             {sheet ? (
               <button type="button" className="notebtn"
                       onClick={() => {
-                        /*
-                         * The paper is chosen on the page, so the page has
-                         * to say which before printing. `@page` cannot read
-                         * a React prop, and a label printer fed A4 puts one
-                         * 50 x 30 label in the corner of a whole sheet.
-                         *
-                         * Cleared afterwards: the class decides the paper
-                         * for anything else printed from this tab.
-                         */
-                        const cls = `printing-${paper}`;
-                        document.body.classList.add(cls);
+                        const pageStyle = document.createElement('style');
+                        pageStyle.textContent = paper === 'label'
+                          ? '@page { size: 50mm 30mm; margin: 0; }'
+                          : '@page { size: A4; margin: 8mm; }';
+                        document.head.appendChild(pageStyle);
                         const done = () => {
-                          document.body.classList.remove(cls);
+                          pageStyle.remove();
                           window.removeEventListener('afterprint', done);
                         };
                         window.addEventListener('afterprint', done);

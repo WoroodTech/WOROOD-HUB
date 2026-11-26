@@ -550,17 +550,17 @@ export function WarehousePatchLog({ onOpenTemplate }: {
             ) : null}
 
             <div className="formrow--actions">
-              <button type="button" className="linkbtn"
-                      onClick={() => setOpen(open === p.patch ? null : p.patch)}>
-                {open === p.patch ? 'Hide the conversation'
-                  : `Conversation${p.comments ? ` (${p.comments})` : ''}`}
+              <button type="button" className="notebtn"
+                      onClick={() => setOpen((current) =>
+                        current === p.patch ? null : p.patch)}>
+                {open === p.patch ? 'Close Conversation' : 'Make Conversation'}
               </button>
               {/* Straight to the sheet itself, with the number already in
                   the box — the next thing anybody does with a patch. */}
               {onOpenTemplate ? (
-                <button type="button" className="linkbtn"
+                <button type="button" className="notebtn"
                         onClick={() => onOpenTemplate(p.patch)}>
-                  Open template
+                  Open Template
                 </button>
               ) : null}
             </div>

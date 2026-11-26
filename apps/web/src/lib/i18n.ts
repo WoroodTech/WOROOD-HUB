@@ -48,6 +48,9 @@ export function localizedName(
 export const AR_TEXT: TextTranslation = {
   'Conversation': 'المحادثة',
   'Open template': 'فتح النموذج',
+  'Make Conversation': 'إنشاء محادثة',
+  'Close Conversation': 'إغلاق المحادثة',
+  'Open Template': 'فتح النموذج',
   'Report a problem': 'الإبلاغ عن مشكلة',
   'Complete — all correct': 'مكتمل — كله سليم',
   'Which patches': 'أي باتشات',
@@ -817,7 +820,7 @@ export const AR_TEXT: TextTranslation = {
   'Patch number or person': 'رقم الدفعة أو الشخص',
   'Something wrong? Write it here — comments can never be deleted':
     'هل توجد مشكلة؟ اكتبها هنا — لا يمكن حذف التعليقات',
-  'Hide the conversation': 'إخفاء المحادثة',
+  'Close conversation': 'إغلاق المحادثة',
   'Notes on this patch.': 'ملاحظات على هذه الدفعة.',
   'Close the order': 'إغلاق الأمر',
   'That could not be closed.': 'تعذر إغلاق الأمر.',
@@ -941,7 +944,14 @@ function translateDom(root: ParentNode, locale: 'en' | 'ar') {
   let node: Node | null;
   while ((node = walker.nextNode())) nodes.push(node as Text);
   for (const textNode of nodes) {
-    if (!ORIGINAL_TEXT.has(textNode)) ORIGINAL_TEXT.set(textNode, textNode.data);
+    const previous = ORIGINAL_TEXT.get(textNode);
+    if (previous === undefined) {
+      ORIGINAL_TEXT.set(textNode, textNode.data);
+    } else {
+      const expected = locale === 'ar' ? translateText(previous, 'ar') : previous;
+      /* React may reuse a text node for a new label; keep its new source text. */
+      if (textNode.data !== expected) ORIGINAL_TEXT.set(textNode, textNode.data);
+    }
     const original = ORIGINAL_TEXT.get(textNode) ?? textNode.data;
     const value = locale === 'ar' ? translateText(original, 'ar') : original;
     if (value !== textNode.data) textNode.data = value;

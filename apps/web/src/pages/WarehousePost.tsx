@@ -24,6 +24,11 @@ import { ErrorState, LoadingState } from '../components/States';
 import { ConfirmDialog } from '../components/Confirmdialog';
 
 interface Line { id: string; item: string; quantity: string; }
+interface SheetEvent { id: string; status: string; }
+
+const RETURN_WAREHOUSES = new Set(['WH-02', 'WH-05']);
+const SHEET_WRITE_TIMEOUT_MS = 2 * 60_000;
+const POST_STATUS_CHUNK_SIZE = 100;
 
 const blankLine = (): Line => ({
   id: Math.random().toString(36).slice(2), item: '', quantity: '',
@@ -43,6 +48,12 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
   const [direction, setDirection] = useState<'in' | 'out' | ''>('');
   const [lines, setLines] = useState<Line[]>([blankLine()]);
   const [done, setDone] = useState<string | null>(null);
+  const [pendingEventIds, setPendingEventIds] = useState<string[]>([]);
+  const [sheetWriteFailed, setSheetWriteFailed] = useState(false);
+  const [sheetWriteTimedOut, setSheetWriteTimedOut] = useState(false);
+  const [sheetWriteStartedAt, setSheetWriteStartedAt] = useState<number | null>(null);
+  const [awaitingSerialAdvance, setAwaitingSerialAdvance] = useState(false);
+  const [serialBeforePost, setSerialBeforePost] = useState<string | null>(null);
   /* Posting moves stock, and a movement is awkward to unpick — so it is
      confirmed, with what is about to happen spelled out. */
   const [confirming, setConfirming] = useState(false);
@@ -62,6 +73,22 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
     queryKey: ['wh', 'next-serial', type],
     queryFn: () => api<string | null>(`/warehouse/next-serial?type=${type}`),
     enabled: !!type,
+  });
+
+  const sheetEvents = useQuery({
+    queryKey: ['wh', 'post-status', pendingEventIds],
+    queryFn: async () => {
+      const chunks: string[][] = [];
+      for (let i = 0; i < pendingEventIds.length; i += POST_STATUS_CHUNK_SIZE) {
+        chunks.push(pendingEventIds.slice(i, i + POST_STATUS_CHUNK_SIZE));
+      }
+      const results = await Promise.all(chunks.map((ids) =>
+        api<SheetEvent[]>(
+          `/warehouse/post-status?ids=${encodeURIComponent(ids.join(','))}`)));
+      return results.flat();
+    },
+    enabled: pendingEventIds.length > 0,
+    refetchInterval: pendingEventIds.length > 0 && !sheetWriteTimedOut ? 3_000 : false,
   });
 
   const types = useQuery({
@@ -89,6 +116,9 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
   });
 
   const chosen = types.data?.find((t) => t.key === type) ?? null;
+  const availablePlaces = type === 'RETURN'
+    ? (places.data ?? []).filter((p) => RETURN_WAREHOUSES.has(p.code))
+    : places.data ?? [];
 
   /*
    * What the server decides for this kind.
@@ -106,9 +136,7 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
    * were cached. Receiving always takes one, so it is assumed while the
    * answer is still arriving rather than assumed away.
    */
-  const serialIssued = chosen
-    ? !!(chosen as any).serialIssued
-    : type === 'RECEIVING';
+  const serialIssued = type === 'RECEIVING' || !!(chosen as any)?.serialIssued;
   const isTransfer = chosen?.mode === 'transfer';
   const takesStock = chosen?.mode === 'out' || isTransfer
     || (chosen?.mode === 'sel' && direction === 'out');
@@ -124,6 +152,12 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
   useEffect(() => {
     if (fixedWarehouse) { setWarehouse(fixedWarehouse); setLocation(''); }
   }, [fixedWarehouse]);
+  useEffect(() => {
+    if (type === 'RETURN' && warehouse && !RETURN_WAREHOUSES.has(warehouse)) {
+      setWarehouse('');
+      setLocation('');
+    }
+  }, [type, warehouse]);
   useEffect(() => { setToLocation(''); }, [toWarehouse]);
 
   /**
@@ -145,7 +179,9 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
   }, [balances.data, warehouse, location, takesStock]);
 
   const post = useMutation({
-    mutationFn: () => api<{ alreadyPosted: boolean; rows: number }>('/warehouse/post', {
+    mutationFn: () => api<{
+      alreadyPosted: boolean; rows: number; events: string[];
+    }>('/warehouse/post', {
       method: 'POST',
       body: {
         type, opId,
@@ -165,35 +201,68 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
       setDone(res.alreadyPosted
         ? 'That was already posted — nothing was added a second time.'
         : `Posted. ${res.rows} row${res.rows === 1 ? '' : 's'} on their way to the sheet.`);
+      setSheetWriteFailed(false);
+      setSheetWriteTimedOut(false);
+      setSheetWriteStartedAt(Date.now());
+      if (serialIssued) {
+        setSerialBeforePost(serial.data ?? null);
+        setAwaitingSerialAdvance(true);
+      }
+      setPendingEventIds(res.events);
       setLines([blankLine()]);
       setNationalOrder(''); setGlobalOrder(''); setPatch('');
       /* A fresh key: the next posting is a different posting. */
       setOpId(crypto.randomUUID());
     },
-    /*
-     * The serial is re-read whether the posting worked or not.
-     *
-     * It is computed from what is in the sheet, and a posting that failed
-     * halfway may still have written. Leaving the old number on screen let
-     * the next receiving reuse it, so two unrelated deliveries ended up
-     * under one serial — which is exactly what a serial is for preventing.
-     */
-    onSettled: () => {
-      void qc.invalidateQueries({ queryKey: ['wh'] });
-      /*
-       * And fetch the serial again now, not when something next asks.
-       *
-       * `invalidateQueries` marks a query stale; with a 30-second
-       * staleTime the screen then kept showing the old number until
-       * somebody reloaded, so the next receiving offered a serial that had
-       * just been used. `refetchQueries` goes and gets it.
-       */
-      void qc.refetchQueries({ queryKey: ['wh', 'next-serial'] });
-    },
   });
+
+  useEffect(() => {
+    if (!pendingEventIds.length || sheetWriteTimedOut || sheetWriteStartedAt === null) return;
+    const remaining = SHEET_WRITE_TIMEOUT_MS - (Date.now() - sheetWriteStartedAt);
+    const timeout = window.setTimeout(
+      () => setSheetWriteTimedOut(true),
+      Math.max(0, remaining),
+    );
+    return () => window.clearTimeout(timeout);
+  }, [pendingEventIds, sheetWriteStartedAt, sheetWriteTimedOut]);
+
+  useEffect(() => {
+    if (!pendingEventIds.length || !sheetEvents.data) return;
+    const byId = new Map(sheetEvents.data.map((event) => [event.id, event.status]));
+    if (!pendingEventIds.every((id) =>
+      byId.get(id) === 'WRITTEN' || byId.get(id) === 'DEAD')) return;
+
+    const anyWritten = pendingEventIds.some((id) => byId.get(id) === 'WRITTEN');
+    const allWritten = pendingEventIds.every((id) => byId.get(id) === 'WRITTEN');
+    setPendingEventIds([]);
+    setSheetWriteStartedAt(null);
+    setSheetWriteTimedOut(false);
+    setSheetWriteFailed(!allWritten);
+    if (!anyWritten) setAwaitingSerialAdvance(false);
+    if (allWritten) setDone('Movement written to the warehouse sheet.');
+    void Promise.all([
+      qc.invalidateQueries({ queryKey: qk.whBalances, refetchType: 'all' }),
+      qc.invalidateQueries({ queryKey: ['wh', 'tiles'], refetchType: 'all' }),
+      qc.invalidateQueries({ queryKey: ['wh', 'warehouse-detail'], refetchType: 'all' }),
+      qc.invalidateQueries({ queryKey: ['wh', 'charts'], refetchType: 'all' }),
+      ...(anyWritten && type === 'RECEIVING'
+        ? [qc.invalidateQueries({
+            queryKey: ['wh', 'next-serial', type], refetchType: 'all',
+          })]
+        : []),
+    ]);
+  }, [pendingEventIds, qc, sheetEvents.data, type]);
+
+  useEffect(() => {
+    if (awaitingSerialAdvance && serial.data
+      && serial.data !== serialBeforePost) {
+      setAwaitingSerialAdvance(false);
+    }
+  }, [awaitingSerialAdvance, serial.data, serialBeforePost]);
 
   const filled = lines.filter((l) => l.item && Number(l.quantity) > 0);
   const ready = !!type && !!warehouse && filled.length > 0
+    && (!serialIssued || (!!serial.data && !awaitingSerialAdvance))
     && (!chosen?.needsLocation || !!location || locationsOf(warehouse).length === 0)
     && (!isTransfer || !!toWarehouse)
     && (chosen?.mode !== 'sel' || !!direction)
@@ -203,6 +272,9 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
 
   if (types.isLoading || places.isLoading) return <LoadingState label="Loading the warehouse" />;
   if (types.isError) return <ErrorState error={types.error} onRetry={() => void types.refetch()} />;
+  if (serialIssued && serial.isLoading) {
+    return <LoadingState label="Loading the next patch number" />;
+  }
 
   return (
     <div className="page">
@@ -227,6 +299,43 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
       {post.isError ? (
         <p className="notice notice--warn" role="alert">
           {(post.error as Error)?.message ?? 'That could not be posted.'}
+        </p>
+      ) : null}
+      {serial.isError && serialIssued ? (
+        <p className="notice notice--warn" role="alert">
+          The next patch number could not be loaded.{' '}
+          <button type="button" className="btn btn--ghost btn--sm"
+                  onClick={() => void serial.refetch()}>
+            Try again
+          </button>
+        </p>
+      ) : null}
+      {pendingEventIds.length > 0 && sheetEvents.isError && !sheetWriteTimedOut ? (
+        <p className="notice notice--warn" role="alert">
+          Could not check whether the sheet write finished.{' '}
+          <button type="button" className="btn btn--ghost btn--sm"
+                  onClick={() => void sheetEvents.refetch()}>
+            Try again
+          </button>
+        </p>
+      ) : null}
+      {sheetWriteTimedOut ? (
+        <p className="notice notice--warn" role="alert">
+          The sheet has not confirmed this movement after two minutes. It may still be queued
+          or retrying; do not post it again while its status is unresolved.{' '}
+          <button type="button" className="btn btn--ghost btn--sm"
+                  onClick={() => {
+                    setSheetWriteStartedAt(Date.now());
+                    setSheetWriteTimedOut(false);
+                    void sheetEvents.refetch();
+                  }}>
+            Continue checking
+          </button>
+        </p>
+      ) : null}
+      {sheetWriteFailed ? (
+        <p className="notice notice--warn" role="alert">
+          The sheet could not accept this movement. Check the sheet status before retrying.
         </p>
       ) : null}
 
@@ -276,7 +385,7 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
               <SearchSelect
                 value={warehouse} onChange={setWarehouse}
                 placeholder="Choose…"
-                options={(places.data ?? []).map((p) => ({ value: p.code, label: p.code }))} />
+                options={availablePlaces.map((p) => ({ value: p.code, label: p.code }))} />
             </label>
           )}
 
@@ -301,7 +410,7 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
               <SearchSelect
                 value={toWarehouse} onChange={setToWarehouse}
                 placeholder="Choose…"
-                options={(places.data ?? []).map((p) => ({ value: p.code, label: p.code }))} />
+                options={availablePlaces.map((p) => ({ value: p.code, label: p.code }))} />
             </label>
             {locationsOf(toWarehouse).length ? (
               <label className="field">
