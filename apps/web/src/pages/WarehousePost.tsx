@@ -25,8 +25,6 @@ import { ConfirmDialog } from '../components/Confirmdialog';
 
 interface Line { id: string; item: string; quantity: string; }
 
-const RETURN_WAREHOUSES = new Set(['WH-02', 'WH-05']);
-
 const blankLine = (): Line => ({
   id: Math.random().toString(36).slice(2), item: '', quantity: '',
 });
@@ -45,8 +43,6 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
   const [direction, setDirection] = useState<'in' | 'out' | ''>('');
   const [lines, setLines] = useState<Line[]>([blankLine()]);
   const [done, setDone] = useState<string | null>(null);
-  const [awaitingSheetSerial, setAwaitingSheetSerial] = useState(false);
-  const [serialBeforePost, setSerialBeforePost] = useState<string | null>(null);
   /* Posting moves stock, and a movement is awkward to unpick — so it is
      confirmed, with what is about to happen spelled out. */
   const [confirming, setConfirming] = useState(false);
@@ -66,7 +62,6 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
     queryKey: ['wh', 'next-serial', type],
     queryFn: () => api<string | null>(`/warehouse/next-serial?type=${type}`),
     enabled: !!type,
-    refetchInterval: awaitingSheetSerial ? 5_000 : false,
   });
 
   const types = useQuery({
@@ -94,9 +89,6 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
   });
 
   const chosen = types.data?.find((t) => t.key === type) ?? null;
-  const availablePlaces = type === 'RETURN'
-    ? (places.data ?? []).filter((p) => RETURN_WAREHOUSES.has(p.code))
-    : places.data ?? [];
 
   /*
    * What the server decides for this kind.
@@ -132,12 +124,6 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
   useEffect(() => {
     if (fixedWarehouse) { setWarehouse(fixedWarehouse); setLocation(''); }
   }, [fixedWarehouse]);
-  useEffect(() => {
-    if (type === 'RETURN' && warehouse && !RETURN_WAREHOUSES.has(warehouse)) {
-      setWarehouse('');
-      setLocation('');
-    }
-  }, [type, warehouse]);
   useEffect(() => { setToLocation(''); }, [toWarehouse]);
 
   /**
@@ -179,10 +165,6 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
       setDone(res.alreadyPosted
         ? 'That was already posted — nothing was added a second time.'
         : `Posted. ${res.rows} row${res.rows === 1 ? '' : 's'} on their way to the sheet.`);
-      if (serialIssued) {
-        setSerialBeforePost(serial.data ?? null);
-        setAwaitingSheetSerial(true);
-      }
       setLines([blankLine()]);
       setNationalOrder(''); setGlobalOrder(''); setPatch('');
       /* A fresh key: the next posting is a different posting. */
@@ -210,16 +192,8 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
     },
   });
 
-  useEffect(() => {
-    if (awaitingSheetSerial && serial.data
-      && serial.data !== serialBeforePost) {
-      setAwaitingSheetSerial(false);
-    }
-  }, [awaitingSheetSerial, serial.data, serialBeforePost]);
-
   const filled = lines.filter((l) => l.item && Number(l.quantity) > 0);
   const ready = !!type && !!warehouse && filled.length > 0
-    && (!serialIssued || !!serial.data)
     && (!chosen?.needsLocation || !!location || locationsOf(warehouse).length === 0)
     && (!isTransfer || !!toWarehouse)
     && (chosen?.mode !== 'sel' || !!direction)
@@ -253,15 +227,6 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
       {post.isError ? (
         <p className="notice notice--warn" role="alert">
           {(post.error as Error)?.message ?? 'That could not be posted.'}
-        </p>
-      ) : null}
-      {serial.isError && serialIssued ? (
-        <p className="notice notice--warn" role="alert">
-          The next patch number could not be loaded.{' '}
-          <button type="button" className="btn btn--ghost btn--sm"
-                  onClick={() => void serial.refetch()}>
-            Try again
-          </button>
         </p>
       ) : null}
 
@@ -311,7 +276,7 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
               <SearchSelect
                 value={warehouse} onChange={setWarehouse}
                 placeholder="Choose…"
-                options={availablePlaces.map((p) => ({ value: p.code, label: p.code }))} />
+                options={(places.data ?? []).map((p) => ({ value: p.code, label: p.code }))} />
             </label>
           )}
 
@@ -336,7 +301,7 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
               <SearchSelect
                 value={toWarehouse} onChange={setToWarehouse}
                 placeholder="Choose…"
-                options={availablePlaces.map((p) => ({ value: p.code, label: p.code }))} />
+                options={(places.data ?? []).map((p) => ({ value: p.code, label: p.code }))} />
             </label>
             {locationsOf(toWarehouse).length ? (
               <label className="field">
