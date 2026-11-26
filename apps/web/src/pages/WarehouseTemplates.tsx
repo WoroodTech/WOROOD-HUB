@@ -112,7 +112,7 @@ export function WarehouseTemplates() {
         </div>
       </header>
 
-      <div className="tabs no-print" role="tablist">
+      <div className="tabs tabs--stretch no-print" role="tablist">
         {TEMPLATE_TABS.map(([key, label]) => (
           <button key={key} type="button" role="tab"
                   aria-selected={tab === key}
