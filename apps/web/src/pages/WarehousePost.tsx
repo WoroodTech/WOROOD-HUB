@@ -16,7 +16,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   WarehouseBalance, WarehouseItem, WarehousePlace, WarehouseTxType,
 } from '../contract';
-import { api } from '../lib/api';
+import { api, ApiError } from '../lib/api';
 import { qk } from '../lib/keys';
 import { Icon } from '../components/Icon';
 import { SearchSelect } from '../components/Searchselect';
@@ -49,6 +49,7 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
   const [lines, setLines] = useState<Line[]>([blankLine()]);
   const [done, setDone] = useState<string | null>(null);
   const [pendingEventIds, setPendingEventIds] = useState<string[]>([]);
+  const [recoveringPost, setRecoveringPost] = useState(false);
   const [sheetWriteFailed, setSheetWriteFailed] = useState(false);
   const [sheetWriteTimedOut, setSheetWriteTimedOut] = useState(false);
   const [sheetWriteStartedAt, setSheetWriteStartedAt] = useState<number | null>(null);
@@ -89,6 +90,14 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
     },
     enabled: pendingEventIds.length > 0,
     refetchInterval: pendingEventIds.length > 0 && !sheetWriteTimedOut ? 3_000 : false,
+  });
+
+  const recovery = useQuery({
+    queryKey: ['wh', 'post-recovery', opId],
+    queryFn: () => api<SheetEvent[]>(
+      `/warehouse/post-status?opId=${encodeURIComponent(opId)}`),
+    enabled: recoveringPost && !sheetWriteTimedOut,
+    refetchInterval: recoveringPost && !sheetWriteTimedOut ? 3_000 : false,
   });
 
   const types = useQuery({
@@ -215,17 +224,44 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
       /* A fresh key: the next posting is a different posting. */
       setOpId(crypto.randomUUID());
     },
+    onError: (error) => {
+      if (error instanceof ApiError && [502, 504].includes(error.status)) {
+        setDone(null);
+        setRecoveringPost(true);
+        setSheetWriteStartedAt(Date.now());
+        setSheetWriteTimedOut(false);
+      }
+    },
   });
 
   useEffect(() => {
-    if (!pendingEventIds.length || sheetWriteTimedOut || sheetWriteStartedAt === null) return;
+    if ((!pendingEventIds.length && !recoveringPost)
+        || sheetWriteTimedOut || sheetWriteStartedAt === null) return;
     const remaining = SHEET_WRITE_TIMEOUT_MS - (Date.now() - sheetWriteStartedAt);
     const timeout = window.setTimeout(
       () => setSheetWriteTimedOut(true),
       Math.max(0, remaining),
     );
     return () => window.clearTimeout(timeout);
-  }, [pendingEventIds, sheetWriteStartedAt, sheetWriteTimedOut]);
+  }, [pendingEventIds, recoveringPost, sheetWriteStartedAt, sheetWriteTimedOut]);
+
+  useEffect(() => {
+    if (!recoveringPost || !recovery.data?.length) return;
+    setPendingEventIds(recovery.data.map((event) => event.id));
+    setRecoveringPost(false);
+    setSheetWriteTimedOut(false);
+    setSheetWriteStartedAt(Date.now());
+    setSheetWriteFailed(false);
+    if (serialIssued) {
+      setSerialBeforePost(serial.data ?? null);
+      setAwaitingSerialAdvance(true);
+    }
+    setDone('The movement was accepted; waiting for the sheet to confirm it.');
+    setLines([blankLine()]);
+    setNationalOrder(''); setGlobalOrder(''); setPatch('');
+    setOpId(crypto.randomUUID());
+    post.reset();
+  }, [recoveringPost, recovery.data]);
 
   useEffect(() => {
     if (!pendingEventIds.length || !sheetEvents.data) return;
@@ -269,6 +305,7 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
     && (chosen?.mode !== 'sel' || !!direction)
     && (!chosen?.needsOrder || !!(nationalOrder.trim() || globalOrder.trim()))
     && (serialIssued || chosen?.duplicateBy !== 'patch' || !!patch.trim())
+    && !recoveringPost && !sheetWriteTimedOut
     && !post.isPending;
 
   if (types.isLoading || places.isLoading) return <LoadingState label="Loading the warehouse" />;
@@ -297,9 +334,14 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
         </p>
       ) : null}
 
-      {post.isError ? (
+      {post.isError && !recoveringPost ? (
         <p className="notice notice--warn" role="alert">
           {(post.error as Error)?.message ?? 'That could not be posted.'}
+        </p>
+      ) : null}
+      {recoveringPost ? (
+        <p className="notice" role="status">
+          The request timed out. Checking whether the movement was accepted; do not post it again yet.
         </p>
       ) : null}
       {serial.isError && serialIssued ? (
@@ -322,13 +364,16 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
       ) : null}
       {sheetWriteTimedOut ? (
         <p className="notice notice--warn" role="alert">
-          The sheet has not confirmed this movement after two minutes. It may still be queued
-          or retrying; do not post it again while its status is unresolved.{' '}
+          {recoveringPost
+            ? 'The server has not confirmed whether it accepted this movement after two minutes.'
+            : 'The sheet has not confirmed this movement after two minutes.'}
+          {' '}It may still be queued or retrying; do not post it again while its status is unresolved.{' '}
           <button type="button" className="btn btn--ghost btn--sm"
                   onClick={() => {
                     setSheetWriteStartedAt(Date.now());
                     setSheetWriteTimedOut(false);
-                    void sheetEvents.refetch();
+                    if (recoveringPost) void recovery.refetch();
+                    else void sheetEvents.refetch();
                   }}>
             Continue checking
           </button>

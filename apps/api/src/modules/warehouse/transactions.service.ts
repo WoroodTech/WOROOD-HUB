@@ -147,23 +147,29 @@ export class WarehouseTransactionsService {
 
     const direction = this.directionOf(type, dto);
 
-    /* Duplicate check before the balance read: it is the cheaper of the two
-       and the likelier refusal. */
-    const dupe = await this.findDuplicate(type, dto);
-    if (dupe) {
+    /*
+     * These checks read independent sheet data. Running them together avoids
+     * waiting on a full balance read after the duplicate check has already
+     * spent time reaching Sheets. Preserve the duplicate refusal first.
+     */
+    const [dupeResult, itemsResult, stockResult] = await Promise.allSettled([
+      this.findDuplicate(type, dto),
+      this.assertItemsExist(lines),
+      direction === 'out' || type.mode === 'transfer'
+        ? this.assertEnoughStock(lines, dto.warehouse, dto.location ?? '')
+        : Promise.resolve(),
+    ]);
+    if (dupeResult.status === 'rejected') throw dupeResult.reason;
+    if (dupeResult.value) {
+      const dupe = dupeResult.value;
       throw new BadRequestException(
         `${type.kind} for ${type.dup === 'patch' ? 'patch' : 'order'} `
         + `${(type.dup === 'patch' ? dto.patch : dto.nationalOrder || dto.globalOrder)} `
         + `was already posted on ${dupe.date} by ${dupe.enteredBy || 'somebody'} `
         + `(sheet row ${dupe.rowNumber}). Nothing was posted again.`);
     }
-
-    /* And the item names, before anything is read in bulk. */
-    await this.assertItemsExist(lines);
-
-    if (direction === 'out' || type.mode === 'transfer') {
-      await this.assertEnoughStock(lines, dto.warehouse, dto.location ?? '');
-    }
+    if (itemsResult.status === 'rejected') throw itemsResult.reason;
+    if (stockResult.status === 'rejected') throw stockResult.reason;
 
     /* `opId` makes a retry safe: the same key posts once. Checked inside the
        transaction so two tabs pressing at the same moment cannot both pass. */

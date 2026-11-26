@@ -124,6 +124,18 @@ export class WarehouseSheetClient {
     return (res.data.values ?? []) as any[][];
   }
 
+  /** Read a small set of whole columns in one Sheets request. */
+  async readColumns(tab: string, columns: string[]): Promise<any[][]> {
+    const res = await this.client().spreadsheets.values.batchGet({
+      spreadsheetId: this.id,
+      ranges: columns.map((column) => `${tab}!${column}:${column}`),
+      valueRenderOption: 'UNFORMATTED_VALUE',
+      dateTimeRenderOption: 'FORMATTED_STRING',
+    });
+    return (res.data.valueRanges ?? []).map((range) =>
+      (range.values ?? []).map((row) => row[0] ?? ''));
+  }
+
   /** A tab's header row, trimmed. */
   async readHeader(tab: string): Promise<string[]> {
     const row = this.headerRow(tab);
