@@ -327,7 +327,22 @@ export class WarehouseController {
 
   @Get('post-status')
   @Permissions(WAREHOUSE_PERMISSIONS.TX_WRITE)
-  async postStatus(@Query('ids') idsValue?: string) {
+  async postStatus(
+    @Query('ids') idsValue?: string,
+    @Query('opId') opIdValue?: string,
+  ) {
+    const opId = String(opIdValue ?? '').trim();
+    if (opId) {
+      const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      if (!uuid.test(opId)) {
+        throw new BadRequestException('Provide a valid warehouse operation ID.');
+      }
+      return query<{ id: string; status: string }>(
+        `SELECT id::text AS id, status FROM wh_sheet_events
+          WHERE payload->>'opId' = $1 ORDER BY created_at, id`,
+        [opId]);
+    }
+
     const ids = [...new Set((idsValue ?? '').split(',').map((id) => id.trim()).filter(Boolean))];
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
     if (!ids.length || ids.length > 500 || ids.some((id) => !uuid.test(id))) {

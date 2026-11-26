@@ -418,22 +418,37 @@ export class WarehouseReaderService {
     const ref = reference.trim();
     if (!ref) return null;
 
-    const rows = await this.sheet.read(TX_TAB);
-    for (let i = rows.length - 1; i >= 1; i--) {
-      const r = rows[i] ?? [];
-      if (String(r[TX.kind] ?? '').trim() !== kind) continue;
+    const columns = dupBy === 'patch'
+      ? [TX.date, TX.itemName, TX.patch, TX.kind, TX.enteredBy]
+      : [TX.date, TX.itemName, TX.nationalOrder, TX.globalOrder, TX.kind, TX.enteredBy];
+    const values = await this.sheet.readColumns(
+      TX_TAB, columns.map((column) => String.fromCharCode(65 + column)));
+    const [dates, items, ...referencesAndDetails] = values;
+    const patch = dupBy === 'patch' ? referencesAndDetails[0] : null;
+    const nationalOrder = dupBy === 'order' ? referencesAndDetails[0] : null;
+    const globalOrder = dupBy === 'order' ? referencesAndDetails[1] : null;
+    const kindValues = dupBy === 'patch'
+      ? referencesAndDetails[1]
+      : referencesAndDetails[2];
+    const enteredBy = dupBy === 'patch'
+      ? referencesAndDetails[2]
+      : referencesAndDetails[3];
+    const length = Math.max(...values.map((column) => column?.length ?? 0));
+
+    for (let i = length - 1; i >= 1; i--) {
+      if (String(kindValues?.[i] ?? '').trim() !== kind) continue;
 
       const hit = dupBy === 'patch'
-        ? String(r[TX.patch] ?? '').trim() === ref
-        : String(r[TX.nationalOrder] ?? '').trim() === ref
-          || String(r[TX.globalOrder] ?? '').trim() === ref;
+        ? String(patch?.[i] ?? '').trim() === ref
+        : String(nationalOrder?.[i] ?? '').trim() === ref
+          || String(globalOrder?.[i] ?? '').trim() === ref;
 
       if (hit) {
         return {
           rowNumber: i + 1,
-          date: String(r[TX.date] ?? ''),
-          item: String(r[TX.itemName] ?? '').trim(),
-          enteredBy: String(r[TX.enteredBy] ?? '').trim(),
+          date: String(dates?.[i] ?? ''),
+          item: String(items?.[i] ?? '').trim(),
+          enteredBy: String(enteredBy?.[i] ?? '').trim(),
         };
       }
     }
