@@ -141,8 +141,9 @@ export function WarehousePost({ fixedType }: { fixedType?: string }) {
   const takesStock = chosen?.mode === 'out' || isTransfer
     || (chosen?.mode === 'sel' && direction === 'out');
 
-  const locationsOf = (code: string) =>
-    places.data?.find((p) => p.code === code)?.locations ?? [];
+  const locationsOf = (code: string) => code === 'WH-01'
+    ? []
+    : places.data?.find((p) => p.code === code)?.locations ?? [];
 
   /* A warehouse with no sub-locations takes none, so a location left over
      from the previous choice would be sent and refused. */
