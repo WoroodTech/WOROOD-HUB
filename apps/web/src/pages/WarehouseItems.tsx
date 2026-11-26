@@ -212,7 +212,7 @@ export function WarehouseFind() {
         * deleted. They were a page and a sidebar link apart, so deciding a
         * request meant leaving the row that prompted it.
         */}
-      <div className="tabs" role="tablist">
+      <div className="tabs tabs--stretch" role="tablist">
         {([['orders', 'Orders'], ['patch', 'Patch'],
            ['approvals', 'Approvals'], ['edits', 'Edit log'],
            ['deletes', 'Delete log']] as const).map(([k, label]) => (
