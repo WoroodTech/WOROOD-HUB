@@ -42,7 +42,7 @@ interface DemandPlan {
 const money = (n: number) =>
   n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 
-export function WarehousePlanning() {
+export function WarehousePlanning({ embedded = false }: { embedded?: boolean } = {}) {
   const qc = useQueryClient();
   const { can } = useAuth();
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
@@ -90,7 +90,7 @@ export function WarehousePlanning() {
   const refresh = () => void qc.invalidateQueries({ queryKey: ['wh'] });
 
   return (
-    <div className="page">
+    <div className={`page${embedded ? ' page--embedded' : ''}`}>
       <header className="pagehead">
         <div>
           <h1 className="pagehead__title">Planning</h1>

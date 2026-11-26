@@ -4079,6 +4079,10 @@ button, input, select, textarea { font: inherit; color: inherit; }
 @media print {
   /* Only the labels. Everything else on the page is for choosing them. */
   .no-print, .sidebar, .topbar, .pagehead { display: none !important; }
+  /* The application shell is flex-based for screen layout. Flatten it for
+     print so the label sheet is not clipped or laid out beside an empty nav. */
+  .shell, .shell__main, .content { display: block !important; }
+  .content { padding: 0 !important; }
   .page { padding: 0 !important; }
   .labelsheet { gap: 0; margin: 0; }
   .qrlabel {

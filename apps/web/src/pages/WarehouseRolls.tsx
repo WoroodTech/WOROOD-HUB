@@ -129,7 +129,7 @@ export function WarehouseRolls() {
           two were wired to the same screen, so choosing Plan answered
           "what should we make" to somebody asking "what is next". */}
       {screen === 'plan' ? <RollsPlan /> : null}
-      {screen === 'planning' ? <WarehousePlanning /> : null}
+      {screen === 'planning' ? <WarehousePlanning embedded /> : null}
       {screen === 'report' ? <RollsReport /> : null}
       {/* The counts above the table they summarise. The Apps Script has a
           Summary tab of its own; the screenshots of the running app put
